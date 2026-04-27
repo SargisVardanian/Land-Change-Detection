@@ -539,6 +539,27 @@ def _normalize_string_list(value: object, limit: int = 5) -> list[str]:
     return result
 
 
+EXPECTED_GRID_CELLS = tuple(f"{row}{col}" for row in "ABCD" for col in range(1, 5))
+
+
+def _is_bad_cell_observation(text: str) -> bool:
+    lowered = text.lower()
+    bad_phrases = [
+        "possible expansion of low vegetation or cultivated surface",
+        "clear transition from bare/prepared ground to low vegetation",
+        "clear transition from compacted surface to low vegetation",
+        "the cell gains vegetation-related classes",
+        "semantic composition stays broadly similar",
+        "weak semantic transition signal",
+    ]
+    if any(phrase in lowered for phrase in bad_phrases):
+        return True
+    semantic_only_markers = ["more grass", "less background", "less bareland", "more cropland", "more background"]
+    return any(marker in lowered for marker in semantic_only_markers) and not any(
+        cue in lowered for cue in ["road", "track", "building", "roof", "plot", "line", "graded", "cleared", "yard", "construction", "shadow", "stable", "unchanged"]
+    )
+
+
 def normalize_cell_observations(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list):
         return []
@@ -554,7 +575,7 @@ def normalize_cell_observations(value: object) -> list[dict[str, str]]:
             cell = match.group(1).upper() if match else f"item_{idx}"
             observation = match.group(2).strip() if match else raw
             confidence = "uncertain"
-        if not observation:
+        if not observation or _is_bad_cell_observation(observation):
             continue
         if not re.match(r"^[A-D][1-4]$", cell):
             cell = f"item_{idx}"
@@ -562,6 +583,25 @@ def normalize_cell_observations(value: object) -> list[dict[str, str]]:
             confidence = "uncertain"
         result.append({"cell": cell, "observation": observation, "confidence": confidence})
     return result
+
+
+def cell_observations_quality_issues(rows: list[dict[str, str]]) -> list[str]:
+    issues: list[str] = []
+    cells = [str(row.get("cell", "")).strip().upper() for row in rows]
+    missing = [cell for cell in EXPECTED_GRID_CELLS if cell not in cells]
+    if missing:
+        issues.append("missing cells: " + ", ".join(missing))
+    unexpected = [cell for cell in cells if cell not in EXPECTED_GRID_CELLS]
+    if unexpected:
+        issues.append("unexpected cells: " + ", ".join(unexpected[:6]))
+    observations = [re.sub(r"\s+", " ", str(row.get("observation", "")).strip().lower()) for row in rows]
+    repeated = {text for text in observations if text and observations.count(text) >= 4}
+    if repeated:
+        issues.append("repeated generic observations")
+    too_short = [cell for cell, text in zip(cells, observations, strict=False) if len(text) < 18]
+    if too_short:
+        issues.append("too-short observations: " + ", ".join(too_short[:6]))
+    return issues
 
 
 def normalize_visual_summary(parsed: dict) -> dict:
@@ -582,12 +622,14 @@ def has_complete_final_response(parsed: dict | None) -> bool:
         return False
     scene_overview = str(parsed.get("scene_overview", "")).strip()
     bad_markers = ["here's a thinking process", "i will analyze", "since no images are provided", "step by step", "placeholder"]
+    observations = parsed.get("cell_observations")
+    if not isinstance(observations, list) or cell_observations_quality_issues(observations):
+        return False
     return (
         bool(scene_overview)
         and bool(str(parsed.get("before_summary", "")).strip())
         and bool(str(parsed.get("after_summary", "")).strip())
         and bool(parsed.get("main_changes"))
-        and bool(parsed.get("cell_observations"))
         and not any(marker in scene_overview.lower() for marker in bad_markers)
     )
 
@@ -712,8 +754,8 @@ class QwenMlxVlmExplainer:
             [
                 "You are comparing aligned satellite crops of the same place.\n",
                 "Image 1 is BEFORE. Image 2 is AFTER.\n",
-                "Image 3 is a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
-                "Use BEFORE and AFTER as primary evidence. Treat any change-guide or zoom image only as a secondary inspection aid.\n",
+                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
+                "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
                 "Do not infer object type from heatmap color alone.\n",
                 "Inspect overall scene layout first, then inspect highlighted cells for local texture, line, road, plot, compact-surface, and ground-change cues.\n",
                 "Use cautious hypotheses unless multiple cues agree. Roof/building-specific claims require strong rectilinear built-surface evidence.\n",
@@ -748,14 +790,15 @@ class QwenMlxVlmExplainer:
             [
                 "You are comparing aligned satellite crops of the same place.\n",
                 "Image 1 is BEFORE. Image 2 is AFTER.\n",
-                "Image 3 is a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
-                "Use BEFORE and AFTER as primary evidence. Treat any change-guide or zoom image only as a secondary inspection aid.\n",
+                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
+                "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
                 "Do not infer object type from heatmap color alone. Reasoning notes below are scratch work and must not be exposed.\n",
                 "Return strict JSON only with these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
                 "before_summary and after_summary must describe visible surface state in plain language.\n",
                 "main_changes must be 2 to 5 short plain-English strings.\n",
-                "cell_observations must be a list of objects: {\"cell\":\"A1\", \"observation\":\"...\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
+                "cell_observations must contain exactly 16 objects, one for every cell A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
+                "Each cell object must be {\"cell\":\"A1\", \"observation\":\"specific visible before/after comparison\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
                 "Prefer physical/geographic interpretation over raw low-level cues. Use 'possible' for uncertain object hypotheses. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 "Do not overuse building-specific language; only use it when rectilinear bright-surface and line-structure cues agree strongly.\n",
                 "Do not include chain-of-thought, draft commentary, self-correction, markdown, or extra text outside the JSON.\n",
@@ -913,7 +956,7 @@ class QwenMlxVlmExplainer:
                     progress_cb({"stage": "mlx_final_retry", "message": "Final answer incomplete, retrying one strict final-only pass"})
                 retry_text, retry_stats = self._stream_text(
                     self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide)
-                    + "\nReturn only strict JSON with scene_overview, before_summary, after_summary, main_changes, and cell_observations.",
+                    + "\nReturn only strict JSON. Include exactly 16 cell_observations, one for every A1..D4 cell, with specific non-repeated before/after visual evidence.",
                     image_paths,
                     max_tokens=max(72, self.reasoning_profile.max_new_tokens_mps),
                     stage="mlx_final",
@@ -1040,8 +1083,8 @@ class RemoteSensingQwen2VL2B:
         return "".join(
             [
                 "You are comparing aligned BEFORE and AFTER remote-sensing crop images from the same location.\n",
-                "A third image may be provided as a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
-                "Use BEFORE and AFTER as primary evidence. Treat any change-guide image only as a secondary inspection aid.\n",
+                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
+                "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
                 "Do not infer object type from heatmap color alone.\n",
                 "Inspect highlighted changed cells carefully for roads, plot/service lines, compact surfaces, ground clearing, rectilinear patches, and local texture changes.\n",
                 "Use cautious wording unless several cues agree; roof/building-specific claims need strong rectilinear built-surface evidence.\n",
@@ -1062,15 +1105,16 @@ class RemoteSensingQwen2VL2B:
         prompt = "".join(
             [
                 "You are comparing aligned BEFORE and AFTER remote-sensing crop images from the same location.\n",
-                "A third image may be provided as a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
-                "Use BEFORE and AFTER as primary evidence. Treat any change-guide image only as a secondary inspection aid.\n",
+                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
+                "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
                 "Do not infer object type from heatmap color alone.\n",
                 "If reasoning notes are provided below, treat them as scratch analysis and distill them into a concise user-facing answer.\n",
                 "Return strict JSON only with these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
                 "before_summary and after_summary must describe visible surface state in plain language.\n",
                 "main_changes must be 2 to 5 short plain-English strings.\n",
-                "cell_observations must be a list of objects: {\"cell\":\"A1\", \"observation\":\"...\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
+                "cell_observations must contain exactly 16 objects, one for every cell A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
+                "Each cell object must be {\"cell\":\"A1\", \"observation\":\"specific visible before/after comparison\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
                 "Describe visible physical/geographic changes cautiously: possible rectilinear built-surface addition, compacted pad or yard, plot/service-line trace, road-edge rework, grading, clearing, excavation, ambiguous local reworking, or stable area.\n",
                 "Only call something roof/building-specific when multiple strong visual cues agree. Do not invent small objects or causes. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 f"Write field values in {response_language}. Do not output chain-of-thought, markdown, draft notes, or introductory phrases.\n",
@@ -1369,8 +1413,8 @@ class OllamaSemanticChangeExplainer:
             [
                 "You are analyzing land-surface change for one aligned crop.\n",
                 "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
-                "A third image may be provided as a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
-                "Treat any change-guide or zoom image only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
+                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
+                "Use the contact sheet to inspect each grid cell. Treat any heatmap only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
                 "Semantic-segmentation notes are weak secondary evidence and may be noisy or partially wrong.\n",
                 "Use the highlighted cells to inspect local road, plot/service-line, rectilinear patch, compact-surface, and ground-texture changes.\n",
                 "Use cautious hypotheses unless multiple cues agree; roof/building-specific claims require strong rectilinear built-surface evidence.\n",
@@ -1402,16 +1446,16 @@ class OllamaSemanticChangeExplainer:
             [
                 "You are analyzing land-surface change for one aligned crop.\n",
                 "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
-                "A third image may be provided as a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
-                "Treat any change-guide or zoom image only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
+                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
+                "Use the contact sheet to inspect each grid cell. Treat any heatmap only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
                 "Use the reasoning notes only as scratch analysis. Do not reveal chain-of-thought or analysis steps.\n",
                 "Return strict JSON only with exactly these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
                 "before_summary must describe the visible surface state in BEFORE.\n",
                 "after_summary must describe the visible surface state in AFTER.\n",
                 "main_changes must be 2 to 5 short plain-English strings.\n",
-                "cell_observations must be a list of objects with keys cell, observation, confidence.\n",
-                "Use grid IDs such as A1, B3, D4 only when supported by the image or change-guide. Confidence must be high, medium, low, or uncertain.\n",
+                "cell_observations must contain exactly 16 objects, one for every cell A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
+                "Each cell object must have keys cell, observation, confidence. Confidence must be high, medium, low, or uncertain.\n",
                 "Describe visible physical/geographic changes cautiously: possible rectilinear built-surface addition, compacted pad or yard, plot/service-line trace, road-edge rework, grading, clearing, excavation, ambiguous local reworking, or stable area.\n",
                 "Only call something roof/building-specific when multiple strong visual cues agree. Prefer physical interpretation over raw low-level cues. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 f"Write the answer in {response_language}.\n\n",
@@ -1597,6 +1641,33 @@ class OllamaSemanticChangeExplainer:
         message = final_body.get("message", {}) if isinstance(final_body, dict) else {}
         raw_text = _sanitize_model_text(str(message.get("content", "")).strip())
         parsed = parse_model_response(raw_text)
+        if not has_complete_final_response(parsed):
+            try:
+                retry_body = self._chat_request(
+                    prompt=self._final_prompt(
+                        semantic_context=semantic_context,
+                        visual_context=visual_context,
+                        response_language=response_language,
+                        reasoning_text=reasoning_text,
+                        has_change_guide=has_change_guide,
+                    )
+                    + "\nReturn only strict JSON. Include exactly 16 cell_observations, one for every A1..D4 cell. Do not repeat the same observation across cells. Do not use semantic class labels such as grass, cropland, bareland, or background as evidence.",
+                    images=all_images,
+                    think_mode=False,
+                    num_predict=self.reasoning_profile.ollama_num_predict,
+                    num_ctx=self.reasoning_profile.ollama_num_ctx,
+                    response_format="json",
+                    progress_cb=progress_cb,
+                    stage_prefix="ollama_final_retry",
+                )
+                retry_message = retry_body.get("message", {}) if isinstance(retry_body, dict) else {}
+                retry_text = _sanitize_model_text(str(retry_message.get("content", "")).strip())
+                retry_parsed = parse_model_response(retry_text)
+                if has_complete_final_response(retry_parsed):
+                    raw_text = retry_text
+                    parsed = retry_parsed
+            except Exception:
+                pass
         return VLMResult(
             raw_text=raw_text,
             parsed=parsed,

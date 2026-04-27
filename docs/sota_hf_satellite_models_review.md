@@ -134,8 +134,9 @@ Project VLM candidates include:
 - `AdaptLLM/remote-sensing-Qwen2-VL-2B-Instruct`
 - `akshaydudhane/EarthDial_4B_RGB`
 - `gemma4:e4b` through Ollama
+- `DeltaVLM` as a 2025 research candidate for bi-temporal remote-sensing change analysis
 
-Project judgment: keep VLMs as explainers. They should produce text from measured segmentation and change evidence; they should not be trusted as the primary pixel-mask source.
+Project judgment: keep VLMs as explainers. In the current Streamlit demo they explain the visible before/after imagery and a fixed A1..D4 grid directly, because the RGB Mask2Former/OpenEarthMap labels can be misleading for some crops. In the research architecture they still should not be trusted as the primary pixel-mask source.
 
 ## Recommended Model Stack
 

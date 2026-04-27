@@ -25,20 +25,15 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from land_change_detection.data import OSCDSceneRepository
-from land_change_detection.change_interpretation.deterministic_reporting import (
-    build_cell_report_rows_from_segmentation,
-    build_pairwise_visual_context,
-    build_scene_overview_from_rows,
-)
 from land_change_detection.legacy.legacy_visual_context import (
     analyze_change_cells,
     build_change_guide_image,
     build_change_zoom_strip,
     build_deterministic_breakdown,
+    build_visual_change_context,
 )
 from land_change_detection.pipeline_v2 import LandChangePipelineV2
 from land_change_detection.semantic_hf import (
-    DEFAULT_CLASS_COLORS,
     MASK2FORMER_SATELLITE_DIR,
     crop_rgb,
     draw_bbox,
@@ -65,7 +60,7 @@ from land_change_detection.semantic_surface import summarize_transitions
 
 st.set_page_config(page_title="Land Surface Mapping", layout="wide")
 st.title("Land Surface Mapping")
-st.caption("Mouse-selected crop -> semantic segmentation per timestamp -> pairwise change interpretation")
+st.caption("Mouse-selected crop -> VLM visual comparison -> plain-English land-surface change report")
 
 if st_cropper is None:
     st.error("Missing dependency: `streamlit-cropper`.")
@@ -263,7 +258,7 @@ def available_model_presets() -> dict[str, dict[str, str]]:
             "model_name": str(QWEN3_VL_4B_THINKING_DIR),
         }
     presets["gemma4:e4b (Ollama)"] = {
-        "backend": "Ollama text",
+        "backend": "Ollama vision",
         "runtime_backend": "ollama_gemma",
         "model_name": GEMMA4_E4B_OLLAMA,
     }
@@ -288,7 +283,7 @@ def model_runtime_details(
         return {
             "family": "VLM",
             "backend": "MLX vision-language",
-            "input_mode": "before/after crop images + secondary change-guide",
+            "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
             "source": "local MLX directory" if model_path.exists() else "Hugging Face MLX repo id",
             "model": display_model_name(selected_model_name),
             "resolved_path": str(model_path.resolve()) if model_path.exists() else selected_model_name,
@@ -299,7 +294,7 @@ def model_runtime_details(
             "kv_cache": "managed by MLX; no app-side result reuse",
             "semantic_hints": "enabled" if use_semantic_hints else "disabled",
             "primary_images_sent": "2: before crop, after crop",
-            "auxiliary_images_sent": "1: change-guide heatmap",
+            "auxiliary_images_sent": "2: A1..D4 contact sheet, change-guide heatmap",
             "semantic_text_hints_sent": "yes" if use_semantic_hints else "no",
             "semantic_maps_sent_as_images": "no",
         }
@@ -307,7 +302,7 @@ def model_runtime_details(
         return {
             "family": "VLM",
             "backend": "HF legacy debug",
-            "input_mode": "before/after crop images + secondary change-guide",
+            "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
             "source": "local directory" if model_path.exists() else "Hugging Face repo id",
             "model": display_model_name(selected_model_name),
             "resolved_path": str(model_path.resolve()) if model_path.exists() else selected_model_name,
@@ -318,14 +313,14 @@ def model_runtime_details(
             "kv_cache": "off on mps" if not profile.use_cache_on_mps else "on on mps",
             "semantic_hints": "enabled" if use_semantic_hints else "disabled",
             "primary_images_sent": "2: before crop, after crop",
-            "auxiliary_images_sent": "1: change-guide heatmap",
+            "auxiliary_images_sent": "2: A1..D4 contact sheet, change-guide heatmap",
             "semantic_text_hints_sent": "yes" if use_semantic_hints else "no",
             "semantic_maps_sent_as_images": "no",
         }
     return {
-        "family": "LLM",
-        "backend": "Ollama text",
-        "input_mode": "before/after crop images + secondary change-guide",
+        "family": "VLM",
+        "backend": "Ollama vision",
+        "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
         "source": "Ollama local registry",
         "model": selected_model_name,
         "resolved_path": "ollama://" + selected_model_name,
@@ -336,7 +331,7 @@ def model_runtime_details(
         "kv_cache": f"keep_alive=0; use OLLAMA_FLASH_ATTENTION=1 + OLLAMA_KV_CACHE_TYPE=q8_0/q4_0 for lower KV memory",
         "semantic_hints": "enabled" if use_semantic_hints else "disabled",
         "primary_images_sent": "2: before crop, after crop",
-        "auxiliary_images_sent": "1: change-guide heatmap",
+        "auxiliary_images_sent": "2: A1..D4 contact sheet, change-guide heatmap",
         "semantic_text_hints_sent": "yes" if use_semantic_hints else "no",
         "semantic_maps_sent_as_images": "no",
     }
@@ -363,111 +358,58 @@ def normalize_model_scene_overview(parsed: dict | None) -> str:
     return overview
 
 
-def render_semantic_color_legend(id2label: dict[int, str]) -> None:
-    legend_rows = [
-        {
-            "class_id": int(class_id),
-            "label": str(label),
-            "color": DEFAULT_CLASS_COLORS.get(str(label), "#95a5a6"),
-        }
-        for class_id, label in sorted(id2label.items())
-    ]
-    st.dataframe(
-        legend_rows,
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "class_id": st.column_config.NumberColumn("class id", width="small"),
-            "label": st.column_config.TextColumn("label", width="medium"),
-            "color": st.column_config.TextColumn("color", width="small"),
-        },
-    )
+def build_cell_contact_sheet(before_rgb: np.ndarray, after_rgb: np.ndarray, grid_size: int = 4, panel_size: int = 150) -> np.ndarray:
+    before_arr = np.asarray(np.clip(before_rgb, 0, 255), dtype=np.float32)
+    after_arr = np.asarray(np.clip(after_rgb, 0, 255), dtype=np.float32)
+    if before_arr.max() <= 1.5:
+        before_arr = before_arr * 255.0
+    if after_arr.max() <= 1.5:
+        after_arr = after_arr * 255.0
+    before_arr = before_arr.astype(np.uint8)
+    after_arr = after_arr.astype(np.uint8)
+
+    height, width = before_arr.shape[:2]
+    row_bounds = np.linspace(0, height, grid_size + 1, dtype=int)
+    col_bounds = np.linspace(0, width, grid_size + 1, dtype=int)
+    pair_gap = 6
+    cell_gap = 10
+    label_h = 24
+    pair_w = panel_size * 2 + pair_gap
+    cell_h = panel_size + label_h
+    canvas_w = grid_size * pair_w + (grid_size - 1) * cell_gap
+    canvas_h = grid_size * cell_h + (grid_size - 1) * cell_gap
+    canvas = Image.new("RGB", (canvas_w, canvas_h), color=(10, 12, 16))
+    draw = ImageDraw.Draw(canvas)
+
+    for row_idx in range(grid_size):
+        for col_idx in range(grid_size):
+            top = int(row_bounds[row_idx])
+            bottom = int(row_bounds[row_idx + 1])
+            left = int(col_bounds[col_idx])
+            right = int(col_bounds[col_idx + 1])
+            cell_id = f"{chr(ord('A') + row_idx)}{col_idx + 1}"
+            x = col_idx * (pair_w + cell_gap)
+            y = row_idx * (cell_h + cell_gap)
+            before_tile = ImageOps.fit(Image.fromarray(before_arr[top:bottom, left:right]), (panel_size, panel_size), method=Image.Resampling.BICUBIC)
+            after_tile = ImageOps.fit(Image.fromarray(after_arr[top:bottom, left:right]), (panel_size, panel_size), method=Image.Resampling.BICUBIC)
+            draw.rectangle((x, y, x + pair_w - 1, y + cell_h - 1), outline=(70, 76, 88), width=1)
+            draw.text((x + 6, y + 5), f"{cell_id} BEFORE", fill=(245, 245, 245))
+            draw.text((x + panel_size + pair_gap + 6, y + 5), f"{cell_id} AFTER", fill=(245, 245, 245))
+            canvas.paste(before_tile, (x, y + label_h))
+            canvas.paste(after_tile, (x + panel_size + pair_gap, y + label_h))
+    return np.asarray(canvas)
 
 
-def render_full_grid_table(rows: list[dict[str, object]], title: str = "Full A1..D4 technical table") -> None:
-    st.markdown(f"### {title}")
-    visible_columns = ["cell", "likely_change", "technical_interpretation", "support", "score", "confidence"]
-    visible_rows = [{key: row.get(key, "") for key in visible_columns} for row in rows]
-    st.dataframe(
-        visible_rows,
-        width="stretch",
-        height=460,
-        hide_index=True,
-        column_config={
-            "cell": st.column_config.TextColumn("cell", width="small"),
-            "likely_change": st.column_config.TextColumn("likely_change", width="medium"),
-            "technical_interpretation": st.column_config.TextColumn("technical_interpretation", width="large"),
-            "support": st.column_config.TextColumn("support", width="medium"),
-            "score": st.column_config.NumberColumn("score", width="small", format="%.1f"),
-            "confidence": st.column_config.TextColumn("confidence", width="small"),
-        },
-    )
-    object_rows = [
-        {
-            "cell": row.get("cell", ""),
-            "objects_before": row.get("objects_before", ""),
-            "objects_after": row.get("objects_after", ""),
-        }
-        for row in rows
-    ]
-    with st.expander("Optional object context by cell", expanded=False):
-        st.dataframe(
-            object_rows,
-            width="stretch",
-            height=320,
-            hide_index=True,
-            column_config={
-                "cell": st.column_config.TextColumn("cell", width="small"),
-                "objects_before": st.column_config.TextColumn("objects_before", width="large"),
-                "objects_after": st.column_config.TextColumn("objects_after", width="large"),
-            },
-        )
-
-
-def render_semantic_diagnostics(crop_before_result, crop_after_result, crop_transitions: list[dict]) -> None:
-    st.subheader("Mask2Former semantic diagnostics")
+def render_debug_semantic_diagnostics(crop_before_result, crop_after_result, crop_transitions: list[dict]) -> None:
+    st.markdown("**Mask2Former debug semantic maps**")
     st.caption(
-        "These maps are produced by `artifacts/models/semantic/mask2former-satellite`. "
-        "They are the semantic segmentation result, not text generated by the VLM."
+        "Debug-only OpenEarthMap semantic segmentation from `artifacts/models/semantic/mask2former-satellite`. "
+        "These labels are not used for the normal VLM answer."
     )
     map_cols = st.columns(2)
-    map_cols[0].image(crop_before_result.color_map, caption="T1 Mask2Former semantic map", width="stretch")
-    map_cols[1].image(crop_after_result.color_map, caption="T2 Mask2Former semantic map", width="stretch")
-
-    st.markdown("**Class legend**")
-    render_semantic_color_legend(crop_before_result.legend)
-
-    if crop_transitions:
-        st.markdown("**Top semantic transitions**")
-        st.dataframe(
-            crop_transitions[:8],
-            width="stretch",
-            hide_index=True,
-            column_config={
-                "before": st.column_config.TextColumn("before", width="medium"),
-                "after": st.column_config.TextColumn("after", width="medium"),
-                "pixels": st.column_config.NumberColumn("pixels", width="small"),
-                "percent": st.column_config.NumberColumn("percent", width="small", format="%.2f"),
-            },
-        )
-    else:
-        st.info("No major class transitions were detected in this crop.")
-
-
-def _fallback_cell_observations(rows: list[dict[str, object]]) -> list[dict[str, str]]:
-    observations: list[dict[str, str]] = []
-    for row in sorted(rows, key=lambda item: str(item.get("cell", ""))):
-        confidence = str(row.get("confidence", "uncertain")).lower()
-        if confidence not in {"high", "medium", "low", "uncertain"}:
-            confidence = "uncertain"
-        observations.append(
-            {
-                "cell": str(row.get("cell", "")),
-                "observation": str(row.get("technical_interpretation") or row.get("likely_change") or "No clear change."),
-                "confidence": confidence,
-            }
-        )
-    return observations
+    map_cols[0].image(crop_before_result.color_map, caption="T1 debug semantic map", width="stretch")
+    map_cols[1].image(crop_after_result.color_map, caption="T2 debug semantic map", width="stretch")
+    st.dataframe(crop_transitions, width="stretch", hide_index=True)
 
 
 def _render_main_changes(changes: list[object]) -> None:
@@ -479,15 +421,21 @@ def _render_main_changes(changes: list[object]) -> None:
         st.markdown(f"- {item}")
 
 
-def render_vlm_summary(parsed: dict | None, fallback_overview: str, rows: list[dict[str, object]]) -> None:
+def render_vlm_summary(parsed: dict | None) -> None:
     parsed = parsed or {}
-    scene_overview = normalize_model_scene_overview(parsed) or fallback_overview
+    scene_overview = normalize_model_scene_overview(parsed)
     before_summary = str(parsed.get("before_summary", "")).strip()
     after_summary = str(parsed.get("after_summary", "")).strip()
     main_changes = parsed.get("main_changes") if isinstance(parsed.get("main_changes"), list) else []
     cell_observations = parsed.get("cell_observations") if isinstance(parsed.get("cell_observations"), list) else []
 
-    st.subheader("Gemma visual interpretation" if parsed else "Deterministic visual summary")
+    st.subheader("Gemma visual interpretation" if parsed else "VLM visual interpretation")
+    if not parsed or not scene_overview:
+        st.warning(
+            "The VLM did not return a complete user-facing analysis. "
+            "No semantic-class fallback is shown because those labels can be misleading for this crop."
+        )
+        return
     st.write(scene_overview)
 
     if before_summary or after_summary:
@@ -499,11 +447,10 @@ def render_vlm_summary(parsed: dict | None, fallback_overview: str, rows: list[d
 
     _render_main_changes(main_changes)
 
-    observations = cell_observations or _fallback_cell_observations(rows)
-    if observations:
+    if cell_observations:
         st.markdown("**Cell observations**")
         st.dataframe(
-            observations,
+            cell_observations,
             width="stretch",
             hide_index=True,
             column_config={
@@ -512,19 +459,19 @@ def render_vlm_summary(parsed: dict | None, fallback_overview: str, rows: list[d
                 "confidence": st.column_config.TextColumn("confidence", width="small"),
             },
         )
+    else:
+        st.info("The VLM did not return complete A1..D4 cell observations.")
 
 
 def render_final_answer(
-    scene_overview: str,
-    rows: list[dict[str, object]],
+    parsed: dict | None,
     change_zoom_strip: np.ndarray,
-    parsed: dict | None = None,
     reasoning_text: str = "",
     show_debug: bool = False,
 ) -> None:
     st.subheader("Analysis output")
     with st.container(border=True):
-        render_vlm_summary(parsed, scene_overview, rows)
+        render_vlm_summary(parsed)
         if show_debug and reasoning_text.strip():
             with st.expander("Model reasoning notes", expanded=False):
                 st.caption(
@@ -532,12 +479,10 @@ def render_final_answer(
                     "This is hidden unless debug mode is enabled."
                 )
                 st.code(reasoning_text.strip()[-6000:])
-        with st.expander("Technical diagnostics", expanded=False):
-            render_full_grid_table(rows)
         st.markdown("### Top changed cell zooms")
         st.image(
             change_zoom_strip,
-            caption="Before/after zooms for the strongest changed cells. The strip is visual reference only and is not sent to the model.",
+            caption="Before/after zooms for the strongest pixel-change cells. The strip is visual reference only.",
             width="stretch",
         )
 
@@ -561,10 +506,10 @@ model_dir = Path(st.sidebar.text_input("Semantic model", value=str(MASK2FORMER_S
 device_name = st.sidebar.selectbox("Semantic device", ["cpu", "mps", "cuda"], index=1)
 enable_vlm = st.sidebar.checkbox("Enable model explanation", value=True)
 show_live_trace = st.sidebar.checkbox("Show debug trace/details", value=False)
-use_semantic_hints = st.sidebar.checkbox("Pass semantic hints into model", value=False)
+use_semantic_hints = False
 model_presets = available_model_presets()
 model_preset_names = list(model_presets.keys())
-default_preset = "Qwen MLX (Apple Silicon default)" if "Qwen MLX (Apple Silicon default)" in model_presets else "gemma4:e4b (Ollama)"
+default_preset = "gemma4:e4b (Ollama)" if "gemma4:e4b (Ollama)" in model_presets else "Qwen MLX (Apple Silicon default)"
 selected_preset = st.sidebar.selectbox("Available model", model_preset_names, index=model_preset_names.index(default_preset))
 selected_model_config = model_presets[selected_preset]
 explanation_backend = selected_model_config["backend"]
@@ -583,7 +528,7 @@ elif runtime_backend == "mlx_vlm_qwen" and reasoning_profile == "deep":
 elif runtime_backend == "ollama_gemma" and reasoning_profile == "deep":
     st.sidebar.info("Deep reasoning increases Ollama context and response length, so memory use will rise.")
 vlm_model_name = selected_model_config["model_name"] if runtime_backend in {"mlx_vlm_qwen", "hf_transformers_legacy"} else default_vlm_model_name()
-ollama_model_name = selected_model_config["model_name"] if explanation_backend == "Ollama text" else default_ollama_model_name()
+ollama_model_name = selected_model_config["model_name"] if explanation_backend == "Ollama vision" else default_ollama_model_name()
 
 st.sidebar.markdown("### Models")
 st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
@@ -593,7 +538,7 @@ elif runtime_backend == "hf_transformers_legacy" and Path(vlm_model_name).exists
     st.sidebar.write(f"`hf qwen legacy`: {'yes' if vlm_ready(vlm_model_name) else 'incomplete'}")
     if not vlm_ready(vlm_model_name):
         st.sidebar.warning("Selected HF legacy VLM directory is incomplete. Run: `python scripts/download_vlm_models.py`")
-if explanation_backend == "Ollama text":
+if explanation_backend == "Ollama vision":
     st.sidebar.write(f"`ollama {ollama_model_name}`: {'yes' if cached_ollama_model_available(ollama_model_name) else 'no'}")
 
 if source_mode == "OSCD dataset" and not repo_ready:
@@ -611,7 +556,7 @@ else:
     before_file = st.sidebar.file_uploader("Before image", type=["png", "jpg", "jpeg", "tif", "tiff"], key="before")
     after_file = st.sidebar.file_uploader("After image", type=["png", "jpg", "jpeg", "tif", "tiff"], key="after")
     if before_file is None or after_file is None:
-        st.info("Upload both images to run semantic segmentation.")
+        st.info("Upload both images to run VLM visual change analysis.")
         st.stop()
     before_img = Image.open(before_file).convert("RGB")
     after_img = Image.open(after_file).convert("RGB")
@@ -628,10 +573,8 @@ if previous_scene_key != scene_key:
     st.session_state.active_crop_bbox = None
     st.session_state.crop_selector_nonce = st.session_state.get("crop_selector_nonce", 0) + 1
 
-if not model_dir.exists():
-    st.error(f"Semantic model directory not found: {model_dir}")
-    st.info("Run: `python scripts/download_semantic_models.py`")
-    st.stop()
+if show_live_trace and not model_dir.exists():
+    st.sidebar.warning(f"Debug semantic model directory not found: {model_dir}")
 
 st.subheader("Select Crop")
 pre_preview = np.asarray(np.clip(pre_rgb * 255.0, 0, 255), dtype=np.uint8)
@@ -679,9 +622,7 @@ if active_bbox is None:
 st.subheader("Active Crop")
 crop_before = crop_rgb(pre_rgb, active_bbox)
 crop_after = crop_rgb(post_rgb, active_bbox)
-pipeline_mode = "v2"
-segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
-pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
+pipeline_mode = "vlm_first"
 selected_model_name = vlm_model_name if runtime_backend in {"mlx_vlm_qwen", "hf_transformers_legacy"} else ollama_model_name
 runtime_details = model_runtime_details(
     explanation_backend=explanation_backend,
@@ -693,45 +634,47 @@ runtime_details = model_runtime_details(
 )
 semantic_ran_this_pass = False
 explanation_ran_this_pass = False
+crop_before_result = None
+crop_after_result = None
+cell_packs = []
+crop_transitions: list[dict] = []
 
-with st.spinner("Running semantic segmentation on the selected crop..."):
-    pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
-    crop_before_result = pipeline_result.before_segmentation
-    crop_after_result = pipeline_result.after_segmentation
-    cell_packs = pipeline_result.cell_packs
-semantic_ran_this_pass = True
-
-crop_transitions = [
-    item
-    for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
-    if item["before"] != item["after"]
-]
+if show_live_trace and model_dir.exists():
+    with st.spinner("Running debug-only Mask2Former segmentation on the selected crop..."):
+        segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
+        pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
+        pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
+        crop_before_result = pipeline_result.before_segmentation
+        crop_after_result = pipeline_result.after_segmentation
+        cell_packs = pipeline_result.cell_packs
+        crop_transitions = [
+            item
+            for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
+            if item["before"] != item["after"]
+        ]
+        semantic_ran_this_pass = True
 vlm_result = None
 
 st.subheader("Selected Crop")
 selected_cols = st.columns(2)
 selected_cols[0].image(crop_before, caption="Crop before", width="stretch")
 selected_cols[1].image(crop_after, caption="Crop after", width="stretch")
-render_semantic_diagnostics(crop_before_result, crop_after_result, crop_transitions)
 
 change_evidence = analyze_change_cells(crop_before, crop_after, grid_size=4)
 change_guide_image = build_change_guide_image(crop_before, crop_after, change_evidence)
 change_zoom_strip = build_change_zoom_strip(crop_before, crop_after, change_evidence)
-model_auxiliary_images = [change_guide_image]
-base_cell_rows = build_cell_report_rows_from_segmentation(cell_packs)
-base_scene_overview = build_scene_overview_from_rows(base_cell_rows)
-visual_change_context = build_pairwise_visual_context(
-    packs=cell_packs,
-    before_segmentation=crop_before_result,
-    after_segmentation=crop_after_result,
-    rows=base_cell_rows,
-)
+cell_contact_sheet = build_cell_contact_sheet(crop_before, crop_after, grid_size=4)
+st.subheader("4x4 visual comparison grid")
+st.caption("Each panel shows the same cell before and after. This grid is sent to the VLM so it can describe A1..D4 directly.")
+st.image(cell_contact_sheet, caption="A1..D4 before/after contact sheet", width="stretch")
+model_auxiliary_images = [cell_contact_sheet, change_guide_image]
+visual_change_context = build_visual_change_context(change_evidence)
 
 progress_cb = None
 if enable_vlm:
     progress_cb = create_trace_collector() if show_live_trace else None
     semantic_context = ""
-    if use_semantic_hints:
+    if show_live_trace and use_semantic_hints and crop_before_result is not None and crop_after_result is not None:
         semantic_context = build_vlm_semantic_context(
             crop_before_result.class_map,
             crop_after_result.class_map,
@@ -770,7 +713,7 @@ if enable_vlm:
             st.warning(f"Ollama model `{ollama_model_name}` is not installed. Run: `ollama pull {ollama_model_name}`")
         else:
             try:
-                with st.spinner("Running Ollama semantic explainer on the selected crop..."):
+                with st.spinner("Running Ollama visual explainer on the selected crop..."):
                     ollama_explainer = load_ollama_explainer(ollama_model_name, reasoning_profile, VLM_RUNTIME_API_VERSION)
                     vlm_result = ollama_explainer.explain(
                         before_crop=crop_before,
@@ -787,23 +730,18 @@ if enable_vlm:
                 st.error(f"Ollama backend failed: {type(exc).__name__}: {exc}")
 
     if vlm_result is not None:
-        final_cell_rows = base_cell_rows
-        final_scene_overview = normalize_model_scene_overview(vlm_result.parsed) or base_scene_overview
-
         render_final_answer(
-            final_scene_overview,
-            final_cell_rows,
-            change_zoom_strip,
             parsed=vlm_result.parsed,
+            change_zoom_strip=change_zoom_strip,
             reasoning_text=vlm_result.reasoning_text,
             show_debug=show_live_trace,
         )
 
     else:
-        render_final_answer(base_scene_overview, base_cell_rows, change_zoom_strip, show_debug=show_live_trace)
+        render_final_answer(None, change_zoom_strip, show_debug=show_live_trace)
 else:
     vlm_result = None
-    render_final_answer(base_scene_overview, base_cell_rows, change_zoom_strip, show_debug=show_live_trace)
+    render_final_answer(None, change_zoom_strip, show_debug=show_live_trace)
 
 if show_live_trace:
     stage_rows = [
@@ -819,13 +757,15 @@ if show_live_trace:
             ),
         },
     ]
-    deterministic_rows = build_deterministic_breakdown(
-        crop_before=crop_before,
-        crop_after=crop_after,
-        crop_before_result=crop_before_result,
-        crop_after_result=crop_after_result,
-        crop_transitions=crop_transitions,
-    )
+    deterministic_rows = []
+    if crop_before_result is not None and crop_after_result is not None:
+        deterministic_rows = build_deterministic_breakdown(
+            crop_before=crop_before,
+            crop_after=crop_after,
+            crop_before_result=crop_before_result,
+            crop_after_result=crop_after_result,
+            crop_transitions=crop_transitions,
+        )
     with st.expander("Debug: Runtime, Evidence, and Semantic Diagnostics", expanded=False):
         debug_state = getattr(progress_cb, "debug_state", None) if progress_cb is not None else None
         if debug_state:
@@ -874,7 +814,7 @@ if show_live_trace:
                 {"field": "thinking mode", "value": runtime_details["thinking"]},
                 {"field": "context window", "value": runtime_details["context_window"]},
                 {"field": "kv cache mode", "value": runtime_details["kv_cache"]},
-                {"field": "images sent to model", "value": "before crop, after crop, change-guide heatmap"},
+                {"field": "images sent to model", "value": "before crop, after crop, A1..D4 contact sheet, change-guide heatmap"},
                 {"field": "not sent to model as images", "value": "semantic maps, top-cell zoom strip"},
                 {"field": "primary images sent", "value": runtime_details["primary_images_sent"]},
                 {"field": "auxiliary images sent", "value": runtime_details["auxiliary_images_sent"]},
@@ -882,34 +822,35 @@ if show_live_trace:
                 {"field": "semantic maps sent as images", "value": runtime_details["semantic_maps_sent_as_images"]},
                 {"field": "inference result cache", "value": "disabled; fresh run data is recomputed"},
                 {"field": "pipeline mode", "value": pipeline_mode},
-                {"field": "grid cell packs prepared", "value": str(len(cell_packs))},
+                {"field": "debug semantic cell packs prepared", "value": str(len(cell_packs))},
                 {"field": "active bbox", "value": json.dumps(active_bbox)},
             ],
             width="stretch",
             hide_index=True,
         )
         st.dataframe(stage_rows, width="stretch", hide_index=True)
-        st.markdown("**Deterministic technical evidence**")
-        st.dataframe(deterministic_rows, width="stretch", hide_index=True)
+        if deterministic_rows:
+            st.markdown("**Deterministic technical evidence**")
+            st.dataframe(deterministic_rows, width="stretch", hide_index=True)
         st.image(change_guide_image, caption="Deterministic change-guide heatmap", width="stretch")
         st.image(change_zoom_strip, caption="Top changed cell zoom panels", width="stretch")
-        st.markdown("**Pairwise context passed to model**")
+        st.markdown("**Visual context passed to model**")
         st.code(visual_change_context)
-        st.markdown("**Semantic diagnostics**")
-        st.dataframe(compact_summary(crop_before_result.label_summary), width="stretch", hide_index=True)
-        st.dataframe(compact_summary(crop_after_result.label_summary), width="stretch", hide_index=True)
-        st.dataframe(crop_transitions, width="stretch", hide_index=True)
-        st.code(
-            json.dumps(
-                {
-                    "before_summary": compact_summary(crop_before_result.label_summary),
-                    "after_summary": compact_summary(crop_after_result.label_summary),
-                    "transitions": crop_transitions,
-                    "active_bbox": active_bbox,
-                    "selected_crop_shape": list(crop_before.shape),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            language="json",
-        )
+        if crop_before_result is not None and crop_after_result is not None:
+            render_debug_semantic_diagnostics(crop_before_result, crop_after_result, crop_transitions)
+            st.code(
+                json.dumps(
+                    {
+                        "before_summary": compact_summary(crop_before_result.label_summary),
+                        "after_summary": compact_summary(crop_after_result.label_summary),
+                        "transitions": crop_transitions,
+                        "active_bbox": active_bbox,
+                        "selected_crop_shape": list(crop_before.shape),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                language="json",
+            )
+        else:
+            st.info("Mask2Former semantic diagnostics did not run. Enable debug with a ready semantic model to inspect them.")

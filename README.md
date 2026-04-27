@@ -19,9 +19,13 @@
 
 ## Текущий практический режим
 
-Сейчас локальный UI использует:
-- `mask2former-satellite` для `T1/T2` semantic segmentation на RGB-представлении сцены
-- transition diff между двумя semantic maps
+Сейчас локальный Streamlit UI работает в `VLM-first visual demo` режиме:
+- показывает выбранные `Before` / `After` crop;
+- строит понятную 4x4 contact sheet `A1..D4`;
+- отправляет crop и contact sheet в выбранную VLM, по умолчанию `gemma4:e4b` через Ollama;
+- выводит plain-English описание сцены, summary `before/after`, основные видимые изменения и отдельное наблюдение по каждой ячейке `A1..D4`.
+
+`mask2former-satellite` остаётся локальным semantic artifact в `artifacts/models/semantic/mask2former-satellite`, но в UI его OpenEarthMap-классы теперь показываются только в debug-режиме. Для текущих RGB crop эти классы могут быть визуально misleading, поэтому они не используются как user-facing explanation.
 
 `Prithvi-EO-2.0` не является прямой заменой текущего RGB `Mask2Former` backend. Для него нужен отдельный TerraTorch/multispectral путь: корректный порядок каналов, task head, checkpoint/config и проверка на EO данных. В коде это зафиксировано отдельным planned backend `prithvi_terratorch`, чтобы случайно не выдавать RGB inference за Prithvi-based результат.
 
@@ -76,10 +80,10 @@ streamlit run app.py
 В UI сейчас доступны:
 - `Before`
 - `After`
-- `T1 semantic map`
-- `T2 semantic map`
-- `Changed transitions overlay`
-- таблица top transitions
+- `A1..D4 before/after contact sheet`
+- `Gemma visual interpretation`
+- `Cell observations`
+- debug-only Mask2Former diagnostics, если включён `Show debug trace/details`
 
 ## Архитектурная цель
 
