@@ -7,6 +7,8 @@ from huggingface_hub import snapshot_download
 
 MODELS = {
     "Qwen/Qwen3-VL-4B-Thinking": Path("artifacts/models/vlm/Qwen3-VL-4B-Thinking"),
+    "AdaptLLM/remote-sensing-Qwen2-VL-2B-Instruct": Path("artifacts/models/vlm/remote-sensing-Qwen2-VL-2B-Instruct"),
+    "AdaptLLM/remote-sensing-Qwen2.5-VL-3B-Instruct": Path("artifacts/models/vlm/remote-sensing-Qwen2.5-VL-3B-Instruct"),
 }
 
 

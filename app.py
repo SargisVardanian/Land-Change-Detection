@@ -34,6 +34,7 @@ from land_change_detection.legacy.legacy_visual_context import (
 )
 from land_change_detection.pipeline_v2 import LandChangePipelineV2
 from land_change_detection.semantic_hf import (
+    DEFAULT_CLASS_COLORS,
     MASK2FORMER_SATELLITE_DIR,
     crop_rgb,
     draw_bbox,
@@ -46,6 +47,10 @@ from land_change_detection.remote_sensing_vlm import (
     QWEN3_VL_4B_THINKING_MLX_3BIT,
     QWEN3_VL_4B_THINKING_MLX_3BIT_DIR,
     QWEN3_VL_4B_THINKING_DIR,
+    REMOTE_SENSING_QWEN2_5_VL_3B,
+    REMOTE_SENSING_QWEN2_5_VL_3B_DIR,
+    REMOTE_SENSING_QWEN2_VL_2B,
+    REMOTE_SENSING_QWEN2_VL_2B_DIR,
     QwenMlxVlmExplainer,
     OllamaSemanticChangeExplainer,
     REASONING_PROFILES,
@@ -257,6 +262,24 @@ def available_model_presets() -> dict[str, dict[str, str]]:
             "runtime_backend": "hf_transformers_legacy",
             "model_name": str(QWEN3_VL_4B_THINKING_DIR),
         }
+    if model_dir_complete(REMOTE_SENSING_QWEN2_VL_2B_DIR):
+        presets["Remote-sensing Qwen2-VL-2B (HF local)"] = {
+            "backend": "HF remote-sensing VLM",
+            "runtime_backend": "hf_transformers_legacy",
+            "model_name": str(REMOTE_SENSING_QWEN2_VL_2B_DIR),
+        }
+    else:
+        presets["Remote-sensing Qwen2-VL-2B (download from HF)"] = {
+            "backend": "HF remote-sensing VLM",
+            "runtime_backend": "hf_transformers_legacy",
+            "model_name": REMOTE_SENSING_QWEN2_VL_2B,
+        }
+    if model_dir_complete(REMOTE_SENSING_QWEN2_5_VL_3B_DIR):
+        presets["Remote-sensing Qwen2.5-VL-3B (HF local)"] = {
+            "backend": "HF remote-sensing VLM",
+            "runtime_backend": "hf_transformers_legacy",
+            "model_name": str(REMOTE_SENSING_QWEN2_5_VL_3B_DIR),
+        }
     presets["gemma4:e4b (Ollama)"] = {
         "backend": "Ollama vision",
         "runtime_backend": "ollama_gemma",
@@ -301,7 +324,7 @@ def model_runtime_details(
     if runtime_backend == "hf_transformers_legacy":
         return {
             "family": "VLM",
-            "backend": "HF legacy debug",
+            "backend": explanation_backend,
             "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
             "source": "local directory" if model_path.exists() else "Hugging Face repo id",
             "model": display_model_name(selected_model_name),
@@ -309,7 +332,7 @@ def model_runtime_details(
             "device": vlm_device_name,
             "reasoning_profile": profile.label,
             "thinking": "enabled" if profile.enable_thinking else "disabled",
-            "context_window": "bounded prompt; HF legacy is debug-only on this Mac",
+            "context_window": "bounded prompt; reduce image size/reasoning if MPS memory is tight",
             "kv_cache": "off on mps" if not profile.use_cache_on_mps else "on on mps",
             "semantic_hints": "enabled" if use_semantic_hints else "disabled",
             "primary_images_sent": "2: before crop, after crop",
@@ -410,6 +433,40 @@ def render_debug_semantic_diagnostics(crop_before_result, crop_after_result, cro
     map_cols[0].image(crop_before_result.color_map, caption="T1 debug semantic map", width="stretch")
     map_cols[1].image(crop_after_result.color_map, caption="T2 debug semantic map", width="stretch")
     st.dataframe(crop_transitions, width="stretch", hide_index=True)
+
+
+def render_semantic_color_legend(id2label: dict[int, str]) -> None:
+    cols = st.columns(3)
+    for idx, (class_id, label) in enumerate(sorted(id2label.items())):
+        color = DEFAULT_CLASS_COLORS.get(str(label), "#95a5a6")
+        with cols[idx % len(cols)]:
+            st.color_picker(f"{class_id}: {label}", value=color, disabled=True, key=f"legend-{class_id}-{label}")
+
+
+def render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions: list[dict], model_dir: Path) -> None:
+    st.subheader("Mask2Former surface segmentation")
+    st.caption(
+        f"Semantic surface maps from `{model_dir}`. These maps are segmentation evidence; "
+        "the final human explanation below is produced separately by the VLM from the before/after images."
+    )
+    map_cols = st.columns(2)
+    map_cols[0].image(crop_before_result.color_map, caption="T1 surface segmentation", width="stretch")
+    map_cols[1].image(crop_after_result.color_map, caption="T2 surface segmentation", width="stretch")
+    with st.expander("Surface class colors", expanded=False):
+        render_semantic_color_legend(crop_before_result.legend)
+    if crop_transitions:
+        with st.expander("Surface segmentation transitions", expanded=False):
+            st.dataframe(
+                crop_transitions[:10],
+                width="stretch",
+                hide_index=True,
+                column_config={
+                    "before": st.column_config.TextColumn("before", width="medium"),
+                    "after": st.column_config.TextColumn("after", width="medium"),
+                    "pixels": st.column_config.NumberColumn("pixels", width="small"),
+                    "percent": st.column_config.NumberColumn("percent", width="small", format="%.2f"),
+                },
+            )
 
 
 def _render_main_changes(changes: list[object]) -> None:
@@ -639,8 +696,8 @@ crop_after_result = None
 cell_packs = []
 crop_transitions: list[dict] = []
 
-if show_live_trace and model_dir.exists():
-    with st.spinner("Running debug-only Mask2Former segmentation on the selected crop..."):
+if model_dir.exists():
+    with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
         segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
         pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
         pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
@@ -653,12 +710,16 @@ if show_live_trace and model_dir.exists():
             if item["before"] != item["after"]
         ]
         semantic_ran_this_pass = True
+else:
+    st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
 vlm_result = None
 
 st.subheader("Selected Crop")
 selected_cols = st.columns(2)
 selected_cols[0].image(crop_before, caption="Crop before", width="stretch")
 selected_cols[1].image(crop_after, caption="Crop after", width="stretch")
+if crop_before_result is not None and crop_after_result is not None:
+    render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions, model_dir)
 
 change_evidence = analyze_change_cells(crop_before, crop_after, grid_size=4)
 change_guide_image = build_change_guide_image(crop_before, crop_after, change_evidence)

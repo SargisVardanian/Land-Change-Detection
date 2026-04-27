@@ -568,6 +568,12 @@ def normalize_cell_observations(value: object) -> list[dict[str, str]]:
         if isinstance(item, dict):
             cell = str(item.get("cell") or item.get("cell_id") or "").strip().upper()
             observation = _clean_user_text(item.get("observation") or item.get("summary") or item.get("change") or "")
+            interpretation = _clean_user_text(item.get("interpretation") or item.get("meaning") or item.get("likely_process") or "")
+            evidence = _clean_user_text(item.get("visual_evidence") or item.get("evidence") or "")
+            if interpretation and interpretation.lower() not in observation.lower():
+                observation = f"{observation} Likely meaning: {interpretation}" if observation else interpretation
+            if evidence and evidence.lower() not in observation.lower():
+                observation = f"{observation} Visible evidence: {evidence}" if observation else evidence
             confidence = str(item.get("confidence") or "uncertain").strip().lower()
         else:
             raw = _clean_user_text(item)
@@ -756,6 +762,8 @@ class QwenMlxVlmExplainer:
                 "Image 1 is BEFORE. Image 2 is AFTER.\n",
                 "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
                 "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
+                "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
+                "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Do not infer object type from heatmap color alone.\n",
                 "Inspect overall scene layout first, then inspect highlighted cells for local texture, line, road, plot, compact-surface, and ground-change cues.\n",
                 "Use cautious hypotheses unless multiple cues agree. Roof/building-specific claims require strong rectilinear built-surface evidence.\n",
@@ -792,13 +800,16 @@ class QwenMlxVlmExplainer:
                 "Image 1 is BEFORE. Image 2 is AFTER.\n",
                 "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
                 "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
+                "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
+                "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Do not infer object type from heatmap color alone. Reasoning notes below are scratch work and must not be exposed.\n",
                 "Return strict JSON only with these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
                 "before_summary and after_summary must describe visible surface state in plain language.\n",
                 "main_changes must be 2 to 5 short plain-English strings.\n",
                 "cell_observations must contain exactly 16 objects, one for every cell A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
-                "Each cell object must be {\"cell\":\"A1\", \"observation\":\"specific visible before/after comparison\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
+                "Each cell object must be {\"cell\":\"A1\", \"observation\":\"specific visible before/after comparison plus likely real-world meaning\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
+                "For each changed cell, explicitly connect evidence to meaning, for example: 'new pale rectangular pads and access tracks suggest active construction or site preparation', 'a continuous dark linear feature suggests a new road or service track', 'rougher exposed soil suggests excavation or recently disturbed ground'.\n",
                 "Prefer physical/geographic interpretation over raw low-level cues. Use 'possible' for uncertain object hypotheses. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 "Do not overuse building-specific language; only use it when rectilinear bright-surface and line-structure cues agree strongly.\n",
                 "Do not include chain-of-thought, draft commentary, self-correction, markdown, or extra text outside the JSON.\n",
@@ -1085,6 +1096,8 @@ class RemoteSensingQwen2VL2B:
                 "You are comparing aligned BEFORE and AFTER remote-sensing crop images from the same location.\n",
                 "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
                 "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
+                "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
+                "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Do not infer object type from heatmap color alone.\n",
                 "Inspect highlighted changed cells carefully for roads, plot/service lines, compact surfaces, ground clearing, rectilinear patches, and local texture changes.\n",
                 "Use cautious wording unless several cues agree; roof/building-specific claims need strong rectilinear built-surface evidence.\n",
@@ -1107,6 +1120,8 @@ class RemoteSensingQwen2VL2B:
                 "You are comparing aligned BEFORE and AFTER remote-sensing crop images from the same location.\n",
                 "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
                 "Use BEFORE and AFTER as primary evidence. Use the contact sheet to inspect each grid cell; treat the heatmap only as a secondary inspection aid.\n",
+                "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
+                "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Do not infer object type from heatmap color alone.\n",
                 "If reasoning notes are provided below, treat them as scratch analysis and distill them into a concise user-facing answer.\n",
                 "Return strict JSON only with these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
@@ -1114,8 +1129,9 @@ class RemoteSensingQwen2VL2B:
                 "before_summary and after_summary must describe visible surface state in plain language.\n",
                 "main_changes must be 2 to 5 short plain-English strings.\n",
                 "cell_observations must contain exactly 16 objects, one for every cell A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
-                "Each cell object must be {\"cell\":\"A1\", \"observation\":\"specific visible before/after comparison\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
-                "Describe visible physical/geographic changes cautiously: possible rectilinear built-surface addition, compacted pad or yard, plot/service-line trace, road-edge rework, grading, clearing, excavation, ambiguous local reworking, or stable area.\n",
+                "Each cell object must be {\"cell\":\"A1\", \"observation\":\"specific visible before/after comparison plus likely real-world meaning\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
+                "For each changed cell, explicitly connect evidence to meaning, for example: 'new pale rectangular pads and access tracks suggest active construction or site preparation', 'a continuous dark linear feature suggests a new road or service track', 'rougher exposed soil suggests excavation or recently disturbed ground'.\n",
+                "Describe visible physical/geographic changes cautiously: possible construction activity, new access road or track, new building or roof, compacted pad or yard, plot or service-line trace, road-edge rework, grading, clearing, excavation, field preparation, ambiguous local reworking, or stable area.\n",
                 "Only call something roof/building-specific when multiple strong visual cues agree. Do not invent small objects or causes. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 f"Write field values in {response_language}. Do not output chain-of-thought, markdown, draft notes, or introductory phrases.\n",
             ]
@@ -1415,6 +1431,8 @@ class OllamaSemanticChangeExplainer:
                 "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
                 "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
                 "Use the contact sheet to inspect each grid cell. Treat any heatmap only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
+                "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
+                "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Semantic-segmentation notes are weak secondary evidence and may be noisy or partially wrong.\n",
                 "Use the highlighted cells to inspect local road, plot/service-line, rectilinear patch, compact-surface, and ground-texture changes.\n",
                 "Use cautious hypotheses unless multiple cues agree; roof/building-specific claims require strong rectilinear built-surface evidence.\n",
@@ -1448,6 +1466,8 @@ class OllamaSemanticChangeExplainer:
                 "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
                 "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
                 "Use the contact sheet to inspect each grid cell. Treat any heatmap only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
+                "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
+                "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Use the reasoning notes only as scratch analysis. Do not reveal chain-of-thought or analysis steps.\n",
                 "Return strict JSON only with exactly these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
@@ -1456,7 +1476,8 @@ class OllamaSemanticChangeExplainer:
                 "main_changes must be 2 to 5 short plain-English strings.\n",
                 "cell_observations must contain exactly 16 objects, one for every cell A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
                 "Each cell object must have keys cell, observation, confidence. Confidence must be high, medium, low, or uncertain.\n",
-                "Describe visible physical/geographic changes cautiously: possible rectilinear built-surface addition, compacted pad or yard, plot/service-line trace, road-edge rework, grading, clearing, excavation, ambiguous local reworking, or stable area.\n",
+                "For each changed cell, explicitly connect evidence to meaning, for example: 'new pale rectangular pads and access tracks suggest active construction or site preparation', 'a continuous dark linear feature suggests a new road or service track', 'rougher exposed soil suggests excavation or recently disturbed ground'.\n",
+                "Describe visible physical/geographic changes cautiously: possible construction activity, new access road or track, new building or roof, compacted pad or yard, plot or service-line trace, road-edge rework, grading, clearing, excavation, field preparation, ambiguous local reworking, or stable area.\n",
                 "Only call something roof/building-specific when multiple strong visual cues agree. Prefer physical interpretation over raw low-level cues. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 f"Write the answer in {response_language}.\n\n",
                 "Reasoning notes:\n",

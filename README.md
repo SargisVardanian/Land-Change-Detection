@@ -80,10 +80,23 @@ streamlit run app.py
 В UI сейчас доступны:
 - `Before`
 - `After`
+- `Mask2Former surface segmentation` from `artifacts/models/semantic/mask2former-satellite`
 - `A1..D4 before/after contact sheet`
 - `Gemma visual interpretation`
 - `Cell observations`
-- debug-only Mask2Former diagnostics, если включён `Show debug trace/details`
+- debug traces/raw model output, если включён `Show debug trace/details`
+
+## Remote-sensing VLM models
+
+Для более смыслового описания спутниковых изменений добавлен локальный кандидат:
+
+- `AdaptLLM/remote-sensing-Qwen2-VL-2B-Instruct` -> `artifacts/models/vlm/remote-sensing-Qwen2-VL-2B-Instruct`
+
+Он меньше и практичнее для MacBook, чем 7B-модели, и дообучен на remote-sensing visual instruction данных. Более тяжёлый следующий кандидат:
+
+- `AdaptLLM/remote-sensing-Qwen2.5-VL-3B-Instruct` -> `artifacts/models/vlm/remote-sensing-Qwen2.5-VL-3B-Instruct`
+
+Обе модели прописаны в `scripts/download_vlm_models.py`. `GeoChat-7B` и `EarthDial_4B_RGB` остаются исследовательскими кандидатами, но не являются дефолтом: GeoChat тяжелее для MacBook, а EarthDial использует custom runtime и требует отдельной стабилизации.
 
 ## Архитектурная цель
 
