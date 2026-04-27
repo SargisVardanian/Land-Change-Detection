@@ -47,6 +47,7 @@ def _to_uint8_rgb(rgb: np.ndarray) -> np.ndarray:
 
 
 def _ensure_earthdial_import_path() -> None:
+    os.environ.setdefault("PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION", "python")
     site_src = Path(site.getsitepackages()[0]) / "src"
     if site_src.exists():
         site_src_str = str(site_src)
@@ -58,10 +59,13 @@ def _patch_transformers_compat() -> None:
     try:
         import transformers
         from transformers import Cache
+        from transformers import utils as transformers_utils
     except Exception:
         return
     if not hasattr(transformers, "EncoderDecoderCache"):
         transformers.EncoderDecoderCache = Cache
+    if not hasattr(transformers_utils, "is_flash_attn_greater_or_equal_2_10"):
+        transformers_utils.is_flash_attn_greater_or_equal_2_10 = lambda: False
 
 
 def _composite_triptych(before: np.ndarray, after: np.ndarray, overlay: np.ndarray, panel_size: int = 448) -> Image.Image:

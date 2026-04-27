@@ -25,6 +25,16 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from land_change_detection.data import OSCDSceneRepository
+from land_change_detection.dinov3_features import (
+    DINO_V3_VITB16,
+    DINO_V3_VITB16_DIR,
+    DINO_V3_VITL16_SAT,
+    DINO_V3_VITL16_SAT_DIR,
+    DINO_V3_VITS16,
+    DINO_V3_VITS16_DIR,
+    DINOv3FeatureEncoder,
+    model_dir_complete as feature_model_dir_complete,
+)
 from land_change_detection.legacy.legacy_visual_context import (
     analyze_change_cells,
     build_change_guide_image,
@@ -100,6 +110,11 @@ def load_vlm(model_name: str, device_name: str, reasoning_profile: str, runtime_
     if runtime_backend == "mlx_vlm_qwen":
         return QwenMlxVlmExplainer(model_name_or_path=model_name, reasoning_profile=reasoning_profile)
     return RemoteSensingQwen2VL2B(model_name_or_path=model_name, device=device_name, reasoning_profile=reasoning_profile)
+
+
+@st.cache_resource(show_spinner=False)
+def load_dino_feature_encoder(model_name: str, device_name: str) -> DINOv3FeatureEncoder:
+    return DINOv3FeatureEncoder(model_name_or_path=model_name, device=device_name)
 
 
 @st.cache_resource(show_spinner=False)
@@ -284,11 +299,39 @@ def available_model_presets() -> dict[str, dict[str, str]]:
             "runtime_backend": "hf_transformers_legacy",
             "model_name": str(REMOTE_SENSING_QWEN2_5_VL_3B_DIR),
         }
+    if model_dir_complete(EARTHDIAL_RGB_DIR):
+        presets["EarthDial 4B RGB (HF local)"] = {
+            "backend": "EarthDial VLM",
+            "runtime_backend": "hf_transformers_legacy",
+            "model_name": str(EARTHDIAL_RGB_DIR),
+        }
+    else:
+        presets["EarthDial 4B RGB (download from HF)"] = {
+            "backend": "EarthDial VLM",
+            "runtime_backend": "hf_transformers_legacy",
+            "model_name": EARTHDIAL_RGB,
+        }
     presets["gemma4:e4b (Ollama)"] = {
         "backend": "Ollama vision",
         "runtime_backend": "ollama_gemma",
         "model_name": GEMMA4_E4B_OLLAMA,
     }
+    return presets
+
+
+def available_feature_encoder_presets() -> dict[str, str]:
+    presets: dict[str, str] = {"None": ""}
+    presets[
+        "DINOv3 ViT-S/16 (open timm, local snapshot ready)" if feature_model_dir_complete(DINO_V3_VITS16_DIR) else "DINOv3 ViT-S/16 (open timm, download from HF)"
+    ] = DINO_V3_VITS16
+    presets[
+        "DINOv3 ViT-B/16 (open timm, local snapshot ready)" if feature_model_dir_complete(DINO_V3_VITB16_DIR) else "DINOv3 ViT-B/16 (open timm, download from HF)"
+    ] = DINO_V3_VITB16
+    presets[
+        "DINOv3 ViT-L/16 SAT-493M (open timm, local snapshot ready)"
+        if feature_model_dir_complete(DINO_V3_VITL16_SAT_DIR)
+        else "DINOv3 ViT-L/16 SAT-493M (open timm, download from HF)"
+    ] = DINO_V3_VITL16_SAT
     return presets
 
 
@@ -473,6 +516,25 @@ def render_surface_segmentation(crop_before_result, crop_after_result, crop_tran
             )
 
 
+def render_dino_feature_diagnostics(feature_rows: list[dict[str, object]], model_name: str) -> None:
+    st.subheader("DINOv3 feature-change diagnostics")
+    st.caption(
+        f"Feature-based change ranking from `{model_name}`. This is not segmentation and not natural-language VLM output; "
+        "it measures how much the visual semantics of each cell shift between BEFORE and AFTER."
+    )
+    st.dataframe(
+        feature_rows,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "cell": st.column_config.TextColumn("cell", width="small"),
+            "cosine_distance": st.column_config.NumberColumn("cosine distance", width="small", format="%.3f"),
+            "l2_distance": st.column_config.NumberColumn("l2 distance", width="small", format="%.3f"),
+            "interpretation": st.column_config.TextColumn("interpretation", width="large"),
+        },
+    )
+
+
 def _render_main_changes(changes: list[object]) -> None:
     clean_changes = [str(item).strip() for item in changes if str(item).strip()]
     if not clean_changes:
@@ -610,6 +672,11 @@ def pad_bbox(
 source_mode = st.sidebar.radio("Image source", ["OSCD dataset", "Upload your own pair"])
 model_dir = Path(st.sidebar.text_input("Semantic model", value=str(MASK2FORMER_SATELLITE_DIR)))
 device_name = st.sidebar.selectbox("Semantic device", ["cpu", "mps", "cuda"], index=1)
+dino_feature_presets = available_feature_encoder_presets()
+dino_feature_preset_names = list(dino_feature_presets.keys())
+selected_dino_feature_preset = st.sidebar.selectbox("DINOv3 feature encoder", dino_feature_preset_names, index=0)
+dino_feature_model_name = dino_feature_presets[selected_dino_feature_preset]
+dino_feature_device = st.sidebar.selectbox("DINOv3 device", ["cpu", "mps", "cuda"], index=1)
 enable_vlm = st.sidebar.checkbox("Enable model explanation", value=True)
 show_live_trace = st.sidebar.checkbox("Show debug trace/details", value=False)
 use_semantic_hints = False
@@ -638,6 +705,17 @@ ollama_model_name = selected_model_config["model_name"] if explanation_backend =
 
 st.sidebar.markdown("### Models")
 st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
+if dino_feature_model_name:
+    dino_local_dirs = {
+        DINO_V3_VITS16: DINO_V3_VITS16_DIR,
+        DINO_V3_VITB16: DINO_V3_VITB16_DIR,
+        DINO_V3_VITL16_SAT: DINO_V3_VITL16_SAT_DIR,
+    }
+    dino_local_dir = dino_local_dirs.get(dino_feature_model_name)
+    if dino_local_dir and dino_local_dir.exists():
+        st.sidebar.write(f"`dinov3 feature encoder`: {'yes' if feature_model_dir_complete(dino_local_dir) else 'incomplete'}")
+    else:
+        st.sidebar.write("`dinov3 feature encoder`: download on first use")
 if runtime_backend == "mlx_vlm_qwen":
     st.sidebar.write(f"`mlx qwen runtime`: {'yes' if mlx_model_ready(vlm_model_name) else 'download on first use'}")
 elif runtime_backend == "hf_transformers_legacy" and Path(vlm_model_name).exists():
@@ -744,6 +822,7 @@ crop_before_result = None
 crop_after_result = None
 cell_packs = []
 crop_transitions: list[dict] = []
+dino_feature_rows: list[dict[str, object]] = []
 
 if model_dir.exists():
     with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
@@ -761,6 +840,23 @@ if model_dir.exists():
         semantic_ran_this_pass = True
 else:
     st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
+
+if dino_feature_model_name:
+    try:
+        with st.spinner(f"Running {selected_dino_feature_preset} on the selected crop..."):
+            dino_encoder = load_dino_feature_encoder(dino_feature_model_name, dino_feature_device)
+            dino_feature_rows = [
+                {
+                    "cell": row.cell,
+                    "cosine_distance": row.cosine_distance,
+                    "l2_distance": row.l2_distance,
+                    "interpretation": row.interpretation,
+                }
+                for row in dino_encoder.analyze_grid(crop_before, crop_after, grid_size=4)
+            ]
+    except Exception as exc:
+        dino_feature_rows = []
+        st.warning(f"DINOv3 feature inference failed: {type(exc).__name__}: {exc}")
 vlm_result = None
 
 st.subheader("Selected Crop")
@@ -769,6 +865,8 @@ selected_cols[0].image(crop_before, caption="Crop before", width="stretch")
 selected_cols[1].image(crop_after, caption="Crop after", width="stretch")
 if crop_before_result is not None and crop_after_result is not None:
     render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions, model_dir)
+if dino_feature_rows:
+    render_dino_feature_diagnostics(dino_feature_rows, dino_feature_model_name)
 
 change_evidence = analyze_change_cells(crop_before, crop_after, grid_size=4)
 change_guide_image = build_change_guide_image(crop_before, crop_after, change_evidence)

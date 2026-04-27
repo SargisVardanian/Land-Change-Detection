@@ -91,12 +91,39 @@ streamlit run app.py
 Для более смыслового описания спутниковых изменений добавлен локальный кандидат:
 
 - `AdaptLLM/remote-sensing-Qwen2-VL-2B-Instruct` -> `artifacts/models/vlm/remote-sensing-Qwen2-VL-2B-Instruct`
+- `akshaydudhane/EarthDial_4B_RGB` -> `artifacts/models/vlm/EarthDial_4B_RGB`
 
 Он меньше и практичнее для MacBook, чем 7B-модели, и дообучен на remote-sensing visual instruction данных. Более тяжёлый следующий кандидат:
 
 - `AdaptLLM/remote-sensing-Qwen2.5-VL-3B-Instruct` -> `artifacts/models/vlm/remote-sensing-Qwen2.5-VL-3B-Instruct`
 
-Обе модели прописаны в `scripts/download_vlm_models.py`. `GeoChat-7B` и `EarthDial_4B_RGB` остаются исследовательскими кандидатами, но не являются дефолтом: GeoChat тяжелее для MacBook, а EarthDial использует custom runtime и требует отдельной стабилизации.
+`Remote-sensing Qwen` модели прописаны в `scripts/download_vlm_models.py`. `EarthDial_4B_RGB` скачивается отдельным скриптом:
+
+```bash
+python scripts/download_earthdial.py
+```
+
+`GeoChat-7B` остаётся исследовательским кандидатом: он заметно тяжелее для MacBook и пока не интегрирован в текущий runtime.
+
+## DINOv3 feature encoders
+
+В UI добавлен optional `DINOv3 feature encoder` path. Это не VLM и не segmentation model: он считает feature-level shift между `Before` и `After` по ячейкам `A1..D4`.
+
+Практичные размеры для Mac:
+- `timm/vit_small_patch16_dinov3.lvd1689m` -> около `0.09 GB`
+- `timm/vit_base_patch16_dinov3.lvd1689m` -> около `0.34 GB`
+- `timm/vit_large_patch16_dinov3.sat493m` -> около `1.21 GB`
+
+Непрактичный локальный вариант:
+- `facebook/dinov3-vit7b16-pretrain-lvd1689m` / `...sat493m` -> около `26.86 GB`
+
+Важно: официальные `facebook/dinov3-*` repos на Hugging Face gated, поэтому в приложении используется открытая `timm`-линия DINOv3 checkpoints. Это даёт рабочий inference path на Mac без отдельного HF access approval.
+
+Скрипт загрузки:
+
+```bash
+python scripts/download_dinov3_models.py
+```
 
 ## Архитектурная цель
 
