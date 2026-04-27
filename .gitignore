@@ -1,0 +1,25 @@
+**/.DS_Store
+
+# Local agent / editor state
+.agent/
+.codex/
+.agent-capability-report.md
+
+# Python environments and generated package metadata
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# Downloaded models, datasets, and local run artifacts
+artifacts/
+data/
+
+# Large local research/source files should stay outside git.
+*.pdf
+*.zip
