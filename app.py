@@ -26,6 +26,7 @@ if str(SRC_DIR) not in sys.path:
 
 from land_change_detection.data import OSCDSceneRepository
 from land_change_detection.dinov3_features import (
+    DINO_V3_FACEBOOK_VITL16_SAT,
     DINO_V3_VITB16,
     DINO_V3_VITB16_DIR,
     DINO_V3_VITL16_SAT,
@@ -116,6 +117,11 @@ def load_vlm(model_name: str, device_name: str, reasoning_profile: str, runtime_
 
 @st.cache_resource(show_spinner=False)
 def load_dino_feature_encoder(model_name: str, device_name: str) -> DINOv3FeatureEncoder:
+    return DINOv3FeatureEncoder(model_name_or_path=model_name, device=device_name)
+
+
+@st.cache_resource(show_spinner=False)
+def load_dino_region_segmenter(model_name: str, device_name: str) -> DINOv3FeatureEncoder:
     return DINOv3FeatureEncoder(model_name_or_path=model_name, device=device_name)
 
 
@@ -321,6 +327,37 @@ def available_model_presets() -> dict[str, dict[str, str]]:
     return presets
 
 
+def available_semantic_model_presets() -> dict[str, dict[str, str]]:
+    return {
+        "Mask2Former satellite / OpenEarthMap classes": {
+            "backend": "mask2former_openearthmap",
+            "model_name": str(MASK2FORMER_SATELLITE_DIR),
+            "kind": "semantic_classes",
+        },
+        "facebook/dinov3-vitl16-pretrain-sat493m (gated; use open SAT mirror)": {
+            "backend": "dinov3_feature_regions",
+            "model_name": DINO_V3_VITL16_SAT,
+            "kind": "feature_regions",
+            "source_model": DINO_V3_FACEBOOK_VITL16_SAT,
+        },
+        "timm/vit_large_patch16_dinov3.sat493m": {
+            "backend": "dinov3_feature_regions",
+            "model_name": DINO_V3_VITL16_SAT,
+            "kind": "feature_regions",
+        },
+        "timm/vit_base_patch16_dinov3.lvd1689m": {
+            "backend": "dinov3_feature_regions",
+            "model_name": DINO_V3_VITB16,
+            "kind": "feature_regions",
+        },
+        "timm/vit_small_patch16_dinov3.lvd1689m": {
+            "backend": "dinov3_feature_regions",
+            "model_name": DINO_V3_VITS16,
+            "kind": "feature_regions",
+        },
+    }
+
+
 def available_feature_encoder_presets() -> dict[str, str]:
     presets: dict[str, str] = {"None": ""}
     presets[
@@ -484,25 +521,34 @@ def render_debug_semantic_diagnostics(crop_before_result, crop_after_result, cro
     st.dataframe(crop_transitions, width="stretch", hide_index=True)
 
 
-def render_semantic_color_legend(id2label: dict[int, str]) -> None:
+def render_semantic_color_legend(id2label: dict[int, str], class_colors: dict[str, str] | None = None) -> None:
+    colors = class_colors or DEFAULT_CLASS_COLORS
     cols = st.columns(3)
     for idx, (class_id, label) in enumerate(sorted(id2label.items())):
-        color = DEFAULT_CLASS_COLORS.get(str(label), "#95a5a6")
+        color = colors.get(str(label), "#95a5a6")
         with cols[idx % len(cols)]:
             st.color_picker(f"{class_id}: {label}", value=color, disabled=True, key=f"legend-{class_id}-{label}")
 
 
-def render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions: list[dict], model_dir: Path) -> None:
-    st.subheader("Mask2Former surface segmentation")
-    st.caption(
-        f"Semantic surface maps from `{model_dir}`. These maps are segmentation evidence; "
-        "the final human explanation below is produced separately by the VLM from the before/after images."
-    )
+def render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions: list[dict], model_label: str) -> None:
+    metadata = crop_before_result.metadata or {}
+    is_dino_regions = metadata.get("backend") == "dinov3_feature_regions"
+    st.subheader("Surface segmentation")
+    if is_dino_regions:
+        st.caption(
+            f"Feature-region maps from `{model_label}`. DINOv3 does not include a land-cover segmentation head here, "
+            "so these are unsupervised surface regions, not building/road/water semantic classes."
+        )
+    else:
+        st.caption(
+            f"Semantic surface maps from `{model_label}`. These maps are segmentation evidence; "
+            "the final human explanation below is produced separately by the VLM from the before/after images."
+        )
     map_cols = st.columns(2)
     map_cols[0].image(crop_before_result.color_map, caption="T1 surface segmentation", width="stretch")
     map_cols[1].image(crop_after_result.color_map, caption="T2 surface segmentation", width="stretch")
     with st.expander("Surface class colors", expanded=False):
-        render_semantic_color_legend(crop_before_result.legend)
+        render_semantic_color_legend(crop_before_result.legend, crop_before_result.class_colors)
     if crop_transitions:
         with st.expander("Surface segmentation transitions", expanded=False):
             st.dataframe(
@@ -672,8 +718,16 @@ def pad_bbox(
 
 
 source_mode = st.sidebar.radio("Image source", ["OSCD dataset", "Upload your own pair"])
-model_dir = Path(st.sidebar.text_input("Semantic model", value=str(MASK2FORMER_SATELLITE_DIR)))
+semantic_model_presets = available_semantic_model_presets()
+semantic_model_preset_names = list(semantic_model_presets.keys())
+selected_semantic_model_preset = st.sidebar.selectbox("Semantic model", semantic_model_preset_names, index=0)
+selected_semantic_model_config = semantic_model_presets[selected_semantic_model_preset]
+semantic_backend_name = selected_semantic_model_config["backend"]
+semantic_model_name = selected_semantic_model_config["model_name"]
+model_dir = Path(semantic_model_name)
 device_name = st.sidebar.selectbox("Semantic device", ["cpu", "mps", "cuda"], index=1)
+if semantic_backend_name == "dinov3_feature_regions":
+    st.sidebar.caption("DINOv3 produces unsupervised feature-region maps, not named land-cover classes.")
 dino_feature_presets = available_feature_encoder_presets()
 dino_feature_preset_names = list(dino_feature_presets.keys())
 selected_dino_feature_preset = st.sidebar.selectbox("DINOv3 feature encoder", dino_feature_preset_names, index=0)
@@ -706,7 +760,17 @@ vlm_model_name = selected_model_config["model_name"] if runtime_backend in {"mlx
 ollama_model_name = selected_model_config["model_name"] if explanation_backend == "Ollama vision" else default_ollama_model_name()
 
 st.sidebar.markdown("### Models")
-st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
+if semantic_backend_name == "mask2former_openearthmap":
+    st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
+else:
+    dino_semantic_dirs = {
+        DINO_V3_VITS16: DINO_V3_VITS16_DIR,
+        DINO_V3_VITB16: DINO_V3_VITB16_DIR,
+        DINO_V3_VITL16_SAT: DINO_V3_VITL16_SAT_DIR,
+    }
+    dino_semantic_dir = dino_semantic_dirs.get(semantic_model_name)
+    status = "yes" if dino_semantic_dir and feature_model_dir_complete(dino_semantic_dir) else "download on first use"
+    st.sidebar.write(f"`dinov3 surface regions`: {status}")
 if dino_feature_model_name:
     dino_local_dirs = {
         DINO_V3_VITS16: DINO_V3_VITS16_DIR,
@@ -759,7 +823,7 @@ if previous_scene_key != scene_key:
     st.session_state.active_crop_bbox = None
     st.session_state.crop_selector_nonce = st.session_state.get("crop_selector_nonce", 0) + 1
 
-if show_live_trace and not model_dir.exists():
+if show_live_trace and semantic_backend_name == "mask2former_openearthmap" and not model_dir.exists():
     st.sidebar.warning(f"Debug semantic model directory not found: {model_dir}")
 
 st.subheader("Select Crop")
@@ -826,22 +890,39 @@ cell_packs = []
 crop_transitions: list[dict] = []
 dino_feature_rows: list[dict[str, object]] = []
 
-if model_dir.exists():
-    with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
-        segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
-        pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
-        pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
-        crop_before_result = pipeline_result.before_segmentation
-        crop_after_result = pipeline_result.after_segmentation
-        cell_packs = pipeline_result.cell_packs
-        crop_transitions = [
-            item
-            for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
-            if item["before"] != item["after"]
-        ]
-        semantic_ran_this_pass = True
+if semantic_backend_name == "mask2former_openearthmap":
+    if model_dir.exists():
+        with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
+            segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
+            pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
+            pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
+            crop_before_result = pipeline_result.before_segmentation
+            crop_after_result = pipeline_result.after_segmentation
+            cell_packs = pipeline_result.cell_packs
+            crop_transitions = [
+                item
+                for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
+                if item["before"] != item["after"]
+            ]
+            semantic_ran_this_pass = True
+    else:
+        st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
 else:
-    st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
+    try:
+        with st.spinner(f"Running DINOv3 feature-region segmentation with {semantic_model_name}..."):
+            dino_segmenter = load_dino_region_segmenter(semantic_model_name, device_name)
+            crop_before_result, crop_after_result = dino_segmenter.segment_pair_regions(crop_before, crop_after, clusters=6)
+            crop_transitions = [
+                item
+                for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
+                if item["before"] != item["after"]
+            ]
+            semantic_ran_this_pass = True
+    except Exception as exc:
+        st.warning(f"DINOv3 feature-region segmentation failed: {type(exc).__name__}: {exc}")
+        crop_before_result = None
+        crop_after_result = None
+        crop_transitions = []
 
 if dino_feature_model_name:
     try:
@@ -866,7 +947,7 @@ selected_cols = st.columns(2)
 selected_cols[0].image(crop_before, caption="Crop before", width="stretch")
 selected_cols[1].image(crop_after, caption="Crop after", width="stretch")
 if crop_before_result is not None and crop_after_result is not None:
-    render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions, model_dir)
+    render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions, selected_semantic_model_preset)
 if dino_feature_rows:
     render_dino_feature_diagnostics(dino_feature_rows, dino_feature_model_name)
 

@@ -105,11 +105,12 @@ python scripts/download_earthdial.py
 
 `GeoChat-7B` остаётся исследовательским кандидатом: он заметно тяжелее для MacBook и пока не интегрирован в текущий runtime.
 
-## DINOv3 feature encoders
+## DINOv3 feature-region segmentation
 
-В UI добавлен optional `DINOv3 feature encoder` path. Это не VLM и не segmentation model: он считает feature-level shift между `Before` и `After` по ячейкам `A1..D4`.
+В UI добавлены DINOv3 варианты в `Semantic model`. Важно: DINOv3 без отдельного decoder/head не выдаёт OpenEarthMap классы вроде `road`, `building`, `water`. Поэтому текущая реализация строит unsupervised `DINO feature-region` segmentation: patch embeddings кластеризуются совместно для `Before` и `After`, чтобы region id были сопоставимы между двумя снимками.
 
 Практичные размеры для Mac:
+- `facebook/dinov3-vitl16-pretrain-sat493m` -> official SAT checkpoint, gated на Hugging Face; в app для него используется открытый SAT mirror `timm/vit_large_patch16_dinov3.sat493m`
 - `timm/vit_small_patch16_dinov3.lvd1689m` -> около `0.09 GB`
 - `timm/vit_base_patch16_dinov3.lvd1689m` -> около `0.34 GB`
 - `timm/vit_large_patch16_dinov3.sat493m` -> около `1.21 GB`

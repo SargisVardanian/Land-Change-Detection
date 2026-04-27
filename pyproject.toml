@@ -16,6 +16,7 @@ dependencies = [
   "streamlit-cropper>=0.2.2",
   "huggingface_hub>=0.34.0",
   "streamlit>=1.44",
+  "tiktoken>=0.12.0",
   "transformers>=4.52.0",
   "accelerate>=1.5.0",
   "qwen-vl-utils>=0.0.8",
