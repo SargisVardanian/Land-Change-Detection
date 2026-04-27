@@ -54,6 +54,8 @@ from land_change_detection.semantic_hf import (
     draw_bbox,
 )
 from land_change_detection.remote_sensing_vlm import (
+    EARTHDIAL_RGB,
+    EARTHDIAL_RGB_DIR,
     GEMMA4_E4B_OLLAMA,
     QWEN3_5_VL_0_8B_MLX_4BIT,
     QWEN3_5_VL_0_8B_MLX_4BIT_DIR,
