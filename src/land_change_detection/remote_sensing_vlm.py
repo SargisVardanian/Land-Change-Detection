@@ -501,7 +501,80 @@ def parse_model_response(raw_text: str) -> dict:
         parsed["surface_before"] = parsed["before_image_details"]
     if parsed and "after_image_details" in parsed and "surface_after" not in parsed:
         parsed["surface_after"] = parsed["after_image_details"]
+    if parsed:
+        parsed = normalize_visual_summary(parsed)
     return parsed or {}
+
+
+def _clean_user_text(value: object) -> str:
+    text = _sanitize_model_text(str(value or "")).strip()
+    bad_markers = [
+        "here's a thinking process",
+        "i will analyze",
+        "step by step",
+        "placeholder",
+        "the goal is",
+        "analyze the request",
+    ]
+    lowered = text.lower()
+    if any(marker in lowered for marker in bad_markers):
+        return ""
+    return text
+
+
+def _normalize_string_list(value: object, limit: int = 5) -> list[str]:
+    if isinstance(value, list):
+        items = value
+    elif isinstance(value, str):
+        items = re.split(r"\n+|;|(?:^|\s)[-*]\s+", value)
+    else:
+        return []
+    result: list[str] = []
+    for item in items:
+        text = _clean_user_text(item)
+        if text and text not in result:
+            result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def normalize_cell_observations(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    result: list[dict[str, str]] = []
+    for idx, item in enumerate(value, start=1):
+        if isinstance(item, dict):
+            cell = str(item.get("cell") or item.get("cell_id") or "").strip().upper()
+            observation = _clean_user_text(item.get("observation") or item.get("summary") or item.get("change") or "")
+            confidence = str(item.get("confidence") or "uncertain").strip().lower()
+        else:
+            raw = _clean_user_text(item)
+            match = re.match(r"^\s*([A-D][1-4])\s*[:\-]\s*(.+)$", raw, flags=re.IGNORECASE)
+            cell = match.group(1).upper() if match else f"item_{idx}"
+            observation = match.group(2).strip() if match else raw
+            confidence = "uncertain"
+        if not observation:
+            continue
+        if not re.match(r"^[A-D][1-4]$", cell):
+            cell = f"item_{idx}"
+        if confidence not in {"high", "medium", "low", "uncertain"}:
+            confidence = "uncertain"
+        result.append({"cell": cell, "observation": observation, "confidence": confidence})
+    return result
+
+
+def normalize_visual_summary(parsed: dict) -> dict:
+    normalized = dict(parsed)
+    for key in ("scene_overview", "before_summary", "after_summary"):
+        normalized[key] = _clean_user_text(normalized.get(key, ""))
+    if not normalized.get("before_summary"):
+        normalized["before_summary"] = _clean_user_text(normalized.get("surface_before", ""))
+    if not normalized.get("after_summary"):
+        normalized["after_summary"] = _clean_user_text(normalized.get("surface_after", ""))
+    normalized["main_changes"] = _normalize_string_list(normalized.get("main_changes") or normalized.get("primary_changed_cells"), limit=5)
+    normalized["cell_observations"] = normalize_cell_observations(normalized.get("cell_observations"))
+    return normalized
 
 
 def has_complete_final_response(parsed: dict | None) -> bool:
@@ -509,7 +582,14 @@ def has_complete_final_response(parsed: dict | None) -> bool:
         return False
     scene_overview = str(parsed.get("scene_overview", "")).strip()
     bad_markers = ["here's a thinking process", "i will analyze", "since no images are provided", "step by step", "placeholder"]
-    return bool(scene_overview) and not any(marker in scene_overview.lower() for marker in bad_markers)
+    return (
+        bool(scene_overview)
+        and bool(str(parsed.get("before_summary", "")).strip())
+        and bool(str(parsed.get("after_summary", "")).strip())
+        and bool(parsed.get("main_changes"))
+        and bool(parsed.get("cell_observations"))
+        and not any(marker in scene_overview.lower() for marker in bad_markers)
+    )
 
 
 def parse_reasoning_notes(text: str) -> dict[str, str]:
@@ -670,10 +750,12 @@ class QwenMlxVlmExplainer:
                 "Image 1 is BEFORE. Image 2 is AFTER.\n",
                 "Image 3 is a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
                 "Use BEFORE and AFTER as primary evidence. Treat any change-guide or zoom image only as a secondary inspection aid.\n",
-                "Do not infer object type from heatmap color alone. Reasoning notes below are scratch work, not user-visible output.\n",
-                "Your job is only to provide a concise optional scene-level interpretation. The app builds the full cell table deterministically.\n",
-                "Return strict JSON only: {\"scene_overview\": \"...\"}.\n",
+                "Do not infer object type from heatmap color alone. Reasoning notes below are scratch work and must not be exposed.\n",
+                "Return strict JSON only with these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
+                "before_summary and after_summary must describe visible surface state in plain language.\n",
+                "main_changes must be 2 to 5 short plain-English strings.\n",
+                "cell_observations must be a list of objects: {\"cell\":\"A1\", \"observation\":\"...\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
                 "Prefer physical/geographic interpretation over raw low-level cues. Use 'possible' for uncertain object hypotheses. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 "Do not overuse building-specific language; only use it when rectilinear bright-surface and line-structure cues agree strongly.\n",
                 "Do not include chain-of-thought, draft commentary, self-correction, markdown, or extra text outside the JSON.\n",
@@ -830,7 +912,8 @@ class QwenMlxVlmExplainer:
                 if progress_cb is not None:
                     progress_cb({"stage": "mlx_final_retry", "message": "Final answer incomplete, retrying one strict final-only pass"})
                 retry_text, retry_stats = self._stream_text(
-                    self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide) + "\nReturn only strict JSON with scene_overview.",
+                    self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide)
+                    + "\nReturn only strict JSON with scene_overview, before_summary, after_summary, main_changes, and cell_observations.",
                     image_paths,
                     max_tokens=max(72, self.reasoning_profile.max_new_tokens_mps),
                     stage="mlx_final",
@@ -982,9 +1065,12 @@ class RemoteSensingQwen2VL2B:
                 "A third image may be provided as a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
                 "Use BEFORE and AFTER as primary evidence. Treat any change-guide image only as a secondary inspection aid.\n",
                 "Do not infer object type from heatmap color alone.\n",
-                "If reasoning notes are provided below, treat them as scratch analysis and distill them into one concise scene-level interpretation.\n",
-                "Return strict JSON only: {\"scene_overview\": \"...\"}.\n",
+                "If reasoning notes are provided below, treat them as scratch analysis and distill them into a concise user-facing answer.\n",
+                "Return strict JSON only with these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
+                "before_summary and after_summary must describe visible surface state in plain language.\n",
+                "main_changes must be 2 to 5 short plain-English strings.\n",
+                "cell_observations must be a list of objects: {\"cell\":\"A1\", \"observation\":\"...\", \"confidence\":\"high|medium|low|uncertain\"}.\n",
                 "Describe visible physical/geographic changes cautiously: possible rectilinear built-surface addition, compacted pad or yard, plot/service-line trace, road-edge rework, grading, clearing, excavation, ambiguous local reworking, or stable area.\n",
                 "Only call something roof/building-specific when multiple strong visual cues agree. Do not invent small objects or causes. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 f"Write field values in {response_language}. Do not output chain-of-thought, markdown, draft notes, or introductory phrases.\n",
@@ -1318,9 +1404,14 @@ class OllamaSemanticChangeExplainer:
                 "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
                 "A third image may be provided as a change-guide heatmap with highlighted candidate change cells.\n" if has_change_guide else "",
                 "Treat any change-guide or zoom image only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
-                "Use the reasoning notes only as scratch analysis. Replace every placeholder with concrete content.\n",
-                "Return strict JSON only: {\"scene_overview\": \"...\"}.\n",
+                "Use the reasoning notes only as scratch analysis. Do not reveal chain-of-thought or analysis steps.\n",
+                "Return strict JSON only with exactly these keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
                 "scene_overview must be one short paragraph explaining the overall physical/geographic change pattern.\n",
+                "before_summary must describe the visible surface state in BEFORE.\n",
+                "after_summary must describe the visible surface state in AFTER.\n",
+                "main_changes must be 2 to 5 short plain-English strings.\n",
+                "cell_observations must be a list of objects with keys cell, observation, confidence.\n",
+                "Use grid IDs such as A1, B3, D4 only when supported by the image or change-guide. Confidence must be high, medium, low, or uncertain.\n",
                 "Describe visible physical/geographic changes cautiously: possible rectilinear built-surface addition, compacted pad or yard, plot/service-line trace, road-edge rework, grading, clearing, excavation, ambiguous local reworking, or stable area.\n",
                 "Only call something roof/building-specific when multiple strong visual cues agree. Prefer physical interpretation over raw low-level cues. Do not use 'tone change' as likely_change when structural cues exist.\n",
                 f"Write the answer in {response_language}.\n\n",
@@ -1438,8 +1529,23 @@ class OllamaSemanticChangeExplainer:
             "type": "object",
             "properties": {
                 "scene_overview": {"type": "string"},
+                "before_summary": {"type": "string"},
+                "after_summary": {"type": "string"},
+                "main_changes": {"type": "array", "items": {"type": "string"}},
+                "cell_observations": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "cell": {"type": "string"},
+                            "observation": {"type": "string"},
+                            "confidence": {"type": "string"},
+                        },
+                        "required": ["cell", "observation", "confidence"],
+                    },
+                },
             },
-            "required": ["scene_overview"],
+            "required": ["scene_overview", "before_summary", "after_summary", "main_changes", "cell_observations"],
         }
         try:
             reasoning_text = ""
