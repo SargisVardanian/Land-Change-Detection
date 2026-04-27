@@ -11,6 +11,7 @@ def test_app_no_longer_uses_semantic_rows_for_user_answer():
     assert "build_scene_overview_from_rows" not in app_source
     assert "Full A1..D4 technical table" not in app_source
     assert "Pass semantic hints into model" not in app_source
+    assert "build_visual_fallback_summary" in app_source
 
 
 def test_app_sends_contact_sheet_to_vlm():

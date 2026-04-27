@@ -32,6 +32,10 @@ from land_change_detection.legacy.legacy_visual_context import (
     build_deterministic_breakdown,
     build_visual_change_context,
 )
+from land_change_detection.legacy.heuristic_change_interpreter import (
+    build_cell_report_rows as build_visual_cell_report_rows,
+    build_scene_overview as build_visual_scene_overview,
+)
 from land_change_detection.pipeline_v2 import LandChangePipelineV2
 from land_change_detection.semantic_hf import (
     DEFAULT_CLASS_COLORS,
@@ -478,7 +482,38 @@ def _render_main_changes(changes: list[object]) -> None:
         st.markdown(f"- {item}")
 
 
-def render_vlm_summary(parsed: dict | None) -> None:
+def build_visual_fallback_summary(change_evidence) -> dict:
+    rows = build_visual_cell_report_rows(change_evidence)
+    sorted_rows = sorted(rows, key=lambda row: float(row.get("score", 0.0)), reverse=True)
+    main_changes = []
+    for row in sorted_rows:
+        text = str(row.get("technical_interpretation") or row.get("likely_change") or "").strip()
+        if text and text not in main_changes:
+            main_changes.append(text)
+        if len(main_changes) >= 4:
+            break
+    observations = [
+        {
+            "cell": str(row.get("cell", "")),
+            "observation": (
+                f"{row.get('technical_interpretation', '')} "
+                f"Visible evidence: before {row.get('objects_before', '')}; after {row.get('objects_after', '')}. "
+                f"Support: {row.get('support', '')}."
+            ).strip(),
+            "confidence": str(row.get("confidence", "uncertain")),
+        }
+        for row in rows
+    ]
+    return {
+        "scene_overview": build_visual_scene_overview(change_evidence),
+        "before_summary": "Before, the selected crop is summarized from visible roads, buildings, exposed ground, compact surfaces, and vegetation cues.",
+        "after_summary": "After, the selected crop is compared cell by cell for new roads or tracks, grading, excavation, construction-like surfaces, building-like additions, and stable areas.",
+        "main_changes": main_changes,
+        "cell_observations": observations,
+    }
+
+
+def render_vlm_summary(parsed: dict | None, fallback_summary: dict | None = None) -> None:
     parsed = parsed or {}
     scene_overview = normalize_model_scene_overview(parsed)
     before_summary = str(parsed.get("before_summary", "")).strip()
@@ -486,13 +521,26 @@ def render_vlm_summary(parsed: dict | None) -> None:
     main_changes = parsed.get("main_changes") if isinstance(parsed.get("main_changes"), list) else []
     cell_observations = parsed.get("cell_observations") if isinstance(parsed.get("cell_observations"), list) else []
 
-    st.subheader("Gemma visual interpretation" if parsed else "VLM visual interpretation")
+    used_fallback = False
+    if (not scene_overview or not cell_observations) and fallback_summary:
+        used_fallback = True
+        scene_overview = normalize_model_scene_overview(fallback_summary)
+        before_summary = str(fallback_summary.get("before_summary", "")).strip()
+        after_summary = str(fallback_summary.get("after_summary", "")).strip()
+        main_changes = fallback_summary.get("main_changes") if isinstance(fallback_summary.get("main_changes"), list) else []
+        cell_observations = fallback_summary.get("cell_observations") if isinstance(fallback_summary.get("cell_observations"), list) else []
+
+    st.subheader("Gemma visual interpretation" if parsed and not used_fallback else "Visual interpretation")
     if not parsed or not scene_overview:
         st.warning(
-            "The VLM did not return a complete user-facing analysis. "
-            "No semantic-class fallback is shown because those labels can be misleading for this crop."
+            "The model did not return a complete user-facing analysis. Try a smaller reasoning budget or another VLM preset."
         )
         return
+    if used_fallback:
+        st.info(
+            "The selected VLM did not return a complete structured answer, so this section uses deterministic visual evidence "
+            "from the before/after crop. It does not use Mask2Former semantic class labels as the final explanation."
+        )
     st.write(scene_overview)
 
     if before_summary or after_summary:
@@ -523,12 +571,13 @@ def render_vlm_summary(parsed: dict | None) -> None:
 def render_final_answer(
     parsed: dict | None,
     change_zoom_strip: np.ndarray,
+    fallback_summary: dict | None = None,
     reasoning_text: str = "",
     show_debug: bool = False,
 ) -> None:
     st.subheader("Analysis output")
     with st.container(border=True):
-        render_vlm_summary(parsed)
+        render_vlm_summary(parsed, fallback_summary=fallback_summary)
         if show_debug and reasoning_text.strip():
             with st.expander("Model reasoning notes", expanded=False):
                 st.caption(
@@ -725,6 +774,7 @@ change_evidence = analyze_change_cells(crop_before, crop_after, grid_size=4)
 change_guide_image = build_change_guide_image(crop_before, crop_after, change_evidence)
 change_zoom_strip = build_change_zoom_strip(crop_before, crop_after, change_evidence)
 cell_contact_sheet = build_cell_contact_sheet(crop_before, crop_after, grid_size=4)
+fallback_visual_summary = build_visual_fallback_summary(change_evidence)
 st.subheader("4x4 visual comparison grid")
 st.caption("Each panel shows the same cell before and after. This grid is sent to the VLM so it can describe A1..D4 directly.")
 st.image(cell_contact_sheet, caption="A1..D4 before/after contact sheet", width="stretch")
@@ -794,15 +844,16 @@ if enable_vlm:
         render_final_answer(
             parsed=vlm_result.parsed,
             change_zoom_strip=change_zoom_strip,
+            fallback_summary=fallback_visual_summary,
             reasoning_text=vlm_result.reasoning_text,
             show_debug=show_live_trace,
         )
 
     else:
-        render_final_answer(None, change_zoom_strip, show_debug=show_live_trace)
+        render_final_answer(None, change_zoom_strip, fallback_summary=fallback_visual_summary, show_debug=show_live_trace)
 else:
     vlm_result = None
-    render_final_answer(None, change_zoom_strip, show_debug=show_live_trace)
+    render_final_answer(None, change_zoom_strip, fallback_summary=fallback_visual_summary, show_debug=show_live_trace)
 
 if show_live_trace:
     stage_rows = [
