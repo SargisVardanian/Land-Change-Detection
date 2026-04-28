@@ -66,6 +66,12 @@ def _patch_transformers_compat() -> None:
         transformers.EncoderDecoderCache = Cache
     if not hasattr(transformers_utils, "is_flash_attn_greater_or_equal_2_10"):
         transformers_utils.is_flash_attn_greater_or_equal_2_10 = lambda: False
+    try:
+        from earthdial.model.internvl_chat.configuration_internvl_chat import InternVLChatConfig
+
+        InternVLChatConfig.has_no_defaults_at_init = True
+    except Exception:
+        pass
 
 
 def _composite_triptych(before: np.ndarray, after: np.ndarray, overlay: np.ndarray, panel_size: int = 448) -> Image.Image:
@@ -1034,12 +1040,24 @@ class RemoteSensingQwen2VL2B:
         from earthdial.model.internvl_chat import InternVLChatModel
         from transformers import LlamaTokenizer
 
+        if not hasattr(InternVLChatModel, "all_tied_weights_keys"):
+            InternVLChatModel.all_tied_weights_keys = []
         self.tokenizer = LlamaTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, use_fast=False)
-        self.model = InternVLChatModel.from_pretrained(
-            model_name_or_path,
-            low_cpu_mem_usage=True,
-            torch_dtype=self.dtype,
-        )
+        orig_linspace = torch.linspace
+
+        def _cpu_linspace_for_earthdial_init(*args, **kwargs):
+            kwargs.setdefault("device", "cpu")
+            return orig_linspace(*args, **kwargs)
+
+        torch.linspace = _cpu_linspace_for_earthdial_init
+        try:
+            self.model = InternVLChatModel.from_pretrained(
+                model_name_or_path,
+                low_cpu_mem_usage=False,
+                torch_dtype=self.dtype,
+            )
+        finally:
+            torch.linspace = orig_linspace
         self.model = self.model.to(self.device, dtype=self.dtype) if self.device.type != "cpu" else self.model.to(self.device)
         self.model.eval()
         image_size = int(getattr(self.model.config, "force_image_size", None) or getattr(self.model.config.vision_config, "image_size", 448))
@@ -1619,38 +1637,39 @@ class OllamaSemanticChangeExplainer:
         }
         try:
             reasoning_text = ""
-            for round_idx in range(self.reasoning_profile.reasoning_rounds):
-                reasoning_prompt = (
-                    self._reasoning_prompt(semantic_context=semantic_context, visual_context=visual_context, response_language=response_language, has_change_guide=has_change_guide)
-                    if not reasoning_text.strip()
-                    else self._reasoning_continue_prompt(
-                        semantic_context=semantic_context,
-                        visual_context=visual_context,
-                        response_language=response_language,
-                        reasoning_text=reasoning_text,
-                        has_change_guide=has_change_guide,
+            if self.reasoning_profile_name != "efficient":
+                for round_idx in range(self.reasoning_profile.reasoning_rounds):
+                    reasoning_prompt = (
+                        self._reasoning_prompt(semantic_context=semantic_context, visual_context=visual_context, response_language=response_language, has_change_guide=has_change_guide)
+                        if not reasoning_text.strip()
+                        else self._reasoning_continue_prompt(
+                            semantic_context=semantic_context,
+                            visual_context=visual_context,
+                            response_language=response_language,
+                            reasoning_text=reasoning_text,
+                            has_change_guide=has_change_guide,
+                        )
                     )
-                )
-                reasoning_body = self._chat_request(
-                    prompt=reasoning_prompt,
-                    images=all_images,
-                    think_mode=self.reasoning_profile.ollama_think,
-                    num_predict=max(128, self.reasoning_profile.ollama_num_predict // 2),
-                    num_ctx=self.reasoning_profile.ollama_num_ctx,
-                    response_format=None,
-                    progress_cb=progress_cb,
-                    stage_prefix="ollama_reasoning",
-                )
-                reasoning_message = reasoning_body.get("message", {}) if isinstance(reasoning_body, dict) else {}
-                visible_reasoning = _sanitize_reasoning_text(str(reasoning_message.get("content", "")).strip())
-                private_reasoning = _sanitize_reasoning_text(str(reasoning_message.get("thinking", "")).strip())
-                candidate = visible_reasoning
-                if not reasoning_notes_complete(candidate):
-                    candidate = private_reasoning
-                if candidate.strip():
-                    reasoning_text = _normalize_reasoning_notes(candidate)
-                if reasoning_notes_complete(reasoning_text):
-                    break
+                    reasoning_body = self._chat_request(
+                        prompt=reasoning_prompt,
+                        images=all_images,
+                        think_mode=self.reasoning_profile.ollama_think,
+                        num_predict=max(128, self.reasoning_profile.ollama_num_predict // 2),
+                        num_ctx=self.reasoning_profile.ollama_num_ctx,
+                        response_format=None,
+                        progress_cb=progress_cb,
+                        stage_prefix="ollama_reasoning",
+                    )
+                    reasoning_message = reasoning_body.get("message", {}) if isinstance(reasoning_body, dict) else {}
+                    visible_reasoning = _sanitize_reasoning_text(str(reasoning_message.get("content", "")).strip())
+                    private_reasoning = _sanitize_reasoning_text(str(reasoning_message.get("thinking", "")).strip())
+                    candidate = visible_reasoning
+                    if not reasoning_notes_complete(candidate):
+                        candidate = private_reasoning
+                    if candidate.strip():
+                        reasoning_text = _normalize_reasoning_notes(candidate)
+                    if reasoning_notes_complete(reasoning_text):
+                        break
             final_body = self._chat_request(
                 prompt=self._final_prompt(semantic_context=semantic_context, visual_context=visual_context, response_language=response_language, reasoning_text=reasoning_text, has_change_guide=has_change_guide),
                 images=all_images,

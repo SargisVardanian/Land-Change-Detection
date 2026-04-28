@@ -668,8 +668,9 @@ model_dir = Path(semantic_model_name)
 device_name = st.sidebar.selectbox("Semantic device", ["cpu", "mps", "cuda"], index=1)
 enable_vlm = st.sidebar.checkbox("Enable model explanation", value=True)
 show_live_trace = st.sidebar.checkbox("Show debug trace/details", value=False)
+show_experimental_vlms = st.sidebar.checkbox("Show experimental/heavy VLMs", value=False)
 use_semantic_hints = False
-model_presets = available_model_presets(show_debug=show_live_trace)
+model_presets = available_model_presets(show_debug=show_live_trace or show_experimental_vlms)
 model_preset_names = list(model_presets.keys())
 default_preset = "gemma4:e4b (Ollama)" if "gemma4:e4b (Ollama)" in model_presets else model_preset_names[0]
 selected_preset = st.sidebar.selectbox("Available model", model_preset_names, index=model_preset_names.index(default_preset))
@@ -683,8 +684,11 @@ reasoning_profile = st.sidebar.selectbox(
     index=list(REASONING_PROFILES.keys()).index("efficient" if vlm_device_name == "mps" else "balanced"),
     format_func=lambda key: REASONING_PROFILES[key].label,
 )
-if explanation_backend == "EarthDial VLM" and reasoning_profile != "efficient":
-    st.sidebar.info("EarthDial uses the Efficient profile in this app to reduce local memory pressure.")
+if explanation_backend == "EarthDial VLM" and vlm_device_name != "cpu":
+    st.sidebar.info("EarthDial runs on CPU in this app because the HF legacy 4B path is unstable on MPS memory.")
+    vlm_device_name = "cpu"
+if explanation_backend in {"EarthDial VLM", "Ollama vision"} and reasoning_profile != "efficient":
+    st.sidebar.info(f"{explanation_backend} uses the Efficient profile in this app to reduce local memory pressure and preserve structured JSON output.")
     reasoning_profile = "efficient"
 if runtime_backend == "hf_transformers_legacy":
     st.sidebar.warning("HF legacy debug is the slowest and most memory-heavy path on this Mac.")
