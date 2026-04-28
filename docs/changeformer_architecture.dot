@@ -1,0 +1,22 @@
+digraph G {
+  rankdir=LR;
+  node [shape=box, style=filled, fillcolor="#dde9f5", fontname="Helvetica"];
+  Pre [label="Input RGB (t1)" shape=box];
+  Post [label="Input RGB (t2)" shape=box];
+  Enc_t1 [label="EncoderTransformer_v3 (Multistage)\nfeat: 64/128/320/512" shape=box];
+  Enc_t2 [label="EncoderTransformer_v3 (Multistage)\nfeat: 64/128/320/512" shape=box];
+  Decoder [label="DecoderTransformer_v3\n(MLP diff + conv modules)" shape=box];
+  Fusion [label="Fusion & Upsample (concat + residual)" shape=box];
+  Change [label="Change probability logits" shape=box fillcolor="#ffe6cc"];
+  Prob [label="Sigmoid -> probability map" shape=box fillcolor="#f6f6f6"];
+  Mask [label="Thresholded mask\n+ Satlas overlay" shape=box];
+  Pre -> Enc_t1;
+  Post -> Enc_t2;
+  Enc_t1 -> Decoder;
+  Enc_t2 -> Decoder;
+  Decoder -> Fusion;
+  Fusion -> Change;
+  Change -> Prob;
+  Prob -> Mask;
+  Mask -> Satlas [label="Optional Satlas semantic classes (T1/T2)", style=dashed, shape=box, fillcolor="#f4faff"];
+}

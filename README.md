@@ -260,3 +260,4 @@ Expected current result:
 - `CDMamba`: [arXiv:2406.04207](https://arxiv.org/abs/2406.04207)
 - `EarthDial`: [arXiv:2412.15190](https://arxiv.org/abs/2412.15190)
 - Ollama installation: [ollama.com/download](https://ollama.com/download)
+# Land-Change-Detection
