@@ -62,7 +62,7 @@ Hardware notes:
 ## Setup On macOS / Linux
 
 ```bash
-git clone https://github.com/<owner>/Land-Change-Detection.git
+git clone https://github.com/SargisVardanian/Land-Change-Detection.git
 cd Land-Change-Detection
 
 chmod +x scripts/create_env.sh
@@ -81,7 +81,7 @@ PYTHON_BIN=python3 ./scripts/create_env.sh
 Use PowerShell:
 
 ```powershell
-git clone https://github.com/<owner>/Land-Change-Detection.git
+git clone https://github.com/SargisVardanian/Land-Change-Detection.git
 cd Land-Change-Detection
 
 py -3.11 -m venv .venv
