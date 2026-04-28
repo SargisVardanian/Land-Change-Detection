@@ -454,8 +454,25 @@ class ReasoningProfile:
 
 
 REASONING_PROFILES: dict[str, ReasoningProfile] = {
+    "full_local": ReasoningProfile(
+        label="Full local analysis",
+        enable_thinking=True,
+        reasoning_tokens_mps=768,
+        reasoning_tokens_other=768,
+        max_new_tokens_mps=1024,
+        max_new_tokens_other=1024,
+        use_cache_on_mps=False,
+        semantic_context_chars=0,
+        image_max_side_mps=384,
+        image_max_side_other=768,
+        ollama_think="medium",
+        ollama_num_predict=2048,
+        ollama_num_ctx=8192,
+        reasoning_rounds=1,
+        mlx_prefill_step_size=384,
+    ),
     "efficient": ReasoningProfile(
-        label="Efficient",
+        label="Fast",
         enable_thinking=False,
         reasoning_tokens_mps=192,
         reasoning_tokens_other=224,
@@ -1472,35 +1489,32 @@ class RemoteSensingQwen2VL2B:
 
 
 class OllamaSemanticChangeExplainer:
-    def __init__(self, model_name: str = GEMMA4_E4B_OLLAMA, reasoning_profile: str = "balanced"):
+    def __init__(self, model_name: str = GEMMA4_E4B_OLLAMA, reasoning_profile: str = "full_local"):
         self.model_name = model_name
-        self.reasoning_profile_name = reasoning_profile if reasoning_profile in REASONING_PROFILES else "balanced"
+        self.reasoning_profile_name = reasoning_profile if reasoning_profile in REASONING_PROFILES else "full_local"
         self.reasoning_profile = REASONING_PROFILES[self.reasoning_profile_name]
 
     def _reasoning_prompt(self, semantic_context: str, visual_context: str, response_language: str, has_change_guide: bool) -> str:
         return "".join(
             [
                 "You are analyzing land-surface change for one aligned crop.\n",
-                "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
-                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
-                "Use the contact sheet to inspect each grid cell. Treat any heatmap only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
+                "You will see exactly these images: BEFORE crop, AFTER crop, and a labeled A1..D4 before/after contact sheet.\n",
+                "Use only those visible RGB images as evidence. No segmentation, DINO, class legend, heatmap, or transition table is available to you.\n",
+                "Use the contact sheet to inspect each grid cell directly.\n",
                 "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
                 "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
-                "Semantic-segmentation notes are weak secondary evidence and may be noisy or partially wrong.\n",
-                "Use the highlighted cells to inspect local road, plot/service-line, rectilinear patch, compact-surface, and ground-texture changes.\n",
+                "Inspect local road, plot/service-line, rectilinear patch, compact-surface, and ground-texture changes.\n",
                 "Use cautious hypotheses unless multiple cues agree; roof/building-specific claims require strong rectilinear built-surface evidence.\n",
-            "Fill every field with actual content. Do not repeat placeholders or say 'here is a thinking process'.\n",
-            f"Return only these five labeled fields in {response_language}:\n",
-            "Visual evidence before: \n",
-            "Visual evidence after: \n",
-            "Observed differences: \n",
-            "Most affected area: one or more grid cells like A1, A2, B3, C4, or unclear\n",
+                "Fill every field with actual content. Do not repeat placeholders or say 'here is a thinking process'.\n",
+                f"Return only these five labeled fields in {response_language}:\n",
+                "Visual evidence before: \n",
+                "Visual evidence after: \n",
+                "Observed differences: \n",
+                "Most affected area: one or more grid cells like A1, A2, B3, C4, or unclear\n",
                 "Uncertainty notes: \n",
                 "No intro. No numbering. No extra text.\n\n",
-                "Deterministic change-tool hints:\n",
+                "RGB-only visual measurement hints for where to inspect first:\n",
                 f"{visual_context}\n\n",
-                "Secondary semantic notes:\n",
-                f"{semantic_context}\n",
             ]
         )
 
@@ -1516,9 +1530,9 @@ class OllamaSemanticChangeExplainer:
         return "".join(
             [
                 "You are analyzing land-surface change for one aligned crop.\n",
-                "You will see BEFORE and AFTER images. Use them as the primary evidence.\n",
-                "Additional images may include a labeled A1..D4 before/after contact sheet and a change-guide heatmap.\n" if has_change_guide else "",
-                "Use the contact sheet to inspect each grid cell. Treat any heatmap only as a secondary inspection aid. Do not infer object type from heatmap color alone.\n",
+                "You will see exactly these images: BEFORE crop, AFTER crop, and a labeled A1..D4 before/after contact sheet.\n",
+                "Use only those visible RGB images as evidence. Do not use or mention semantic segmentation, Mask2Former, DINO, class colors, heatmaps, or transition tables.\n",
+                "Use the contact sheet to inspect each grid cell directly.\n",
                 "Translate visual cues into meaningful land-use processes: construction activity, new access road or track, graded or cleared land, excavation, new building or roof, yard expansion, field preparation, or stable surface.\n",
                 "Do not stop at low-level phrases like 'new lines', 'color changed', or 'tone changed'; explain what those cues most likely mean and state uncertainty.\n",
                 "Use the reasoning notes only as scratch analysis. Do not reveal chain-of-thought or analysis steps.\n",
@@ -1535,10 +1549,24 @@ class OllamaSemanticChangeExplainer:
                 f"Write the answer in {response_language}.\n\n",
                 "Reasoning notes:\n",
                 f"{reasoning_text}\n\n",
-                "Deterministic change-tool hints:\n",
+                "RGB-only visual measurement hints for where to inspect first:\n",
                 f"{visual_context}\n\n",
-                "Secondary semantic notes:\n",
-                f"{semantic_context}\n",
+            ]
+        )
+
+    def _repair_prompt(self, raw_text: str, response_language: str) -> str:
+        return "".join(
+            [
+                "Repair the following model output into strict JSON only.\n",
+                "Do not add chain-of-thought. Do not mention semantic segmentation, Mask2Former, DINO, class colors, heatmaps, or transition tables.\n",
+                "Use only information already present in the draft. If a cell is missing, write a cautious observation that the visible evidence is unclear for that cell.\n",
+                "The JSON must have keys: scene_overview, before_summary, after_summary, main_changes, cell_observations.\n",
+                "main_changes must contain 2 to 5 strings.\n",
+                "cell_observations must contain exactly 16 objects for A1, A2, A3, A4, B1, B2, B3, B4, C1, C2, C3, C4, D1, D2, D3, D4.\n",
+                "Each cell object must have cell, observation, confidence. Confidence must be high, medium, low, or uncertain.\n",
+                f"Write in {response_language}.\n\n",
+                "Draft output:\n",
+                raw_text[:12000],
             ]
         )
 
@@ -1582,7 +1610,9 @@ class OllamaSemanticChangeExplainer:
             img.save(buf, format="PNG")
             return base64.b64encode(buf.getvalue()).decode("utf-8")
 
-        payload["messages"][0]["images"] = [_encode(Image.fromarray(image)) for image in images]
+        encoded_images = [_encode(Image.fromarray(image)) for image in images]
+        if encoded_images:
+            payload["messages"][0]["images"] = encoded_images
         if progress_cb is not None:
             progress_cb(
                 {
@@ -1596,7 +1626,7 @@ class OllamaSemanticChangeExplainer:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=240) as response:
+        with urllib.request.urlopen(req, timeout=600) as response:
             if progress_cb is None:
                 return json.loads(response.read().decode("utf-8"))
             thinking_chunks: list[str] = []
@@ -1642,7 +1672,7 @@ class OllamaSemanticChangeExplainer:
         after_img = _to_uint8_rgb(after_crop)
         extra_images = [_to_uint8_rgb(image) for image in (auxiliary_images or [])]
         all_images = [before_img, after_img, *extra_images]
-        has_change_guide = bool(extra_images)
+        has_change_guide = False
         schema = {
             "type": "object",
             "properties": {
@@ -1741,6 +1771,26 @@ class OllamaSemanticChangeExplainer:
                 if has_complete_final_response(retry_parsed):
                     raw_text = retry_text
                     parsed = retry_parsed
+            except Exception:
+                pass
+        if not has_complete_final_response(parsed):
+            try:
+                repair_body = self._chat_request(
+                    prompt=self._repair_prompt(raw_text=raw_text, response_language=response_language),
+                    images=[],
+                    think_mode=False,
+                    num_predict=self.reasoning_profile.ollama_num_predict,
+                    num_ctx=self.reasoning_profile.ollama_num_ctx,
+                    response_format="json",
+                    progress_cb=progress_cb,
+                    stage_prefix="ollama_json_repair",
+                )
+                repair_message = repair_body.get("message", {}) if isinstance(repair_body, dict) else {}
+                repair_text = _sanitize_model_text(str(repair_message.get("content", "")).strip())
+                repair_parsed = parse_model_response(repair_text)
+                if has_complete_final_response(repair_parsed):
+                    raw_text = repair_text
+                    parsed = repair_parsed
             except Exception:
                 pass
         return VLMResult(

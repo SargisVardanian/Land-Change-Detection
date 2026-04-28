@@ -25,12 +25,6 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from land_change_detection.data import OSCDSceneRepository
-from land_change_detection.dinov3_features import (
-    DINO_V3_VITL16_SAT,
-    DINO_V3_VITL16_SAT_DIR,
-    DINOv3FeatureEncoder,
-    model_dir_complete as feature_model_dir_complete,
-)
 from land_change_detection.legacy.legacy_visual_context import (
     analyze_change_cells,
     build_change_guide_image,
@@ -84,7 +78,7 @@ if st_cropper is None:
     st.code(
         "\n".join(
             [
-                "cd /Users/sargisvardanyan/Land-Change-Detection",
+                "cd Land-Change-Detection",
                 "./scripts/create_env.sh",
                 "source .venv/bin/activate",
                 "PYTHONPATH=src streamlit run app.py",
@@ -108,11 +102,6 @@ def load_vlm(model_name: str, device_name: str, reasoning_profile: str, runtime_
     if runtime_backend == "mlx_vlm_qwen":
         return QwenMlxVlmExplainer(model_name_or_path=model_name, reasoning_profile=reasoning_profile)
     return RemoteSensingQwen2VL2B(model_name_or_path=model_name, device=device_name, reasoning_profile=reasoning_profile)
-
-
-@st.cache_resource(show_spinner=False)
-def load_dino_feature_encoder(model_name: str, device_name: str) -> DINOv3FeatureEncoder:
-    return DINOv3FeatureEncoder(model_name_or_path=model_name, device=device_name)
 
 
 @st.cache_resource(show_spinner=False)
@@ -340,7 +329,7 @@ def model_runtime_details(
         return {
             "family": "VLM",
             "backend": "MLX vision-language",
-            "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
+            "input_mode": "before/after crop images + A1..D4 contact sheet only",
             "source": "local MLX directory" if model_path.exists() else "Hugging Face MLX repo id",
             "model": display_model_name(selected_model_name),
             "resolved_path": str(model_path.resolve()) if model_path.exists() else selected_model_name,
@@ -351,15 +340,15 @@ def model_runtime_details(
             "kv_cache": "managed by MLX; no app-side result reuse",
             "semantic_hints": "enabled" if use_semantic_hints else "disabled",
             "primary_images_sent": "2: before crop, after crop",
-            "auxiliary_images_sent": "2: A1..D4 contact sheet, change-guide heatmap",
-            "semantic_text_hints_sent": "yes" if use_semantic_hints else "no",
+            "auxiliary_images_sent": "1: A1..D4 contact sheet",
+            "semantic_text_hints_sent": "no",
             "semantic_maps_sent_as_images": "no",
         }
     if runtime_backend == "hf_transformers_legacy":
         return {
             "family": "VLM",
             "backend": explanation_backend,
-            "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
+            "input_mode": "before/after crop images + A1..D4 contact sheet only",
             "source": "local directory" if model_path.exists() else "Hugging Face repo id",
             "model": display_model_name(selected_model_name),
             "resolved_path": str(model_path.resolve()) if model_path.exists() else selected_model_name,
@@ -370,14 +359,14 @@ def model_runtime_details(
             "kv_cache": "off on mps" if not profile.use_cache_on_mps else "on on mps",
             "semantic_hints": "enabled" if use_semantic_hints else "disabled",
             "primary_images_sent": "2: before crop, after crop",
-            "auxiliary_images_sent": "2: A1..D4 contact sheet, change-guide heatmap",
-            "semantic_text_hints_sent": "yes" if use_semantic_hints else "no",
+            "auxiliary_images_sent": "1: A1..D4 contact sheet",
+            "semantic_text_hints_sent": "no",
             "semantic_maps_sent_as_images": "no",
         }
     return {
         "family": "VLM",
         "backend": "Ollama vision",
-        "input_mode": "before/after crop images + A1..D4 contact sheet + secondary change-guide",
+        "input_mode": "before/after crop images + A1..D4 contact sheet only",
         "source": "Ollama local registry",
         "model": selected_model_name,
         "resolved_path": "ollama://" + selected_model_name,
@@ -386,10 +375,10 @@ def model_runtime_details(
         "thinking": str(profile.ollama_think),
         "context_window": f"num_ctx={profile.ollama_num_ctx}; output capped at {profile.ollama_num_predict} tokens",
         "kv_cache": f"keep_alive=0; use OLLAMA_FLASH_ATTENTION=1 + OLLAMA_KV_CACHE_TYPE=q8_0/q4_0 for lower KV memory",
-        "semantic_hints": "enabled" if use_semantic_hints else "disabled",
+        "semantic_hints": "disabled",
         "primary_images_sent": "2: before crop, after crop",
-        "auxiliary_images_sent": "2: A1..D4 contact sheet, change-guide heatmap",
-        "semantic_text_hints_sent": "yes" if use_semantic_hints else "no",
+        "auxiliary_images_sent": "1: A1..D4 contact sheet",
+        "semantic_text_hints_sent": "no",
         "semantic_maps_sent_as_images": "no",
     }
 
@@ -482,7 +471,7 @@ def render_surface_segmentation(crop_before_result, crop_after_result, crop_tran
     st.subheader("Mask2Former surface segmentation")
     st.caption(
         f"Semantic surface maps from `{model_label}`. These maps are segmentation evidence; "
-        "the final human explanation below is produced separately by the VLM from the before/after images."
+        "Gemma never receives these maps, labels, colors, or transition rows; the final explanation is produced only from the before/after RGB crops and the A1..D4 contact sheet."
     )
     map_cols = st.columns(2)
     map_cols[0].image(crop_before_result.color_map, caption="T1 surface segmentation", width="stretch")
@@ -502,25 +491,6 @@ def render_surface_segmentation(crop_before_result, crop_after_result, crop_tran
                     "percent": st.column_config.NumberColumn("percent", width="small", format="%.2f"),
                 },
             )
-
-
-def render_dino_feature_diagnostics(feature_rows: list[dict[str, object]], model_name: str) -> None:
-    st.subheader("DINOv3 feature-change diagnostics")
-    st.caption(
-        f"Feature-based change ranking from `{model_name}`. This is not segmentation and not natural-language VLM output; "
-        "it measures how much the visual semantics of each cell shift between BEFORE and AFTER."
-    )
-    st.dataframe(
-        feature_rows,
-        width="stretch",
-        hide_index=True,
-        column_config={
-            "cell": st.column_config.TextColumn("cell", width="small"),
-            "cosine_distance": st.column_config.NumberColumn("cosine distance", width="small", format="%.3f"),
-            "l2_distance": st.column_config.NumberColumn("l2 distance", width="small", format="%.3f"),
-            "interpretation": st.column_config.TextColumn("interpretation", width="large"),
-        },
-    )
 
 
 def _render_main_changes(changes: list[object]) -> None:
@@ -571,26 +541,12 @@ def render_vlm_summary(parsed: dict | None, fallback_summary: dict | None = None
     main_changes = parsed.get("main_changes") if isinstance(parsed.get("main_changes"), list) else []
     cell_observations = parsed.get("cell_observations") if isinstance(parsed.get("cell_observations"), list) else []
 
-    used_fallback = False
-    if (not scene_overview or not cell_observations) and fallback_summary:
-        used_fallback = True
-        scene_overview = normalize_model_scene_overview(fallback_summary)
-        before_summary = str(fallback_summary.get("before_summary", "")).strip()
-        after_summary = str(fallback_summary.get("after_summary", "")).strip()
-        main_changes = fallback_summary.get("main_changes") if isinstance(fallback_summary.get("main_changes"), list) else []
-        cell_observations = fallback_summary.get("cell_observations") if isinstance(fallback_summary.get("cell_observations"), list) else []
-
-    st.subheader("Gemma visual interpretation" if parsed and not used_fallback else "Visual interpretation")
+    st.subheader("Gemma visual interpretation")
     if not parsed or not scene_overview:
         st.warning(
-            "The model did not return a complete user-facing analysis. Try a smaller reasoning budget or another VLM preset."
+            "Gemma did not return a complete user-facing analysis. No semantic or DINO fallback is shown because the final report must come from direct visual inspection."
         )
         return
-    if used_fallback:
-        st.info(
-            "The selected VLM did not return a complete structured answer. This is a non-model heuristic fallback from "
-            "deterministic before/after visual measurements, not a VLM conclusion and not a Mask2Former class-label answer."
-        )
     st.write(scene_overview)
 
     if before_summary or after_summary:
@@ -679,18 +635,20 @@ explanation_backend = selected_model_config["backend"]
 runtime_backend = selected_model_config["runtime_backend"]
 vlm_device_name = st.sidebar.selectbox("VLM device", ["cpu", "mps", "cuda"], index=1)
 stable_vlm_backend = explanation_backend in {"EarthDial VLM", "Ollama vision"}
-reasoning_options = ["efficient"] if stable_vlm_backend else list(REASONING_PROFILES.keys())
+reasoning_options = ["full_local", "efficient"] if explanation_backend == "Ollama vision" else ["efficient"]
 reasoning_profile = st.sidebar.selectbox(
     "Reasoning budget",
     options=reasoning_options,
-    index=0 if stable_vlm_backend else list(REASONING_PROFILES.keys()).index("efficient" if vlm_device_name == "mps" else "balanced"),
+    index=0,
     format_func=lambda key: REASONING_PROFILES[key].label,
 )
 if explanation_backend == "EarthDial VLM" and vlm_device_name != "cpu":
     st.sidebar.info("EarthDial runs on CPU in this app because the HF legacy 4B path is unstable on MPS memory.")
     vlm_device_name = "cpu"
-if stable_vlm_backend:
-    st.sidebar.info(f"{explanation_backend} uses the Efficient profile in this app to reduce local memory pressure and preserve structured JSON output.")
+if explanation_backend == "Ollama vision":
+    st.sidebar.info("Gemma receives only the before crop, after crop, and A1..D4 contact sheet. It never receives Mask2Former, DINO, semantic labels, or heatmaps.")
+elif stable_vlm_backend:
+    st.sidebar.info(f"{explanation_backend} uses the Fast profile in this app to reduce local memory pressure and preserve structured JSON output.")
 if runtime_backend == "hf_transformers_legacy" and explanation_backend != "EarthDial VLM":
     st.sidebar.warning("HF legacy debug is the slowest and most memory-heavy path on this Mac.")
 elif runtime_backend == "mlx_vlm_qwen" and reasoning_profile == "deep":
@@ -702,8 +660,6 @@ ollama_model_name = selected_model_config["model_name"] if explanation_backend =
 
 st.sidebar.markdown("### Models")
 st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
-if show_live_trace:
-    st.sidebar.write(f"`dinov3 SAT debug`: {'yes' if feature_model_dir_complete(DINO_V3_VITL16_SAT_DIR) else 'download on first use'}")
 if runtime_backend == "mlx_vlm_qwen":
     st.sidebar.write(f"`mlx qwen runtime`: {'yes' if mlx_model_ready(vlm_model_name) else 'download on first use'}")
 elif runtime_backend == "hf_transformers_legacy" and Path(vlm_model_name).exists():
@@ -810,7 +766,6 @@ crop_before_result = None
 crop_after_result = None
 cell_packs = []
 crop_transitions: list[dict] = []
-dino_feature_rows: list[dict[str, object]] = []
 
 if model_dir.exists():
     with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
@@ -829,22 +784,6 @@ if model_dir.exists():
 else:
     st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
 
-if show_live_trace:
-    try:
-        with st.spinner("Running DINOv3 SAT feature diagnostics on the selected crop..."):
-            dino_encoder = load_dino_feature_encoder(DINO_V3_VITL16_SAT, device_name)
-            dino_feature_rows = [
-                {
-                    "cell": row.cell,
-                    "cosine_distance": row.cosine_distance,
-                    "l2_distance": row.l2_distance,
-                    "interpretation": row.interpretation,
-                }
-                for row in dino_encoder.analyze_grid(crop_before, crop_after, grid_size=4)
-            ]
-    except Exception as exc:
-        dino_feature_rows = []
-        st.warning(f"DINOv3 SAT feature diagnostics failed: {type(exc).__name__}: {exc}")
 vlm_result = None
 
 st.subheader("Selected Crop")
@@ -853,8 +792,6 @@ selected_cols[0].image(crop_before, caption="Crop before", width="stretch")
 selected_cols[1].image(crop_after, caption="Crop after", width="stretch")
 if crop_before_result is not None and crop_after_result is not None:
     render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions, selected_semantic_model_preset)
-if dino_feature_rows:
-    render_dino_feature_diagnostics(dino_feature_rows, DINO_V3_VITL16_SAT)
 
 change_evidence = analyze_change_cells(crop_before, crop_after, grid_size=4)
 change_guide_image = build_change_guide_image(crop_before, crop_after, change_evidence)
@@ -862,23 +799,15 @@ change_zoom_strip = build_change_zoom_strip(crop_before, crop_after, change_evid
 cell_contact_sheet = build_cell_contact_sheet(crop_before, crop_after, grid_size=4)
 fallback_visual_summary = build_visual_fallback_summary(change_evidence)
 st.subheader("4x4 visual comparison grid")
-st.caption("Each panel shows the same cell before and after. This grid is sent to the VLM so it can describe A1..D4 directly.")
+st.caption("Each panel shows the same cell before and after. Gemma receives this grid plus the two original crops, and no semantic/DINO/heatmap inputs.")
 st.image(cell_contact_sheet, caption="A1..D4 before/after contact sheet", width="stretch")
-model_auxiliary_images = [cell_contact_sheet] if explanation_backend == "EarthDial VLM" else [cell_contact_sheet, change_guide_image]
+model_auxiliary_images = [cell_contact_sheet]
 visual_change_context = build_visual_change_context(change_evidence)
 
 progress_cb = None
 if enable_vlm:
     progress_cb = create_trace_collector() if show_live_trace else None
     semantic_context = ""
-    if show_live_trace and use_semantic_hints and crop_before_result is not None and crop_after_result is not None:
-        semantic_context = build_vlm_semantic_context(
-            crop_before_result.class_map,
-            crop_after_result.class_map,
-            crop_before_result.legend,
-            crop_transitions,
-        )
-        semantic_context = trim_semantic_context(semantic_context, REASONING_PROFILES[reasoning_profile].semantic_context_chars)
     if runtime_backend in {"mlx_vlm_qwen", "hf_transformers_legacy"}:
         model_ok = mlx_model_ready(vlm_model_name) if runtime_backend == "mlx_vlm_qwen" else vlm_ready(vlm_model_name)
         if not model_ok:
@@ -930,16 +859,16 @@ if enable_vlm:
         render_final_answer(
             parsed=vlm_result.parsed,
             change_zoom_strip=change_zoom_strip,
-            fallback_summary=fallback_visual_summary,
+            fallback_summary=None,
             reasoning_text=vlm_result.reasoning_text,
             show_debug=show_live_trace,
         )
 
     else:
-        render_final_answer(None, change_zoom_strip, fallback_summary=fallback_visual_summary, show_debug=show_live_trace)
+        render_final_answer(None, change_zoom_strip, fallback_summary=None, show_debug=show_live_trace)
 else:
     vlm_result = None
-    render_final_answer(None, change_zoom_strip, fallback_summary=fallback_visual_summary, show_debug=show_live_trace)
+    render_final_answer(None, change_zoom_strip, fallback_summary=None, show_debug=show_live_trace)
 
 if show_live_trace:
     stage_rows = [
@@ -1012,8 +941,8 @@ if show_live_trace:
                 {"field": "thinking mode", "value": runtime_details["thinking"]},
                 {"field": "context window", "value": runtime_details["context_window"]},
                 {"field": "kv cache mode", "value": runtime_details["kv_cache"]},
-                {"field": "images sent to model", "value": "before crop, after crop, A1..D4 contact sheet, change-guide heatmap"},
-                {"field": "not sent to model as images", "value": "semantic maps, top-cell zoom strip"},
+                {"field": "images sent to model", "value": "before crop, after crop, A1..D4 contact sheet"},
+                {"field": "not sent to model as images", "value": "semantic maps, DINO diagnostics, class legends, transition tables, change-guide heatmap, top-cell zoom strip"},
                 {"field": "primary images sent", "value": runtime_details["primary_images_sent"]},
                 {"field": "auxiliary images sent", "value": runtime_details["auxiliary_images_sent"]},
                 {"field": "semantic text hints sent", "value": runtime_details["semantic_text_hints_sent"]},

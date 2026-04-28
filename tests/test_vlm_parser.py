@@ -5,6 +5,8 @@ import json
 from land_change_detection.change_interpretation.parser import parse_cell_response
 from land_change_detection.remote_sensing_vlm import (
     EXPECTED_GRID_CELLS,
+    OllamaSemanticChangeExplainer,
+    REASONING_PROFILES,
     cell_observations_quality_issues,
     has_complete_final_response,
     normalize_cell_observations,
@@ -98,3 +100,36 @@ def test_normalize_cell_observations_from_strings():
         "observation": "possible road or plot-line rework",
         "confidence": "uncertain",
     }
+
+
+def test_full_local_ollama_profile_has_larger_budget():
+    profile = REASONING_PROFILES["full_local"]
+    assert profile.label == "Full local analysis"
+    assert profile.ollama_num_ctx == 8192
+    assert profile.ollama_num_predict == 2048
+
+
+def test_ollama_prompt_excludes_semantic_and_dino_context():
+    explainer = OllamaSemanticChangeExplainer(reasoning_profile="full_local")
+    prompt = explainer._final_prompt(
+        semantic_context="Mask2Former says grass, bareland, DINO region, semantic transition.",
+        visual_context="RGB-only visual measurement hints.",
+        response_language="English",
+        reasoning_text="A1 and B2 need inspection.",
+        has_change_guide=False,
+    )
+
+    assert "RGB-only visual measurement hints." in prompt
+    assert "Mask2Former says" not in prompt
+    assert "grass, bareland" not in prompt
+    assert "DINO region" not in prompt
+    assert "change-guide heatmap" not in prompt
+
+
+def test_ollama_repair_prompt_forces_complete_json_without_semantic_fallback():
+    explainer = OllamaSemanticChangeExplainer(reasoning_profile="full_local")
+    prompt = explainer._repair_prompt("partial answer", response_language="English")
+
+    assert "strict JSON only" in prompt
+    assert "exactly 16 objects" in prompt
+    assert "Do not mention semantic segmentation" in prompt
