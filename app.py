@@ -26,13 +26,8 @@ if str(SRC_DIR) not in sys.path:
 
 from land_change_detection.data import OSCDSceneRepository
 from land_change_detection.dinov3_features import (
-    DINO_V3_FACEBOOK_VITL16_SAT,
-    DINO_V3_VITB16,
-    DINO_V3_VITB16_DIR,
     DINO_V3_VITL16_SAT,
     DINO_V3_VITL16_SAT_DIR,
-    DINO_V3_VITS16,
-    DINO_V3_VITS16_DIR,
     DINOv3FeatureEncoder,
     model_dir_complete as feature_model_dir_complete,
 )
@@ -117,11 +112,6 @@ def load_vlm(model_name: str, device_name: str, reasoning_profile: str, runtime_
 
 @st.cache_resource(show_spinner=False)
 def load_dino_feature_encoder(model_name: str, device_name: str) -> DINOv3FeatureEncoder:
-    return DINOv3FeatureEncoder(model_name_or_path=model_name, device=device_name)
-
-
-@st.cache_resource(show_spinner=False)
-def load_dino_region_segmenter(model_name: str, device_name: str) -> DINOv3FeatureEncoder:
     return DINOv3FeatureEncoder(model_name_or_path=model_name, device=device_name)
 
 
@@ -276,37 +266,13 @@ def default_ollama_model_name() -> str:
     return GEMMA4_E4B_OLLAMA
 
 
-def available_model_presets() -> dict[str, dict[str, str]]:
+def available_model_presets(show_debug: bool = False) -> dict[str, dict[str, str]]:
     presets: dict[str, dict[str, str]] = {}
-    presets["Qwen MLX (Apple Silicon default)"] = {
-        "backend": "MLX vision-language",
-        "runtime_backend": "mlx_vlm_qwen",
-        "model_name": preferred_mlx_qwen_model(),
+    presets["gemma4:e4b (Ollama)"] = {
+        "backend": "Ollama vision",
+        "runtime_backend": "ollama_gemma",
+        "model_name": GEMMA4_E4B_OLLAMA,
     }
-    if has_complete_local_vlm():
-        presets["Qwen3-VL-4B-Thinking (HF legacy debug)"] = {
-            "backend": "HF legacy debug",
-            "runtime_backend": "hf_transformers_legacy",
-            "model_name": str(QWEN3_VL_4B_THINKING_DIR),
-        }
-    if model_dir_complete(REMOTE_SENSING_QWEN2_VL_2B_DIR):
-        presets["Remote-sensing Qwen2-VL-2B (HF local)"] = {
-            "backend": "HF remote-sensing VLM",
-            "runtime_backend": "hf_transformers_legacy",
-            "model_name": str(REMOTE_SENSING_QWEN2_VL_2B_DIR),
-        }
-    else:
-        presets["Remote-sensing Qwen2-VL-2B (download from HF)"] = {
-            "backend": "HF remote-sensing VLM",
-            "runtime_backend": "hf_transformers_legacy",
-            "model_name": REMOTE_SENSING_QWEN2_VL_2B,
-        }
-    if model_dir_complete(REMOTE_SENSING_QWEN2_5_VL_3B_DIR):
-        presets["Remote-sensing Qwen2.5-VL-3B (HF local)"] = {
-            "backend": "HF remote-sensing VLM",
-            "runtime_backend": "hf_transformers_legacy",
-            "model_name": str(REMOTE_SENSING_QWEN2_5_VL_3B_DIR),
-        }
     if model_dir_complete(EARTHDIAL_RGB_DIR):
         presets["EarthDial 4B RGB (HF local)"] = {
             "backend": "EarthDial VLM",
@@ -319,11 +285,30 @@ def available_model_presets() -> dict[str, dict[str, str]]:
             "runtime_backend": "hf_transformers_legacy",
             "model_name": EARTHDIAL_RGB,
         }
-    presets["gemma4:e4b (Ollama)"] = {
-        "backend": "Ollama vision",
-        "runtime_backend": "ollama_gemma",
-        "model_name": GEMMA4_E4B_OLLAMA,
-    }
+    if show_debug:
+        presets["Qwen MLX (debug, heavy on Mac)"] = {
+            "backend": "MLX vision-language",
+            "runtime_backend": "mlx_vlm_qwen",
+            "model_name": preferred_mlx_qwen_model(),
+        }
+        if has_complete_local_vlm():
+            presets["Qwen3-VL-4B-Thinking (HF debug, very heavy)"] = {
+                "backend": "HF legacy debug",
+                "runtime_backend": "hf_transformers_legacy",
+                "model_name": str(QWEN3_VL_4B_THINKING_DIR),
+            }
+        if model_dir_complete(REMOTE_SENSING_QWEN2_VL_2B_DIR):
+            presets["Remote-sensing Qwen2-VL-2B (debug, memory-heavy)"] = {
+                "backend": "HF remote-sensing VLM",
+                "runtime_backend": "hf_transformers_legacy",
+                "model_name": str(REMOTE_SENSING_QWEN2_VL_2B_DIR),
+            }
+        if model_dir_complete(REMOTE_SENSING_QWEN2_5_VL_3B_DIR):
+            presets["Remote-sensing Qwen2.5-VL-3B (debug, very heavy)"] = {
+                "backend": "HF remote-sensing VLM",
+                "runtime_backend": "hf_transformers_legacy",
+                "model_name": str(REMOTE_SENSING_QWEN2_5_VL_3B_DIR),
+            }
     return presets
 
 
@@ -334,44 +319,7 @@ def available_semantic_model_presets() -> dict[str, dict[str, str]]:
             "model_name": str(MASK2FORMER_SATELLITE_DIR),
             "kind": "semantic_classes",
         },
-        "facebook/dinov3-vitl16-pretrain-sat493m (gated; use open SAT mirror)": {
-            "backend": "dinov3_feature_regions",
-            "model_name": DINO_V3_VITL16_SAT,
-            "kind": "feature_regions",
-            "source_model": DINO_V3_FACEBOOK_VITL16_SAT,
-        },
-        "timm/vit_large_patch16_dinov3.sat493m": {
-            "backend": "dinov3_feature_regions",
-            "model_name": DINO_V3_VITL16_SAT,
-            "kind": "feature_regions",
-        },
-        "timm/vit_base_patch16_dinov3.lvd1689m": {
-            "backend": "dinov3_feature_regions",
-            "model_name": DINO_V3_VITB16,
-            "kind": "feature_regions",
-        },
-        "timm/vit_small_patch16_dinov3.lvd1689m": {
-            "backend": "dinov3_feature_regions",
-            "model_name": DINO_V3_VITS16,
-            "kind": "feature_regions",
-        },
     }
-
-
-def available_feature_encoder_presets() -> dict[str, str]:
-    presets: dict[str, str] = {"None": ""}
-    presets[
-        "DINOv3 ViT-S/16 (open timm, local snapshot ready)" if feature_model_dir_complete(DINO_V3_VITS16_DIR) else "DINOv3 ViT-S/16 (open timm, download from HF)"
-    ] = DINO_V3_VITS16
-    presets[
-        "DINOv3 ViT-B/16 (open timm, local snapshot ready)" if feature_model_dir_complete(DINO_V3_VITB16_DIR) else "DINOv3 ViT-B/16 (open timm, download from HF)"
-    ] = DINO_V3_VITB16
-    presets[
-        "DINOv3 ViT-L/16 SAT-493M (open timm, local snapshot ready)"
-        if feature_model_dir_complete(DINO_V3_VITL16_SAT_DIR)
-        else "DINOv3 ViT-L/16 SAT-493M (open timm, download from HF)"
-    ] = DINO_V3_VITL16_SAT
-    return presets
 
 
 def cached_ollama_model_available(model_name: str) -> bool:
@@ -531,19 +479,11 @@ def render_semantic_color_legend(id2label: dict[int, str], class_colors: dict[st
 
 
 def render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions: list[dict], model_label: str) -> None:
-    metadata = crop_before_result.metadata or {}
-    is_dino_regions = metadata.get("backend") == "dinov3_feature_regions"
-    st.subheader("Surface segmentation")
-    if is_dino_regions:
-        st.caption(
-            f"Feature-region maps from `{model_label}`. DINOv3 does not include a land-cover segmentation head here, "
-            "so these are unsupervised surface regions, not building/road/water semantic classes."
-        )
-    else:
-        st.caption(
-            f"Semantic surface maps from `{model_label}`. These maps are segmentation evidence; "
-            "the final human explanation below is produced separately by the VLM from the before/after images."
-        )
+    st.subheader("Mask2Former surface segmentation")
+    st.caption(
+        f"Semantic surface maps from `{model_label}`. These maps are segmentation evidence; "
+        "the final human explanation below is produced separately by the VLM from the before/after images."
+    )
     map_cols = st.columns(2)
     map_cols[0].image(crop_before_result.color_map, caption="T1 surface segmentation", width="stretch")
     map_cols[1].image(crop_after_result.color_map, caption="T2 surface segmentation", width="stretch")
@@ -648,8 +588,8 @@ def render_vlm_summary(parsed: dict | None, fallback_summary: dict | None = None
         return
     if used_fallback:
         st.info(
-            "The selected VLM did not return a complete structured answer, so this section uses deterministic visual evidence "
-            "from the before/after crop. It does not use Mask2Former semantic class labels as the final explanation."
+            "The selected VLM did not return a complete structured answer. This is a non-model heuristic fallback from "
+            "deterministic before/after visual measurements, not a VLM conclusion and not a Mask2Former class-label answer."
         )
     st.write(scene_overview)
 
@@ -726,19 +666,12 @@ semantic_backend_name = selected_semantic_model_config["backend"]
 semantic_model_name = selected_semantic_model_config["model_name"]
 model_dir = Path(semantic_model_name)
 device_name = st.sidebar.selectbox("Semantic device", ["cpu", "mps", "cuda"], index=1)
-if semantic_backend_name == "dinov3_feature_regions":
-    st.sidebar.caption("DINOv3 produces unsupervised feature-region maps, not named land-cover classes.")
-dino_feature_presets = available_feature_encoder_presets()
-dino_feature_preset_names = list(dino_feature_presets.keys())
-selected_dino_feature_preset = st.sidebar.selectbox("DINOv3 feature encoder", dino_feature_preset_names, index=0)
-dino_feature_model_name = dino_feature_presets[selected_dino_feature_preset]
-dino_feature_device = st.sidebar.selectbox("DINOv3 device", ["cpu", "mps", "cuda"], index=1)
 enable_vlm = st.sidebar.checkbox("Enable model explanation", value=True)
 show_live_trace = st.sidebar.checkbox("Show debug trace/details", value=False)
 use_semantic_hints = False
-model_presets = available_model_presets()
+model_presets = available_model_presets(show_debug=show_live_trace)
 model_preset_names = list(model_presets.keys())
-default_preset = "gemma4:e4b (Ollama)" if "gemma4:e4b (Ollama)" in model_presets else "Qwen MLX (Apple Silicon default)"
+default_preset = "gemma4:e4b (Ollama)" if "gemma4:e4b (Ollama)" in model_presets else model_preset_names[0]
 selected_preset = st.sidebar.selectbox("Available model", model_preset_names, index=model_preset_names.index(default_preset))
 selected_model_config = model_presets[selected_preset]
 explanation_backend = selected_model_config["backend"]
@@ -750,6 +683,9 @@ reasoning_profile = st.sidebar.selectbox(
     index=list(REASONING_PROFILES.keys()).index("efficient" if vlm_device_name == "mps" else "balanced"),
     format_func=lambda key: REASONING_PROFILES[key].label,
 )
+if explanation_backend == "EarthDial VLM" and reasoning_profile != "efficient":
+    st.sidebar.info("EarthDial uses the Efficient profile in this app to reduce local memory pressure.")
+    reasoning_profile = "efficient"
 if runtime_backend == "hf_transformers_legacy":
     st.sidebar.warning("HF legacy debug is the slowest and most memory-heavy path on this Mac.")
 elif runtime_backend == "mlx_vlm_qwen" and reasoning_profile == "deep":
@@ -760,28 +696,9 @@ vlm_model_name = selected_model_config["model_name"] if runtime_backend in {"mlx
 ollama_model_name = selected_model_config["model_name"] if explanation_backend == "Ollama vision" else default_ollama_model_name()
 
 st.sidebar.markdown("### Models")
-if semantic_backend_name == "mask2former_openearthmap":
-    st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
-else:
-    dino_semantic_dirs = {
-        DINO_V3_VITS16: DINO_V3_VITS16_DIR,
-        DINO_V3_VITB16: DINO_V3_VITB16_DIR,
-        DINO_V3_VITL16_SAT: DINO_V3_VITL16_SAT_DIR,
-    }
-    dino_semantic_dir = dino_semantic_dirs.get(semantic_model_name)
-    status = "yes" if dino_semantic_dir and feature_model_dir_complete(dino_semantic_dir) else "download on first use"
-    st.sidebar.write(f"`dinov3 surface regions`: {status}")
-if dino_feature_model_name:
-    dino_local_dirs = {
-        DINO_V3_VITS16: DINO_V3_VITS16_DIR,
-        DINO_V3_VITB16: DINO_V3_VITB16_DIR,
-        DINO_V3_VITL16_SAT: DINO_V3_VITL16_SAT_DIR,
-    }
-    dino_local_dir = dino_local_dirs.get(dino_feature_model_name)
-    if dino_local_dir and dino_local_dir.exists():
-        st.sidebar.write(f"`dinov3 feature encoder`: {'yes' if feature_model_dir_complete(dino_local_dir) else 'incomplete'}")
-    else:
-        st.sidebar.write("`dinov3 feature encoder`: download on first use")
+st.sidebar.write(f"`mask2former-satellite`: {'yes' if model_dir.exists() else 'no'}")
+if show_live_trace:
+    st.sidebar.write(f"`dinov3 SAT debug`: {'yes' if feature_model_dir_complete(DINO_V3_VITL16_SAT_DIR) else 'download on first use'}")
 if runtime_backend == "mlx_vlm_qwen":
     st.sidebar.write(f"`mlx qwen runtime`: {'yes' if mlx_model_ready(vlm_model_name) else 'download on first use'}")
 elif runtime_backend == "hf_transformers_legacy" and Path(vlm_model_name).exists():
@@ -890,44 +807,27 @@ cell_packs = []
 crop_transitions: list[dict] = []
 dino_feature_rows: list[dict[str, object]] = []
 
-if semantic_backend_name == "mask2former_openearthmap":
-    if model_dir.exists():
-        with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
-            segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
-            pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
-            pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
-            crop_before_result = pipeline_result.before_segmentation
-            crop_after_result = pipeline_result.after_segmentation
-            cell_packs = pipeline_result.cell_packs
-            crop_transitions = [
-                item
-                for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
-                if item["before"] != item["after"]
-            ]
-            semantic_ran_this_pass = True
-    else:
-        st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
+if model_dir.exists():
+    with st.spinner("Running Mask2Former surface segmentation on the selected crop..."):
+        segmentation_runtime = load_segmentation_runtime(str(model_dir), device_name=device_name, backend_name="mask2former_openearthmap")
+        pipeline_v2 = LandChangePipelineV2(segmentation_runtime=segmentation_runtime)
+        pipeline_result = pipeline_v2.run(crop_before, crop_after, rows=4, cols=4)
+        crop_before_result = pipeline_result.before_segmentation
+        crop_after_result = pipeline_result.after_segmentation
+        cell_packs = pipeline_result.cell_packs
+        crop_transitions = [
+            item
+            for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
+            if item["before"] != item["after"]
+        ]
+        semantic_ran_this_pass = True
 else:
-    try:
-        with st.spinner(f"Running DINOv3 feature-region segmentation with {semantic_model_name}..."):
-            dino_segmenter = load_dino_region_segmenter(semantic_model_name, device_name)
-            crop_before_result, crop_after_result = dino_segmenter.segment_pair_regions(crop_before, crop_after, clusters=6)
-            crop_transitions = [
-                item
-                for item in summarize_transitions(crop_before_result.class_map, crop_after_result.class_map, top_k=12, id2label=crop_before_result.legend)
-                if item["before"] != item["after"]
-            ]
-            semantic_ran_this_pass = True
-    except Exception as exc:
-        st.warning(f"DINOv3 feature-region segmentation failed: {type(exc).__name__}: {exc}")
-        crop_before_result = None
-        crop_after_result = None
-        crop_transitions = []
+    st.warning(f"Semantic model directory not found: `{model_dir}`. VLM analysis can run, but surface segmentation maps are unavailable.")
 
-if dino_feature_model_name:
+if show_live_trace:
     try:
-        with st.spinner(f"Running {selected_dino_feature_preset} on the selected crop..."):
-            dino_encoder = load_dino_feature_encoder(dino_feature_model_name, dino_feature_device)
+        with st.spinner("Running DINOv3 SAT feature diagnostics on the selected crop..."):
+            dino_encoder = load_dino_feature_encoder(DINO_V3_VITL16_SAT, device_name)
             dino_feature_rows = [
                 {
                     "cell": row.cell,
@@ -939,7 +839,7 @@ if dino_feature_model_name:
             ]
     except Exception as exc:
         dino_feature_rows = []
-        st.warning(f"DINOv3 feature inference failed: {type(exc).__name__}: {exc}")
+        st.warning(f"DINOv3 SAT feature diagnostics failed: {type(exc).__name__}: {exc}")
 vlm_result = None
 
 st.subheader("Selected Crop")
@@ -949,7 +849,7 @@ selected_cols[1].image(crop_after, caption="Crop after", width="stretch")
 if crop_before_result is not None and crop_after_result is not None:
     render_surface_segmentation(crop_before_result, crop_after_result, crop_transitions, selected_semantic_model_preset)
 if dino_feature_rows:
-    render_dino_feature_diagnostics(dino_feature_rows, dino_feature_model_name)
+    render_dino_feature_diagnostics(dino_feature_rows, DINO_V3_VITL16_SAT)
 
 change_evidence = analyze_change_cells(crop_before, crop_after, grid_size=4)
 change_guide_image = build_change_guide_image(crop_before, crop_after, change_evidence)
@@ -959,7 +859,7 @@ fallback_visual_summary = build_visual_fallback_summary(change_evidence)
 st.subheader("4x4 visual comparison grid")
 st.caption("Each panel shows the same cell before and after. This grid is sent to the VLM so it can describe A1..D4 directly.")
 st.image(cell_contact_sheet, caption="A1..D4 before/after contact sheet", width="stretch")
-model_auxiliary_images = [cell_contact_sheet, change_guide_image]
+model_auxiliary_images = [cell_contact_sheet] if explanation_backend == "EarthDial VLM" else [cell_contact_sheet, change_guide_image]
 visual_change_context = build_visual_change_context(change_evidence)
 
 progress_cb = None

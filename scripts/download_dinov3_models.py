@@ -6,8 +6,6 @@ from huggingface_hub import snapshot_download
 
 
 MODELS = {
-    "timm/vit_small_patch16_dinov3.lvd1689m": Path("artifacts/models/features/timm-vit_small_patch16_dinov3.lvd1689m"),
-    "timm/vit_base_patch16_dinov3.lvd1689m": Path("artifacts/models/features/timm-vit_base_patch16_dinov3.lvd1689m"),
     "timm/vit_large_patch16_dinov3.sat493m": Path("artifacts/models/features/timm-vit_large_patch16_dinov3.sat493m"),
 }
 

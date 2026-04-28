@@ -105,20 +105,16 @@ python scripts/download_earthdial.py
 
 `GeoChat-7B` остаётся исследовательским кандидатом: он заметно тяжелее для MacBook и пока не интегрирован в текущий runtime.
 
-## DINOv3 feature-region segmentation
+## DINOv3 SAT feature diagnostics
 
-В UI добавлены DINOv3 варианты в `Semantic model`. Важно: DINOv3 без отдельного decoder/head не выдаёт OpenEarthMap классы вроде `road`, `building`, `water`. Поэтому текущая реализация строит unsupervised `DINO feature-region` segmentation: patch embeddings кластеризуются совместно для `Before` и `After`, чтобы region id были сопоставимы между двумя снимками.
+DINOv3 больше не показывается как normal `Semantic model`: без отдельного decoder/head он не выдаёт OpenEarthMap классы вроде `road`, `building`, `water`. В приложении semantic path остаётся Mask2Former, а DINOv3 оставлен только как debug/research feature extractor.
 
-Практичные размеры для Mac:
-- `facebook/dinov3-vitl16-pretrain-sat493m` -> official SAT checkpoint, gated на Hugging Face; в app для него используется открытый SAT mirror `timm/vit_large_patch16_dinov3.sat493m`
-- `timm/vit_small_patch16_dinov3.lvd1689m` -> около `0.09 GB`
-- `timm/vit_base_patch16_dinov3.lvd1689m` -> около `0.34 GB`
-- `timm/vit_large_patch16_dinov3.sat493m` -> около `1.21 GB`
+Оставлен только самый сильный практичный SAT-вариант:
+- `facebook/dinov3-vitl16-pretrain-sat493m` -> official SAT checkpoint, gated на Hugging Face.
+- `timm/vit_large_patch16_dinov3.sat493m` -> открытый runnable mirror для Mac, около `1.21 GB` на HF и около `2.3 GB` локально.
 
 Непрактичный локальный вариант:
 - `facebook/dinov3-vit7b16-pretrain-lvd1689m` / `...sat493m` -> около `26.86 GB`
-
-Важно: официальные `facebook/dinov3-*` repos на Hugging Face gated, поэтому в приложении используется открытая `timm`-линия DINOv3 checkpoints. Это даёт рабочий inference path на Mac без отдельного HF access approval.
 
 Скрипт загрузки:
 

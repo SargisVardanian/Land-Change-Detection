@@ -18,5 +18,16 @@ def test_app_sends_contact_sheet_to_vlm():
     app_source = Path("app.py").read_text()
 
     assert "build_cell_contact_sheet" in app_source
-    assert "model_auxiliary_images = [cell_contact_sheet, change_guide_image]" in app_source
+    assert "model_auxiliary_images = [cell_contact_sheet]" in app_source
+    assert "[cell_contact_sheet, change_guide_image]" in app_source
     assert "A1..D4 before/after contact sheet" in app_source
+
+
+def test_normal_app_hides_dino_segmentation_and_feature_encoder_controls():
+    app_source = Path("app.py").read_text()
+
+    assert "DINOv3 feature encoder" not in app_source
+    assert "DINOv3 device" not in app_source
+    assert "dinov3_feature_regions" not in app_source
+    assert "timm/vit_base_patch16_dinov3.lvd1689m" not in app_source
+    assert "timm/vit_small_patch16_dinov3.lvd1689m" not in app_source

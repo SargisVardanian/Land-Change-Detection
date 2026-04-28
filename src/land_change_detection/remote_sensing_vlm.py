@@ -1032,9 +1032,9 @@ class RemoteSensingQwen2VL2B:
         _ensure_earthdial_import_path()
         _patch_transformers_compat()
         from earthdial.model.internvl_chat import InternVLChatModel
-        from transformers import AutoTokenizer
+        from transformers import LlamaTokenizer
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, use_fast=False)
+        self.tokenizer = LlamaTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, use_fast=False)
         self.model = InternVLChatModel.from_pretrained(
             model_name_or_path,
             low_cpu_mem_usage=True,
@@ -1330,11 +1330,12 @@ class RemoteSensingQwen2VL2B:
             try:
                 reasoning_prompt = self._reasoning_prompt(response_language, visual_context, semantic_context, has_change_guide)
                 if self.backend == "earthdial":
+                    earthdial_aux_img = extra_images[0] if extra_images else after_img
                     if self.reasoning_profile.enable_thinking:
-                        reasoning_text = _normalize_reasoning_notes(self._earthdial_chat(before_img, after_img, after_img, reasoning_prompt))
+                        reasoning_text = _normalize_reasoning_notes(self._earthdial_chat(before_img, after_img, earthdial_aux_img, reasoning_prompt))
                         if progress_cb is not None and reasoning_text.strip():
                             progress_cb({"stage": "hf_reasoning_ready", "message": "Reasoning pass completed"})
-                    raw_text = self._earthdial_chat(before_img, after_img, after_img, self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide))
+                    raw_text = self._earthdial_chat(before_img, after_img, earthdial_aux_img, self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide))
                 else:
                     if self.reasoning_profile.enable_thinking:
                         reasoning_budget = self.reasoning_profile.reasoning_tokens_mps if run_device.type == "mps" else self.reasoning_profile.reasoning_tokens_other

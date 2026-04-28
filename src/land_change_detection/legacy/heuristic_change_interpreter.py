@@ -128,7 +128,7 @@ def interpret_cell_change(cell: ChangeCellEvidence) -> list[str]:
     if cell.edge_delta <= -8 and cell.brightness_delta >= 6:
         interpretations.append("a rougher surface is replaced by smoother cleared ground in AFTER")
     if not interpretations and cell.mean_delta >= 12:
-        interpretations.append("localized structured change is visible, but object type is ambiguous")
+        interpretations.append("visible surface brightness/texture changed, but no object-level conversion is clear")
     if not interpretations:
         interpretations.append("stable area / no clear object-level change detected")
     return interpretations[:3]
@@ -215,7 +215,7 @@ def physical_interpretation_for_cell(cell: ChangeCellEvidence) -> str:
         return f"{prefix} exposed prepared ground or grading; this suggests surface work, scraping, fill, or clearing."
     if any("stable area" in item or "no clear" in item for item in likely):
         return "No stable object-level conversion is visible beyond weak local differences or registration noise."
-    return "Localized structured change is visible, but exact object type is ambiguous at this resolution."
+    return "Visible surface brightness or texture changed, but no clear road, building, excavation, or field conversion can be identified."
 
 
 def build_cell_report_rows(evidence: ChangeEvidence) -> list[dict[str, object]]:
