@@ -91,7 +91,6 @@ streamlit run app.py
 Для более смыслового описания спутниковых изменений основной локальный путь сейчас:
 
 - `gemma4:e4b` через Ollama -> текущий рабочий default на MacBook.
-- `HuggingFaceTB/SmolVLM2-500M-Video-Instruct` -> `artifacts/models/vlm/SmolVLM2-500M-Video-Instruct`; переносимый CPU/CUDA/MPS fallback через Transformers.
 
 Remote-sensing-specific модели оставлены как experimental/debug, потому что на MacBook они тяжёлые или несовместимы с текущим локальным runtime:
 
@@ -102,7 +101,7 @@ Remote-sensing-specific модели оставлены как experimental/debu
 
 - `AdaptLLM/remote-sensing-Qwen2.5-VL-3B-Instruct` -> `artifacts/models/vlm/remote-sensing-Qwen2.5-VL-3B-Instruct`
 
-`SmolVLM2` и remote-sensing Qwen модели прописаны в `scripts/download_vlm_models.py`. `EarthDial_4B_RGB` скачивается отдельным скриптом:
+Remote-sensing Qwen модели прописаны в `scripts/download_vlm_models.py`. `EarthDial_4B_RGB` скачивается отдельным скриптом:
 
 ```bash
 python scripts/download_earthdial.py
