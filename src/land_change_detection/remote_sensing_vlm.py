@@ -28,6 +28,8 @@ QWEN3_VL_4B_THINKING_MLX_3BIT_DIR = Path("artifacts/models/mlx-community__Qwen3-
 QWEN3_5_VL_0_8B_MLX_4BIT = "mlx-community/Qwen3.5-0.8B-4bit"
 QWEN3_5_VL_0_8B_MLX_4BIT_DIR = Path("artifacts/models/mlx-community__Qwen3.5-0.8B-4bit")
 GEMMA4_E4B_OLLAMA = "gemma4:e4b"
+SMOLVLM2_500M = "HuggingFaceTB/SmolVLM2-500M-Video-Instruct"
+SMOLVLM2_500M_DIR = Path("artifacts/models/vlm/SmolVLM2-500M-Video-Instruct")
 REMOTE_SENSING_QWEN2_5_VL_3B = "AdaptLLM/remote-sensing-Qwen2.5-VL-3B-Instruct"
 REMOTE_SENSING_QWEN2_5_VL_3B_DIR = Path("artifacts/models/vlm/remote-sensing-Qwen2.5-VL-3B-Instruct")
 REMOTE_SENSING_QWEN2_VL_2B = "AdaptLLM/remote-sensing-Qwen2-VL-2B-Instruct"
@@ -67,9 +69,26 @@ def _patch_transformers_compat() -> None:
     if not hasattr(transformers_utils, "is_flash_attn_greater_or_equal_2_10"):
         transformers_utils.is_flash_attn_greater_or_equal_2_10 = lambda: False
     try:
+        from transformers.cache_utils import DynamicCache
+
+        if not hasattr(DynamicCache, "seen_tokens"):
+            DynamicCache.seen_tokens = property(lambda self: self.get_seq_length())
+        if not hasattr(DynamicCache, "get_max_length"):
+            DynamicCache.get_max_length = lambda self: getattr(self, "max_cache_len", None)
+    except Exception:
+        pass
+    try:
         from earthdial.model.internvl_chat.configuration_internvl_chat import InternVLChatConfig
 
         InternVLChatConfig.has_no_defaults_at_init = True
+    except Exception:
+        pass
+    try:
+        from earthdial.model.phi3.modeling_phi3 import Phi3ForCausalLM
+        from transformers.generation.utils import GenerationMixin
+
+        if not hasattr(Phi3ForCausalLM, "generate"):
+            Phi3ForCausalLM.__bases__ = Phi3ForCausalLM.__bases__ + (GenerationMixin,)
     except Exception:
         pass
 
@@ -439,18 +458,18 @@ class ReasoningProfile:
 REASONING_PROFILES: dict[str, ReasoningProfile] = {
     "efficient": ReasoningProfile(
         label="Efficient",
-        enable_thinking=True,
+        enable_thinking=False,
         reasoning_tokens_mps=192,
         reasoning_tokens_other=224,
-        max_new_tokens_mps=192,
-        max_new_tokens_other=256,
+        max_new_tokens_mps=512,
+        max_new_tokens_other=640,
         use_cache_on_mps=True,
         semantic_context_chars=700,
         image_max_side_mps=256,
         image_max_side_other=640,
-        ollama_think="low",
-        ollama_num_predict=384,
-        ollama_num_ctx=2048,
+        ollama_think=False,
+        ollama_num_predict=1024,
+        ollama_num_ctx=4096,
         reasoning_rounds=1,
         mlx_prefill_step_size=256,
     ),
@@ -611,7 +630,12 @@ def cell_observations_quality_issues(rows: list[dict[str, str]]) -> list[str]:
     if unexpected:
         issues.append("unexpected cells: " + ", ".join(unexpected[:6]))
     observations = [re.sub(r"\s+", " ", str(row.get("observation", "")).strip().lower()) for row in rows]
-    repeated = {text for text in observations if text and observations.count(text) >= 4}
+    stable_markers = ("stable", "no discernible change", "no visible change", "unchanged")
+    repeated = {
+        text
+        for text in observations
+        if text and observations.count(text) >= 4 and not any(marker in text for marker in stable_markers)
+    }
     if repeated:
         issues.append("repeated generic observations")
     too_short = [cell for cell, text in zip(cells, observations, strict=False) if len(text) < 18]
@@ -1041,7 +1065,7 @@ class RemoteSensingQwen2VL2B:
         from transformers import LlamaTokenizer
 
         if not hasattr(InternVLChatModel, "all_tied_weights_keys"):
-            InternVLChatModel.all_tied_weights_keys = []
+            InternVLChatModel.all_tied_weights_keys = {}
         self.tokenizer = LlamaTokenizer.from_pretrained(model_name_or_path, trust_remote_code=True, use_fast=False)
         orig_linspace = torch.linspace
 
@@ -1165,7 +1189,7 @@ class RemoteSensingQwen2VL2B:
         if reasoning_notes.strip():
             prompt += "\nReasoning notes:\n" + _normalize_reasoning_notes(reasoning_notes).strip()
         return prompt
-    def _earthdial_chat(self, before_img: np.ndarray, after_img: np.ndarray, overlay_img: np.ndarray, prompt: str) -> str:
+    def _earthdial_chat(self, before_img: np.ndarray, after_img: np.ndarray, overlay_img: np.ndarray, prompt: str, max_new_tokens: int = 640) -> str:
         from earthdial.conversation import get_conv_template
 
         composite = _composite_triptych(before_img, after_img, overlay_img)
@@ -1201,7 +1225,7 @@ class RemoteSensingQwen2VL2B:
             do_sample=False,
             temperature=0.0,
             num_beams=1,
-            max_new_tokens=256,
+            max_new_tokens=max_new_tokens,
             min_new_tokens=1,
             eos_token_id=eos_token_id,
         )
@@ -1350,10 +1374,18 @@ class RemoteSensingQwen2VL2B:
                 if self.backend == "earthdial":
                     earthdial_aux_img = extra_images[0] if extra_images else after_img
                     if self.reasoning_profile.enable_thinking:
-                        reasoning_text = _normalize_reasoning_notes(self._earthdial_chat(before_img, after_img, earthdial_aux_img, reasoning_prompt))
+                        reasoning_text = _normalize_reasoning_notes(
+                            self._earthdial_chat(before_img, after_img, earthdial_aux_img, reasoning_prompt, max_new_tokens=max(160, max_new_tokens // 2))
+                        )
                         if progress_cb is not None and reasoning_text.strip():
                             progress_cb({"stage": "hf_reasoning_ready", "message": "Reasoning pass completed"})
-                    raw_text = self._earthdial_chat(before_img, after_img, earthdial_aux_img, self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide))
+                    raw_text = self._earthdial_chat(
+                        before_img,
+                        after_img,
+                        earthdial_aux_img,
+                        self._final_prompt(response_language, reasoning_text, visual_context, semantic_context, has_change_guide),
+                        max_new_tokens=max_new_tokens,
+                    )
                 else:
                     if self.reasoning_profile.enable_thinking:
                         reasoning_budget = self.reasoning_profile.reasoning_tokens_mps if run_device.type == "mps" else self.reasoning_profile.reasoning_tokens_other

@@ -53,6 +53,8 @@ from land_change_detection.remote_sensing_vlm import (
     EARTHDIAL_RGB,
     EARTHDIAL_RGB_DIR,
     GEMMA4_E4B_OLLAMA,
+    SMOLVLM2_500M,
+    SMOLVLM2_500M_DIR,
     QWEN3_5_VL_0_8B_MLX_4BIT,
     QWEN3_5_VL_0_8B_MLX_4BIT_DIR,
     QWEN3_VL_4B_THINKING,
@@ -273,19 +275,31 @@ def available_model_presets(show_debug: bool = False) -> dict[str, dict[str, str
         "runtime_backend": "ollama_gemma",
         "model_name": GEMMA4_E4B_OLLAMA,
     }
-    if model_dir_complete(EARTHDIAL_RGB_DIR):
-        presets["EarthDial 4B RGB (HF local)"] = {
-            "backend": "EarthDial VLM",
+    if model_dir_complete(SMOLVLM2_500M_DIR):
+        presets["Portable SmolVLM2 500M (HF local)"] = {
+            "backend": "Portable HF VLM",
             "runtime_backend": "hf_transformers_legacy",
-            "model_name": str(EARTHDIAL_RGB_DIR),
+            "model_name": str(SMOLVLM2_500M_DIR),
         }
     else:
-        presets["EarthDial 4B RGB (download from HF)"] = {
-            "backend": "EarthDial VLM",
+        presets["Portable SmolVLM2 500M (download from HF)"] = {
+            "backend": "Portable HF VLM",
             "runtime_backend": "hf_transformers_legacy",
-            "model_name": EARTHDIAL_RGB,
+            "model_name": SMOLVLM2_500M,
         }
     if show_debug:
+        if model_dir_complete(EARTHDIAL_RGB_DIR):
+            presets["EarthDial 4B RGB (experimental, CPU only)"] = {
+                "backend": "EarthDial VLM",
+                "runtime_backend": "hf_transformers_legacy",
+                "model_name": str(EARTHDIAL_RGB_DIR),
+            }
+        else:
+            presets["EarthDial 4B RGB (experimental download)"] = {
+                "backend": "EarthDial VLM",
+                "runtime_backend": "hf_transformers_legacy",
+                "model_name": EARTHDIAL_RGB,
+            }
         presets["Qwen MLX (debug, heavy on Mac)"] = {
             "backend": "MLX vision-language",
             "runtime_backend": "mlx_vlm_qwen",
@@ -678,19 +692,20 @@ selected_model_config = model_presets[selected_preset]
 explanation_backend = selected_model_config["backend"]
 runtime_backend = selected_model_config["runtime_backend"]
 vlm_device_name = st.sidebar.selectbox("VLM device", ["cpu", "mps", "cuda"], index=1)
+stable_vlm_backend = explanation_backend in {"EarthDial VLM", "Ollama vision", "Portable HF VLM"}
+reasoning_options = ["efficient"] if stable_vlm_backend else list(REASONING_PROFILES.keys())
 reasoning_profile = st.sidebar.selectbox(
     "Reasoning budget",
-    options=list(REASONING_PROFILES.keys()),
-    index=list(REASONING_PROFILES.keys()).index("efficient" if vlm_device_name == "mps" else "balanced"),
+    options=reasoning_options,
+    index=0 if stable_vlm_backend else list(REASONING_PROFILES.keys()).index("efficient" if vlm_device_name == "mps" else "balanced"),
     format_func=lambda key: REASONING_PROFILES[key].label,
 )
 if explanation_backend == "EarthDial VLM" and vlm_device_name != "cpu":
     st.sidebar.info("EarthDial runs on CPU in this app because the HF legacy 4B path is unstable on MPS memory.")
     vlm_device_name = "cpu"
-if explanation_backend in {"EarthDial VLM", "Ollama vision"} and reasoning_profile != "efficient":
+if stable_vlm_backend:
     st.sidebar.info(f"{explanation_backend} uses the Efficient profile in this app to reduce local memory pressure and preserve structured JSON output.")
-    reasoning_profile = "efficient"
-if runtime_backend == "hf_transformers_legacy":
+if runtime_backend == "hf_transformers_legacy" and explanation_backend not in {"EarthDial VLM", "Portable HF VLM"}:
     st.sidebar.warning("HF legacy debug is the slowest and most memory-heavy path on this Mac.")
 elif runtime_backend == "mlx_vlm_qwen" and reasoning_profile == "deep":
     st.sidebar.info("Deep reasoning on MLX is more stable than HF/MPS, but still materially slower.")

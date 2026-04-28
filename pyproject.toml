@@ -15,6 +15,7 @@ dependencies = [
   "streamlit-extras>=0.7.0",
   "streamlit-cropper>=0.2.2",
   "huggingface_hub>=0.34.0",
+  "num2words>=0.5.14",
   "sentencepiece>=0.2.0",
   "streamlit>=1.44",
   "tiktoken>=0.12.0",
