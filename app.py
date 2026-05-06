@@ -541,10 +541,10 @@ def render_vlm_summary(parsed: dict | None, fallback_summary: dict | None = None
     main_changes = parsed.get("main_changes") if isinstance(parsed.get("main_changes"), list) else []
     cell_observations = parsed.get("cell_observations") if isinstance(parsed.get("cell_observations"), list) else []
 
-    st.subheader("Gemma visual interpretation")
+    st.subheader(f"{selected_model_display_name} visual interpretation")
     if not parsed or not scene_overview:
         st.warning(
-            "Gemma did not return a complete user-facing analysis. No semantic or DINO fallback is shown because the final report must come from direct visual inspection."
+            f"{selected_model_display_name} did not return a complete user-facing analysis. No semantic or DINO fallback is shown because the final report must come from direct visual inspection."
         )
         return
     st.write(scene_overview)
@@ -633,6 +633,7 @@ selected_preset = st.sidebar.selectbox("Available model", model_preset_names, in
 selected_model_config = model_presets[selected_preset]
 explanation_backend = selected_model_config["backend"]
 runtime_backend = selected_model_config["runtime_backend"]
+selected_model_display_name = display_model_name(selected_model_config["model_name"])
 vlm_device_name = st.sidebar.selectbox("VLM device", ["cpu", "mps", "cuda"], index=1)
 stable_vlm_backend = explanation_backend in {"EarthDial VLM", "Ollama vision"}
 reasoning_options = ["full_local", "efficient"] if explanation_backend == "Ollama vision" else ["efficient"]
@@ -646,7 +647,7 @@ if explanation_backend == "EarthDial VLM" and vlm_device_name != "cpu":
     st.sidebar.info("EarthDial runs on CPU in this app because the HF legacy 4B path is unstable on MPS memory.")
     vlm_device_name = "cpu"
 if explanation_backend == "Ollama vision":
-    st.sidebar.info("Gemma receives only the before crop, after crop, and A1..D4 contact sheet. It never receives Mask2Former, DINO, semantic labels, or heatmaps.")
+    st.sidebar.info(f"{selected_model_display_name} receives only the before crop, after crop, and A1..D4 contact sheet. It never receives Mask2Former, DINO, semantic labels, or heatmaps.")
 elif stable_vlm_backend:
     st.sidebar.info(f"{explanation_backend} uses the Fast profile in this app to reduce local memory pressure and preserve structured JSON output.")
 if runtime_backend == "hf_transformers_legacy" and explanation_backend != "EarthDial VLM":
@@ -799,7 +800,7 @@ change_zoom_strip = build_change_zoom_strip(crop_before, crop_after, change_evid
 cell_contact_sheet = build_cell_contact_sheet(crop_before, crop_after, grid_size=4)
 fallback_visual_summary = build_visual_fallback_summary(change_evidence)
 st.subheader("4x4 visual comparison grid")
-st.caption("Each panel shows the same cell before and after. Gemma receives this grid plus the two original crops, and no semantic/DINO/heatmap inputs.")
+st.caption(f"Each panel shows the same cell before and after. {selected_model_display_name} receives this grid plus the two original crops, and no semantic/DINO/heatmap inputs.")
 st.image(cell_contact_sheet, caption="A1..D4 before/after contact sheet", width="stretch")
 model_auxiliary_images = [cell_contact_sheet]
 visual_change_context = build_visual_change_context(change_evidence)
