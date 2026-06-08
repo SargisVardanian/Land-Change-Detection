@@ -1,0 +1,54 @@
+from __future__ import annotations
+
+import importlib.util
+import sys
+from pathlib import Path
+
+
+def _load_module():
+    repo_root = Path(__file__).resolve().parents[1]
+    script_path = repo_root / "scripts" / "verify_rs_change_project.py"
+    spec = importlib.util.spec_from_file_location("verify_rs_change_project", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec is not None and spec.loader is not None
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_build_report_incomplete(tmp_path: Path):
+    module = _load_module()
+    project_root = tmp_path / "rs_change_project"
+    (project_root / "datasets" / "raw").mkdir(parents=True)
+    report = module.build_report(project_root)
+    assert report["ready"] is False
+    assert report["datasets"]["LEVIR-CC"]["exists"] is False
+
+
+def test_build_report_ready(tmp_path: Path):
+    module = _load_module()
+    project_root = tmp_path / "rs_change_project"
+    for rel in [
+        "datasets/raw/LEVIR-CC",
+        "datasets/raw/LEVIR-MCI",
+        "datasets/raw/SECOND-CC",
+        "checkpoints/models/semantic/mask2former-satellite",
+        "checkpoints/models/semantic/Prithvi-EO-2.0-300M-TL",
+        "checkpoints/models/semantic/Prithvi-EO-2.0-600M-TL",
+    ]:
+        (project_root / rel).mkdir(parents=True, exist_ok=True)
+    (project_root / "datasets" / "dataset_manifest.md").parent.mkdir(parents=True, exist_ok=True)
+    (project_root / "datasets" / "dataset_manifest.md").write_text("# Dataset Manifest\n", encoding="utf-8")
+    for rel in [
+        "indexes/levir_mci_samples.jsonl",
+        "indexes/second_cc_samples.jsonl",
+        "indexes/levir_cc_text_manifest.jsonl",
+        "indexes/preview_samples.json",
+        "runs/levir_mci_preview.png",
+        "runs/second_cc_preview.png",
+    ]:
+        path = project_root / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x", encoding="utf-8")
+    report = module.build_report(project_root)
+    assert report["ready"] is True

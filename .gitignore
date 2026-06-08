@@ -4,6 +4,7 @@
 .agent/
 .codex/
 .agent-capability-report.md
+.idea/
 
 # Python environments and generated package metadata
 .venv/
@@ -23,3 +24,6 @@ data/
 # Large local research/source files should stay outside git.
 *.pdf
 *.zip
+
+# Local YSU cluster credentials and generated cluster state
+cluster/ysu/private/

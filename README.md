@@ -213,6 +213,102 @@ Experimental/heavy VLMs:
 - intended only for research/debug;
 - not recommended for normal local use.
 
+## Training On The YSU Cluster
+
+The repo now includes a ready cluster bundle under `cluster/ysu/`.
+
+Use it after you have VPN access and Weka mounted on the cluster:
+
+```bash
+cd ~/Land-Change-Detection
+bash cluster/ysu/prepare_workspace.sh
+```
+
+Then create the cluster environment and submit jobs:
+
+```bash
+source /home/svardanyan/miniconda3/etc/profile.d/conda.sh
+conda create -n lcd python=3.11 -y
+conda activate lcd
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e ".[dev,llm]"
+
+sbatch cluster/ysu/train_qwen_lora.sbatch
+sbatch cluster/ysu/train_retrieval_head.sbatch
+```
+
+Cluster-specific notes:
+
+- `data/` and `artifacts/` are redirected to `/mnt/weka/svardanyan/land-change-detection/`.
+- GPU jobs use the `research` partition by default.
+- Keep large datasets and checkpoints on Weka, not in `/home/svardanyan/`.
+
+For the remote-sensing change retrieval dataset workflow on YSU-HPC, the repo now also includes:
+
+- [docs/ysu_hpc_change_retrieval_setup.md](/Users/sargisvardanyan/Land-Change-Detection/docs/ysu_hpc_change_retrieval_setup.md): end-to-end runbook for `/data/$USER/rs_change_project`
+- [scripts/setup_rs_change_project.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/setup_rs_change_project.py): creates the YSU-HPC directory layout and optional dataset manifest
+- [scripts/download_change_retrieval_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/download_change_retrieval_datasets.py): scripted download/prep stage for `LEVIR-CC`, `LEVIR-MCI`, `SECOND-CC`, and reference repos
+- [scripts/check_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/check_datasets.py): quick dataset counts and size summary
+- [scripts/bootstrap_change_retrieval_assets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/bootstrap_change_retrieval_assets.py): builds indexed retrieval assets from downloaded raw datasets
+- [scripts/index_change_retrieval_dataset.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/index_change_retrieval_dataset.py): indexes `LEVIR-MCI` or `SECOND-CC` style folders into JSONL samples
+- [scripts/render_change_retrieval_sample.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/render_change_retrieval_sample.py): renders a `T1/T2/mask/caption` preview from an indexed sample
+- [scripts/render_bootstrap_previews.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/render_bootstrap_previews.py): renders first automatic previews from bootstrap metadata
+- [scripts/build_levir_cc_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_levir_cc_manifest.py): builds a lightweight text retrieval manifest from `LEVIR-CC` captions
+- [scripts/build_change_retrieval_training_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_change_retrieval_training_manifest.py): converts indexed pair datasets into training-ready retrieval JSONL
+- [scripts/build_semantic_change_task_manifests.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_semantic_change_task_manifests.py): converts indexed datasets into change-mask and semantic-transition manifests
+- [scripts/train_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_semantic_change.py): baseline semantic-first training from semantic manifests
+- [scripts/eval_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/eval_semantic_change.py): baseline semantic-first evaluation
+- [scripts/build_prithvi_semantic_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_prithvi_semantic_manifest.py): converts semantic manifests into a Prithvi-style 6-band EO contract when multispectral paths are available
+- [scripts/run_prithvi_semantic_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_semantic_train_eval.py): runs the current semantic baseline in Prithvi-style 6-band mode
+- [scripts/run_prithvi_terratorch_experimental.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_terratorch_experimental.py): explicit Prithvi/TerraTorch experimental runner with honest fallback diagnostics
+- [scripts/diagnose_terratorch_env.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/diagnose_terratorch_env.py): writes environment readiness diagnostics for TerraTorch/Prithvi experiments
+- [scripts/install_terratorch.sh](/Users/sargisvardanyan/Land-Change-Detection/scripts/install_terratorch.sh): installs optional TerraTorch dependencies into the active environment
+- [scripts/inspect_prithvi_runtime.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/inspect_prithvi_runtime.py): inspects checkpoint/config/runtime readiness for Prithvi experiments
+- [scripts/write_prithvi_terratorch_template.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/write_prithvi_terratorch_template.py): writes a minimal TerraTorch config template for Prithvi experiments
+- [scripts/validate_prithvi_runtime_bundle.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/validate_prithvi_runtime_bundle.py): exports the unified Prithvi runtime bundle contract as JSON
+- [scripts/inspect_prithvi_backend.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/inspect_prithvi_backend.py): exports the current `PrithviTerratorchBackend` runtime scaffold JSON
+- [scripts/load_prithvi_backend_runtime.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/load_prithvi_backend_runtime.py): exercises the backend loader lifecycle and exports the loaded runtime scaffold JSON
+- [scripts/build_levir_cc_text_index.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_levir_cc_text_index.py): builds a small `LEVIR-CC` text index with `faiss` or numpy fallback
+- [scripts/run_change_retrieval_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_change_retrieval_train_eval.py): runs the current retrieval train/eval scaffold on generated manifests
+- [cluster/ysu/download_change_retrieval_datasets.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/download_change_retrieval_datasets.sh): one-command dataset download stage on the cluster
+- [cluster/ysu/bootstrap_change_retrieval_assets.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/bootstrap_change_retrieval_assets.sh): one-command asset bootstrap on the cluster
+- [cluster/ysu/bootstrap_change_retrieval_assets.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/bootstrap_change_retrieval_assets.sbatch): batch bootstrap for generated indexes and previews
+- [cluster/ysu/train_change_retrieval_head.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_change_retrieval_head.sbatch): batch retrieval train/eval on generated manifests
+- [cluster/ysu/build_semantic_manifests.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_semantic_manifests.sbatch): batch semantic-manifest generation for mask/transition tasks
+- [cluster/ysu/train_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_semantic_change.sbatch): batch semantic-first baseline training/eval
+- [cluster/ysu/build_prithvi_semantic_manifest.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_prithvi_semantic_manifest.sbatch): batch Prithvi-style manifest generation
+- [cluster/ysu/train_prithvi_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_semantic_change.sbatch): batch Prithvi-style semantic baseline training/eval
+- [cluster/ysu/train_prithvi_terratorch_experimental.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_terratorch_experimental.sbatch): batch experimental Prithvi/TerraTorch runner with fallback reporting
+- [cluster/ysu/install_terratorch.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/install_terratorch.sh): cluster helper for TerraTorch installation
+- [cluster/ysu/write_prithvi_terratorch_template.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/write_prithvi_terratorch_template.sh): writes a starter TerraTorch config on the cluster
+- [cluster/ysu/diagnose_terratorch_env.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/diagnose_terratorch_env.sbatch): batch TerraTorch readiness diagnostics
+- [cluster/ysu/inspect_prithvi_runtime.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/inspect_prithvi_runtime.sbatch): batch runtime/checkpoint inspection for Prithvi experiments
+- [cluster/ysu/validate_prithvi_runtime_bundle.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/validate_prithvi_runtime_bundle.sbatch): batch runtime bundle export for Prithvi experiments
+- [cluster/ysu/inspect_prithvi_backend.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/inspect_prithvi_backend.sbatch): batch backend runtime scaffold inspection
+- [cluster/ysu/load_prithvi_backend_runtime.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/load_prithvi_backend_runtime.sbatch): batch backend loader lifecycle inspection
+- [cluster/ysu/slurm_test_gpu.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/slurm_test_gpu.sbatch): safe first GPU smoke test on the cluster
+
+Typical YSU-HPC retrieval setup flow:
+
+```bash
+python scripts/setup_rs_change_project.py --root /data/$USER/rs_change_project --write-manifest
+bash cluster/ysu/download_change_retrieval_datasets.sh
+bash cluster/ysu/bootstrap_change_retrieval_assets.sh
+sbatch cluster/ysu/bootstrap_change_retrieval_assets.sbatch
+sbatch cluster/ysu/train_change_retrieval_head.sbatch
+sbatch cluster/ysu/build_semantic_manifests.sbatch
+sbatch cluster/ysu/train_semantic_change.sbatch
+sbatch cluster/ysu/build_prithvi_semantic_manifest.sbatch
+sbatch cluster/ysu/train_prithvi_semantic_change.sbatch
+sbatch cluster/ysu/train_prithvi_terratorch_experimental.sbatch
+sbatch cluster/ysu/diagnose_terratorch_env.sbatch
+sbatch cluster/ysu/inspect_prithvi_runtime.sbatch
+sbatch cluster/ysu/validate_prithvi_runtime_bundle.sbatch
+sbatch cluster/ysu/inspect_prithvi_backend.sbatch
+sbatch cluster/ysu/load_prithvi_backend_runtime.sbatch
+sbatch cluster/ysu/slurm_test_gpu.sbatch
+```
+
 ## Why DINOv3 Is Not Used As Segmentation
 
 DINOv3 SAT models such as `facebook/dinov3-vitl16-pretrain-sat493m` and `timm/vit_large_patch16_dinov3.sat493m` are feature-extraction backbones. They do not include a trained land-cover segmentation decoder/head in this project, so they cannot directly output classes such as road, building, water, or bare land.
