@@ -6,24 +6,15 @@ import subprocess
 from pathlib import Path
 
 
-REQUIRED_DATASETS = ("LEVIR-CC", "LEVIR-MCI", "SECOND-CC")
-OPTIONAL_DATASETS = ("BigEarthNet-v2", "DynamicEarthNet")
-REQUIRED_MODELS = (
-    "mask2former-satellite",
-    "Prithvi-EO-2.0-300M-TL",
-    "Prithvi-EO-2.0-600M-TL",
-)
+REQUIRED_DATASETS = ("LEVIR-MCI",)
+OPTIONAL_DATASETS = ("LEVIR-CC", "SECOND-CC")
 REQUIRED_INDEXES = (
     "levir_mci_samples.jsonl",
-    "second_cc_samples.jsonl",
-    "levir_cc_text_manifest.jsonl",
+    "levir_mci_validation.json",
     "preview_samples.json",
 )
-OPTIONAL_INDEXES = (
-    "levir_mci_train_manifest.jsonl",
-    "second_cc_train_manifest.jsonl",
-)
-REQUIRED_PREVIEWS = ("levir_mci_preview.png", "second_cc_preview.png")
+OPTIONAL_INDEXES = ("levir_cc_text_manifest.jsonl", "second_cc_samples.jsonl", "levir_mci_train_manifest.jsonl")
+REQUIRED_PREVIEWS = ("levir_mci_preview.png", "levir_mci_grid.png")
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,39 +59,49 @@ def _summarize_file(path: Path) -> dict:
 
 def build_report(project_root: Path) -> dict:
     raw_root = project_root / "datasets" / "raw"
-    model_root = project_root / "checkpoints" / "models" / "semantic"
     indexes_root = project_root / "indexes"
     runs_root = project_root / "runs"
     datasets_manifest = project_root / "datasets" / "dataset_manifest.md"
+    overfit_dir = runs_root / "levir_mci_overfit"
+    smoke_report = runs_root / "cluster_smoke_report.json"
+    verification_copy = project_root / "rs_change_project_verification.json"
 
     datasets = {name: _summarize_dir(raw_root / name) for name in REQUIRED_DATASETS}
     optional_datasets = {name: _summarize_dir(raw_root / name) for name in OPTIONAL_DATASETS}
-    models = {name: _summarize_dir(model_root / name) for name in REQUIRED_MODELS}
     indexes = {name: _summarize_file(indexes_root / name) for name in REQUIRED_INDEXES}
     optional_indexes = {name: _summarize_file(indexes_root / name) for name in OPTIONAL_INDEXES}
     previews = {name: _summarize_file(runs_root / name) for name in REQUIRED_PREVIEWS}
 
     all_required_datasets = all(item["exists"] for item in datasets.values())
-    all_required_models = all(item["exists"] for item in models.values())
     all_required_indexes = all(item["exists"] for item in indexes.values())
     all_required_previews = all(item["exists"] for item in previews.values())
+
+    bootstrap_ready = all(
+        [
+            datasets_manifest.exists(),
+            all_required_datasets,
+            all_required_indexes,
+            all_required_previews,
+        ]
+    )
 
     return {
         "project_root": str(project_root),
         "datasets_manifest": _summarize_file(datasets_manifest),
         "datasets": datasets,
         "optional_datasets": optional_datasets,
-        "models": models,
         "indexes": indexes,
         "optional_indexes": optional_indexes,
         "previews": previews,
-        "ready": all(
+        "overfit_run": _summarize_dir(overfit_dir),
+        "smoke_report": _summarize_file(smoke_report),
+        "root_verification_copy": _summarize_file(verification_copy),
+        "bootstrap_ready": bootstrap_ready,
+        "complete": all(
             [
-                datasets_manifest.exists(),
-                all_required_datasets,
-                all_required_models,
-                all_required_indexes,
-                all_required_previews,
+                bootstrap_ready,
+                overfit_dir.exists(),
+                smoke_report.exists(),
             ]
         ),
     }
@@ -114,7 +115,7 @@ def main() -> int:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(rendered + "\n", encoding="utf-8")
     print(rendered)
-    return 0 if report["ready"] else 1
+    return 0 if report["bootstrap_ready"] else 1
 
 
 if __name__ == "__main__":

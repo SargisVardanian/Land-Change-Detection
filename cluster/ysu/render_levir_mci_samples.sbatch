@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#SBATCH --job-name=rschange_smoke
+#SBATCH --job-name=levir_mci_render
 #SBATCH --partition=research
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=8
@@ -16,20 +16,16 @@ else
     export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/data/$USER/rs_change_project}"
 fi
 
-PROJECT_ROOT="${PROJECT_ROOT:-$RS_PROJECT_ROOT}"
-CODE_ROOT="${CODE_ROOT:-${PROJECT_ROOT}/code/project}"
-OUTPUT_PATH="${OUTPUT_PATH:-${PROJECT_ROOT}/runs/cluster_smoke_report.json}"
-
-cd "${CODE_ROOT}"
+cd "$RS_PROJECT_ROOT/code/project"
 mkdir -p logs "$RS_PROJECT_ROOT/logs" "$RS_PROJECT_ROOT/runs"
-source ~/.bashrc
 
-if command -v conda >/dev/null 2>&1; then
-    conda activate rschange
-else
-    source ~/venvs/rschange/bin/activate
-fi
+conda activate rschange || conda activate gpus
 
-python scripts/build_cluster_smoke_report.py \
-  --project-root "${PROJECT_ROOT}" \
-  --output "${OUTPUT_PATH}"
+export HF_HOME="$RS_PROJECT_ROOT/.cache/huggingface"
+export TRANSFORMERS_CACHE="$HF_HOME/transformers"
+export HF_DATASETS_CACHE="$HF_HOME/datasets"
+mkdir -p "$HF_HOME"
+
+python scripts/render_levir_mci_samples.py \
+  --project-root "$RS_PROJECT_ROOT" \
+  --data-root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-MCI"

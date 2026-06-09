@@ -1,10 +1,14 @@
-#!/usr/bin/env bash
+#!/bin/bash -l
 set -euo pipefail
 
-PROJECT_ROOT="${PROJECT_ROOT:-/data/$USER/rs_change_project}"
+if [ -d "/mnt/weka/$USER" ] && [ -w "/mnt/weka/$USER" ]; then
+  export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
+else
+  export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/data/$USER/rs_change_project}"
+fi
+
+PROJECT_ROOT="${PROJECT_ROOT:-$RS_PROJECT_ROOT}"
 CODE_ROOT="${CODE_ROOT:-${PROJECT_ROOT}/code/project}"
-INCLUDE_RESEARCH_MODELS="${INCLUDE_RESEARCH_MODELS:-0}"
-MODEL_ROOT="${MODEL_ROOT:-${PROJECT_ROOT}/checkpoints/models/semantic}"
 
 cd "${CODE_ROOT}"
 source ~/.bashrc
@@ -16,17 +20,8 @@ else
 fi
 
 python scripts/setup_rs_change_project.py --root "${PROJECT_ROOT}" --write-manifest
-python scripts/download_change_retrieval_datasets.py --project-root "${PROJECT_ROOT}" "$@"
-if [ "${INCLUDE_RESEARCH_MODELS}" = "1" ]; then
-  python scripts/download_semantic_models.py --include-research --output-root "${MODEL_ROOT}"
-else
-  python scripts/download_semantic_models.py --output-root "${MODEL_ROOT}"
-fi
+python scripts/download_change_retrieval_datasets.py --project-root "${PROJECT_ROOT}" --skip-second-cc --skip-reference-repos "$@"
 
 echo "Download stage complete."
 echo "Raw datasets:"
 echo "  ${PROJECT_ROOT}/datasets/raw"
-echo "Models:"
-echo "  ${MODEL_ROOT}"
-echo "Reference repos:"
-echo "  ${PROJECT_ROOT}/code"

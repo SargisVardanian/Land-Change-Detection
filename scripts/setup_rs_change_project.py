@@ -8,20 +8,13 @@ from pathlib import Path
 
 DATASET_MANIFEST = """# Dataset Manifest
 
-## LEVIR-CC
-Path: {root}/datasets/raw/LEVIR-CC
-Use:
-- pair-to-text captioning
-- text-to-change retrieval
-- image-pair embedding training
-
 ## LEVIR-MCI
 Path: {root}/datasets/raw/LEVIR-MCI
 Use:
-- change masks
-- change captioning
-- prompt-conditioned mask learning
-- VLM instruction data base
+- first real binary change segmentation experiment
+- paired text-to-change retrieval
+- overfit-100 verification run
+- sample-grid QA
 
 ## SECOND-CC
 Path: {root}/datasets/raw/SECOND-CC
@@ -29,32 +22,24 @@ Use:
 - semantic maps
 - change captions
 - transition segmentation
-- prompt-to-mask training
+- semantic transition follow-on work
 
-## ChangeChat
-Path: {root}/code/ChangeChat
+## LEVIR-CC
+Path: {root}/datasets/raw/LEVIR-CC
 Use:
-- reference for VLM/instruction tuning
-- not first-stage training
-
-## BigEarthNet-v2 S2
-Path: {root}/datasets/raw/BigEarthNet-v2
-Use:
-- static retrieval
-- classification pretraining
-- remote-sensing representation learning
-
-## DynamicEarthNet
-Path: not downloaded yet
-Use:
-- temporal/seasonal reasoning
-- JEPA/temporal pretraining
+- optional caption-only auxiliary retrieval experiments
+- not required for the first LEVIR-MCI binary+retrieval run
 """
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare the rs_change_project folder layout on YSU-HPC style storage.")
-    parser.add_argument("--root", type=Path, default=Path("/data") / os.environ.get("USER", "user") / "rs_change_project")
+    default_root = (
+        Path("/mnt/weka") / os.environ.get("USER", "user") / "rs_change_project"
+        if (Path("/mnt/weka") / os.environ.get("USER", "user")).exists()
+        else Path("/data") / os.environ.get("USER", "user") / "rs_change_project"
+    )
+    parser.add_argument("--root", type=Path, default=default_root)
     parser.add_argument("--write-manifest", action="store_true", help="Also write datasets/dataset_manifest.md.")
     return parser.parse_args()
 
@@ -74,7 +59,9 @@ def ensure_layout(root: Path) -> list[Path]:
         root / "logs",
         root / "runs",
         root / "checkpoints",
+        root / "checkpoints" / "models",
         root / "indexes",
+        root / "envs",
     ]
     for path in paths:
         path.mkdir(parents=True, exist_ok=True)
@@ -92,11 +79,9 @@ def main() -> int:
     free_gb = disk_free_gb(probe_path)
     print(f"Approx free space at {probe_path}: {free_gb:.1f} GB")
     if free_gb < 250:
-        print("Storage warning: keep downloads limited to LEVIR-CC, LEVIR-MCI, and SECOND-CC.")
-    elif free_gb < 700:
-        print("Storage note: BigEarthNet-v2 S2 may fit, but DynamicEarthNet should stay disabled.")
+        print("Storage warning: keep the immediate scope to LEVIR-MCI and lightweight verification artifacts.")
     else:
-        print("Storage note: enough room for larger optional datasets if explicitly approved.")
+        print("Storage note: maintain LEVIR-MCI as the active first experiment unless scope changes explicitly.")
 
     if args.write_manifest:
         manifest_path = args.root / "datasets" / "dataset_manifest.md"

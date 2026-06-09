@@ -7,7 +7,6 @@ from pathlib import Path
 
 
 HF_DATASETS = {
-    "LEVIR-CC": "lcybuaa/LEVIR-CC",
     "LEVIR-MCI": "lcybuaa/LEVIR-MCI",
 }
 
@@ -23,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--skip-hf", action="store_true", help="Skip Hugging Face dataset downloads.")
     parser.add_argument("--skip-second-cc", action="store_true", help="Skip SECOND-CC preparation.")
+    parser.add_argument("--include-levir-cc", action="store_true", help="Also download LEVIR-CC.")
     parser.add_argument("--skip-reference-repos", action="store_true", help="Skip cloning dataset reference repositories.")
     parser.add_argument(
         "--second-cc-zenodo-doi",
@@ -100,7 +100,10 @@ def main() -> int:
     code_root.mkdir(parents=True, exist_ok=True)
 
     if not args.skip_hf:
-        for dataset_name, repo_id in HF_DATASETS.items():
+        hf_datasets = dict(HF_DATASETS)
+        if args.include_levir_cc:
+            hf_datasets["LEVIR-CC"] = "lcybuaa/LEVIR-CC"
+        for dataset_name, repo_id in hf_datasets.items():
             print(f"Downloading {dataset_name} from Hugging Face...")
             _download_hf_dataset(raw_root, dataset_name, repo_id)
 

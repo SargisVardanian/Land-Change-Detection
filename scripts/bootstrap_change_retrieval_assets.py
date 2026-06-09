@@ -5,11 +5,12 @@ import json
 from pathlib import Path
 
 from land_change_detection.change_retrieval_datasets import discover_change_samples
+from land_change_detection.levir_mci import discover_levir_mci_samples
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Bootstrap indexed dataset assets for LEVIR-MCI, SECOND-CC, and LEVIR-CC retrieval experiments."
+        description="Bootstrap indexed dataset assets for the first LEVIR-MCI binary+retrieval experiment."
     )
     parser.add_argument("--project-root", type=Path, required=True, help="Root like /data/$USER/rs_change_project")
     parser.add_argument(
@@ -113,7 +114,7 @@ def main() -> int:
     second_cc_root = raw_root / "SECOND-CC"
     levir_cc_root = raw_root / "LEVIR-CC"
 
-    levir_mci_samples = [sample.to_dict() for sample in discover_change_samples(levir_mci_root, "LEVIR-MCI")] if levir_mci_root.exists() else []
+    levir_mci_samples = [sample.to_dict() for sample in discover_levir_mci_samples(levir_mci_root)] if levir_mci_root.exists() else []
     second_cc_samples = [sample.to_dict() for sample in discover_change_samples(second_cc_root, "SECOND-CC")] if second_cc_root.exists() else []
 
     if levir_mci_samples:
