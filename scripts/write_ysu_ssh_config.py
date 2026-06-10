@@ -40,16 +40,24 @@ def upsert_host_block(config_text: str, alias: str, block: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Write or update the YSU-HPC SSH alias in ~/.ssh/config.")
     parser.add_argument("--alias", default="ysu-hpc")
+    parser.add_argument("--conda-alias", default="ysu-hpc-conda")
     parser.add_argument("--host", default="cluster.ysu.am")
     parser.add_argument("--user", required=True)
+    parser.add_argument(
+        "--terminal-target",
+        default="conda",
+        help="Portal terminal flavor appended as '+<target>' to the SSH user for interactive/container access.",
+    )
     parser.add_argument("--ssh-config", type=Path, default=Path.home() / ".ssh" / "config")
     args = parser.parse_args()
 
     args.ssh_config.parent.mkdir(parents=True, exist_ok=True)
     current = args.ssh_config.read_text(encoding="utf-8") if args.ssh_config.exists() else ""
     updated = upsert_host_block(current, args.alias, render_host_block(args.alias, args.host, args.user))
+    conda_user = f"{args.user}+{args.terminal_target}" if args.terminal_target else args.user
+    updated = upsert_host_block(updated, args.conda_alias, render_host_block(args.conda_alias, args.host, conda_user))
     args.ssh_config.write_text(updated, encoding="utf-8")
-    print(f"Wrote SSH alias '{args.alias}' to {args.ssh_config}")
+    print(f"Wrote SSH aliases '{args.alias}' and '{args.conda_alias}' to {args.ssh_config}")
     return 0
 
 

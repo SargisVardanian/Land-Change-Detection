@@ -39,8 +39,16 @@ def test_run_preflight_records_dns_failure(tmp_path: Path):
     result = module.run_preflight(
         host="definitely.invalid.example.codex",
         ssh_alias="ysu-hpc",
+        conda_alias="ysu-hpc-conda",
+        user="alice",
+        terminal_target="conda",
         ssh_config=config,
         timeout=1,
     )
     assert result.host_resolves is False
     assert any("DNS did not return an address" in note for note in result.notes)
+
+
+def test_recommended_ssh_target_uses_terminal_suffix():
+    module = _load_module()
+    assert module.recommended_ssh_target("cluster.ysu.am", "alice", "conda") == "alice+conda@cluster.ysu.am"

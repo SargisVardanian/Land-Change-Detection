@@ -42,3 +42,14 @@ def test_upsert_host_block_replaces_existing_alias():
     assert "User newuser" in updated
     assert "old.example" not in updated
     assert "Host github.com" in updated
+
+
+def test_render_can_create_conda_alias_block():
+    module = _load_module()
+    updated = module.upsert_host_block(
+        "",
+        "ysu-hpc-conda",
+        module.render_host_block("ysu-hpc-conda", "cluster.ysu.am", "alice+conda"),
+    )
+    assert "Host ysu-hpc-conda" in updated
+    assert "User alice+conda" in updated

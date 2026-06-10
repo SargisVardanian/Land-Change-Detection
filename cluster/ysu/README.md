@@ -98,8 +98,8 @@ REMOTE_HOST=cluster.ysu.am REMOTE_USER=<your_ysu_user> \
   bash cluster/ysu/push_and_bootstrap_from_mac.sh
 ```
 
-By default this downloads the runtime semantic model plus the Prithvi research checkpoints. Set `INCLUDE_RESEARCH_MODELS=0` if you only want the runtime semantic checkpoint first.
-The remote helper also prepares the `rschange` environment unless `SETUP_ENV=0` is set.
+This flow now targets the portal's `Terminal + Conda` entrypoint by default through `your-user+conda@cluster.ysu.am`.
+The remote helper prepares the `rschange` environment and bootstraps the first LEVIR-MCI dataset path unless `SETUP_ENV=0` or `RUN_BOOTSTRAP=0` is set.
 
 If you want a single guarded launcher that checks DNS and SSH first, use:
 
@@ -108,5 +108,5 @@ REMOTE_USER=<your_ysu_user> WRITE_SSH_CONFIG=1 \
   bash cluster/ysu/bootstrap_from_mac.sh
 ```
 
-That flow can also create or update the `ysu-hpc` alias in `~/.ssh/config` before the preflight run.
-After bootstrap, it also pulls back a verification JSON from the cluster so you can confirm that datasets, models, indexes, and preview PNGs were actually created.
+That flow creates or updates both `ysu-hpc` and `ysu-hpc-conda` aliases in `~/.ssh/config`, runs DNS/HTTPS/SSH diagnostics, and then bootstraps the project through the Conda terminal target.
+After bootstrap, it also pulls back a verification JSON from the cluster so you can confirm that datasets, indexes, and preview PNGs were actually created.
