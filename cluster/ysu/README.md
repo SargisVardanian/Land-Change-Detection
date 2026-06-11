@@ -89,6 +89,16 @@ sbatch cluster/ysu/train_retrieval_head.sbatch
 
 The Slurm templates default to the `research` partition and keep logs under `/mnt/weka/svardanyan/land-change-detection/slurm_logs`.
 
+## Retrieval-First Order
+
+1. Run LEVIR-MCI validation, render, and `overfit_100` with the current simple baseline.
+2. Keep DINO retrieval on `--visual-backbone simple_patch` first.
+3. Download `dinov2-small` only after the simple baseline passes.
+4. Run `scripts/smoke_dinov2_local.py`.
+5. Only then use `--visual-backbone dinov2`.
+
+`DINOv2` is optional. It is not required for default tests, LEVIR-MCI bootstrap, or simple baseline training.
+
 ## MacBook One-Command Push
 
 If your laptop can resolve and reach the cluster directly, you can push the repo and start the first dataset/model bootstrap with:

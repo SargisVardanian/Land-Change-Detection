@@ -43,40 +43,102 @@ def _load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _extract_captions(value: Any) -> list[str]:
-    if value is None:
+def _normalize_caption(text: str) -> str:
+    return " ".join(text.strip().split())
+
+
+def _caption_word_count(text: str) -> int:
+    return len([token for token in text.split(" ") if token])
+
+
+def _raw_sentences_only(row: dict[str, Any]) -> list[str]:
+    sentences = row.get("sentences")
+    if not isinstance(sentences, list):
         return []
-    if isinstance(value, str):
-        text = value.strip()
-        return [text] if text else []
-    if isinstance(value, dict):
-        for key in ("caption", "captions", "text", "texts", "sentences", "description", "descriptions"):
-            if key in value:
-                return _extract_captions(value[key])
-        collected: list[str] = []
-        for nested in value.values():
-            collected.extend(_extract_captions(nested))
-        return collected
-    if isinstance(value, list):
-        collected = []
-        for item in value:
-            collected.extend(_extract_captions(item))
-        return collected
-    return []
+    rendered: list[str] = []
+    for sentence in sentences:
+        if not isinstance(sentence, dict):
+            continue
+        raw = sentence.get("raw")
+        if isinstance(raw, str):
+            normalized = _normalize_caption(raw)
+            if normalized:
+                rendered.append(normalized)
+    return rendered
 
 
-def load_caption_map(dataset_root: str | Path) -> dict[str, list[str]]:
+def _choose_primary_caption(captions: list[str]) -> str:
+    for caption in captions:
+        if _caption_word_count(caption) >= 3:
+            return caption
+    return captions[0] if captions else ""
+
+
+def _register_caption_targets(caption_map: dict[str, dict[str, Any]], keys: list[str], entry: dict[str, Any]) -> None:
+    for key in keys:
+        cleaned = key.strip()
+        if cleaned:
+            caption_map[cleaned] = entry
+            caption_map[Path(cleaned).stem] = entry
+
+
+def _load_official_caption_map(root: Path) -> dict[str, dict[str, Any]]:
+    path = root / "LevirCCcaptions.json"
+    if not path.exists():
+        return {}
+    payload = _load_json(path)
+    rows: list[dict[str, Any]]
+    if isinstance(payload, list):
+        rows = [row for row in payload if isinstance(row, dict)]
+    elif isinstance(payload, dict) and isinstance(payload.get("images"), list):
+        rows = [row for row in payload["images"] if isinstance(row, dict)]
+    else:
+        rows = []
+
+    caption_map: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        captions = _raw_sentences_only(row)
+        if not captions:
+            continue
+        sentids = []
+        for sentence in row.get("sentences", []):
+            if isinstance(sentence, dict) and sentence.get("sentid") is not None:
+                sentids.append(sentence["sentid"])
+        entry = {
+            "caption": _choose_primary_caption(captions),
+            "captions": tuple(captions),
+            "metadata": {
+                "changeflag": row.get("changeflag"),
+                "imgid": row.get("imgid"),
+                "sentids": sentids,
+            },
+        }
+        keys = [
+            str(row.get("filename") or ""),
+            str(row.get("filepath") or ""),
+            str(row.get("split") or ""),
+            str(row.get("imgid") or ""),
+        ]
+        _register_caption_targets(caption_map, keys, entry)
+    return caption_map
+
+
+def load_caption_map(dataset_root: str | Path) -> dict[str, dict[str, Any]]:
     root = Path(dataset_root)
+    official_map = _load_official_caption_map(root)
+    if official_map:
+        return official_map
+
     candidates = sorted(root.glob("*.json"))
-    caption_map: dict[str, list[str]] = {}
+    caption_map: dict[str, dict[str, Any]] = {}
     for path in candidates:
         payload = _load_json(path)
         if isinstance(payload, dict):
             if all(isinstance(key, str) for key in payload):
                 for key, value in payload.items():
-                    captions = _extract_captions(value)
+                    captions = [_normalize_caption(str(item)) for item in value if isinstance(item, str)] if isinstance(value, list) else []
                     if captions:
-                        caption_map[str(key)] = captions
+                        caption_map[str(key)] = {"caption": _choose_primary_caption(captions), "captions": tuple(captions), "metadata": {}}
             for key in ("images", "items", "annotations", "samples", "data"):
                 rows = payload.get(key)
                 if not isinstance(rows, list):
@@ -87,9 +149,9 @@ def load_caption_map(dataset_root: str | Path) -> dict[str, list[str]]:
                     sample_id = row.get("sample_id") or row.get("id") or row.get("filename") or row.get("image_id")
                     if sample_id is None:
                         continue
-                    captions = _extract_captions(row)
+                    captions = _raw_sentences_only(row)
                     if captions:
-                        caption_map[str(sample_id)] = captions
+                        caption_map[str(sample_id)] = {"caption": _choose_primary_caption(captions), "captions": tuple(captions), "metadata": {}}
         elif isinstance(payload, list):
             for row in payload:
                 if not isinstance(row, dict):
@@ -97,9 +159,9 @@ def load_caption_map(dataset_root: str | Path) -> dict[str, list[str]]:
                 sample_id = row.get("sample_id") or row.get("id") or row.get("filename") or row.get("image_id")
                 if sample_id is None:
                     continue
-                captions = _extract_captions(row)
+                captions = _raw_sentences_only(row)
                 if captions:
-                    caption_map[str(sample_id)] = captions
+                    caption_map[str(sample_id)] = {"caption": _choose_primary_caption(captions), "captions": tuple(captions), "metadata": {}}
     return caption_map
 
 
@@ -129,7 +191,8 @@ def discover_levir_mci_samples(dataset_root: str | Path) -> list[LevirMciSample]
             if not after_path.exists() or not mask_path.exists():
                 continue
             sample_id = before_path.stem
-            captions = caption_map.get(sample_id) or caption_map.get(before_path.name) or [""]
+            entry = caption_map.get(sample_id) or caption_map.get(before_path.name) or {}
+            captions = tuple(entry.get("captions", ()))
             samples.append(
                 LevirMciSample(
                     sample_id=sample_id,
@@ -137,9 +200,14 @@ def discover_levir_mci_samples(dataset_root: str | Path) -> list[LevirMciSample]
                     image_before=str(before_path),
                     image_after=str(after_path),
                     binary_change_mask=str(mask_path),
-                    caption=captions[0] if captions else "",
-                    captions=tuple(captions),
-                    metadata={"source_root": str(root), "official_layout": True},
+                    caption=str(entry.get("caption", "")),
+                    captions=captions,
+                    metadata={
+                        "source_root": str(root),
+                        "official_layout": True,
+                        "captions": list(captions),
+                        **dict(entry.get("metadata", {})),
+                    },
                 )
             )
 

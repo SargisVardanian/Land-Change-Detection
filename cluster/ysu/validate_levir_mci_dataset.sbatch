@@ -1,4 +1,4 @@
-#!/bin/bash -l
+#!/bin/bash
 #SBATCH --job-name=levir_mci_validate
 #SBATCH --partition=research
 #SBATCH --gpus-per-node=1
@@ -9,23 +9,18 @@
 #SBATCH --error=logs/%x_%j.err
 
 set -euo pipefail
+set -x
 
-if [ -d "/mnt/weka/$USER" ] && [ -w "/mnt/weka/$USER" ]; then
-    export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
-else
-    export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/data/$USER/rs_change_project}"
-fi
-
-cd "$RS_PROJECT_ROOT/code/project"
-mkdir -p logs "$RS_PROJECT_ROOT/logs" "$RS_PROJECT_ROOT/runs"
-
-conda activate rschange || conda activate gpus
-
+export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
+export PROJECT_DIR="$RS_PROJECT_ROOT/code/project"
+export PYTHON="/mnt/weka/shared-cache/miniforge3/bin/python"
+export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
 export HF_HOME="$RS_PROJECT_ROOT/.cache/huggingface"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 export HF_DATASETS_CACHE="$HF_HOME/datasets"
-mkdir -p "$HF_HOME"
+cd "$PROJECT_DIR"
+mkdir -p logs "$RS_PROJECT_ROOT/logs" "$RS_PROJECT_ROOT/runs" "$RS_PROJECT_ROOT/indexes" "$HF_HOME"
 
-python scripts/validate_levir_mci_dataset.py \
+"$PYTHON" scripts/validate_levir_mci_dataset.py \
   --project-root "$RS_PROJECT_ROOT" \
-  --data-root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-MCI"
+  --data-root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-MCI-unpacked/LEVIR-MCI-dataset"

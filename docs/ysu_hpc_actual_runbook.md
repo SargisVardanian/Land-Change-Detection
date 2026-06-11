@@ -37,13 +37,38 @@ bash cluster/ysu/bootstrap_change_retrieval_assets.sh
 bash cluster/ysu/verify_project_assets.sh
 ```
 
-## First Real Experiment Jobs
+## Step Order
+
+A. Run LEVIR-MCI validation, render, and overfit with the current simple baseline first.
 
 ```bash
-sbatch cluster/ysu/smoke_report.sbatch
 sbatch cluster/ysu/validate_levir_mci_dataset.sbatch
 sbatch cluster/ysu/render_levir_mci_samples.sbatch
 sbatch cluster/ysu/overfit_levir_mci_100.sbatch
+```
+
+B. Keep DINO retrieval on `--visual-backbone simple_patch` first.
+
+C. Download `dinov2-small` only after the `simple_patch` checks pass.
+
+```bash
+sbatch cluster/ysu/download_dinov2_small.sbatch
+```
+
+D. Run the local-only DINO smoke test.
+
+```bash
+sbatch cluster/ysu/smoke_dinov2_local.sbatch
+```
+
+E. Only then train with `--visual-backbone dinov2`.
+
+## Baseline Jobs
+
+```bash
+sbatch cluster/ysu/smoke_report.sbatch
+sbatch cluster/ysu/train_levir_mci_binary_retrieval.sbatch
+sbatch cluster/ysu/eval_levir_mci_binary_retrieval.sbatch
 ```
 
 ## Checks While Jobs Run

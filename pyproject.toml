@@ -7,7 +7,7 @@ name = "land-change-detection"
 version = "0.1.0"
 description = "Semantic land-surface mapping workspace for T1/T2 satellite imagery."
 readme = "README.md"
-requires-python = ">=3.11,<3.13"
+requires-python = ">=3.11,<3.14"
 dependencies = [
   "einops>=0.8.2",
   "numpy>=2.0,<3",

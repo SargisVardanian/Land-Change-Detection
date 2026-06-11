@@ -21,6 +21,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Download or prepare the first YSU-HPC change-retrieval datasets.")
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--skip-hf", action="store_true", help="Skip Hugging Face dataset downloads.")
+    parser.add_argument("--force-hf", action="store_true", help="Download even if LEVIR-MCI already appears unpacked locally.")
     parser.add_argument("--skip-second-cc", action="store_true", help="Skip SECOND-CC preparation.")
     parser.add_argument("--include-levir-cc", action="store_true", help="Also download LEVIR-CC.")
     parser.add_argument("--skip-reference-repos", action="store_true", help="Skip cloning dataset reference repositories.")
@@ -104,6 +105,12 @@ def main() -> int:
         if args.include_levir_cc:
             hf_datasets["LEVIR-CC"] = "lcybuaa/LEVIR-CC"
         for dataset_name, repo_id in hf_datasets.items():
+            if dataset_name == "LEVIR-MCI" and not args.force_hf:
+                unpacked = raw_root / "LEVIR-MCI-unpacked" / "LEVIR-MCI-dataset" / "images"
+                existing = raw_root / "LEVIR-MCI"
+                if unpacked.exists() or existing.exists():
+                    print(f"Skipping {dataset_name}: existing local copy detected under {raw_root}.")
+                    continue
             print(f"Downloading {dataset_name} from Hugging Face...")
             _download_hf_dataset(raw_root, dataset_name, repo_id)
 
