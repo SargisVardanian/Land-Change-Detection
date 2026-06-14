@@ -258,6 +258,28 @@ For the remote-sensing change retrieval dataset workflow on YSU-HPC, the repo no
 - [scripts/build_semantic_change_task_manifests.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_semantic_change_task_manifests.py): converts indexed datasets into change-mask and semantic-transition manifests
 - [scripts/train_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_semantic_change.py): baseline semantic-first training from semantic manifests
 - [scripts/eval_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/eval_semantic_change.py): baseline semantic-first evaluation
+
+## Retrieval-First Runbook
+
+A. Existing LEVIR-MCI baseline:
+
+- validate dataset with `scripts/validate_levir_mci_dataset.py`
+- render debug gallery with `scripts/render_levir_mci_debug_gallery.py`
+- run `scripts/overfit_levir_mci_100.py`
+- summarize with `scripts/summarize_run_metrics.py`
+
+B. DINO:
+
+- download `dinov2-small` into `$RS_PROJECT_ROOT/models/dinov2-small` with `scripts/download_dinov2_small.py`
+- run local-only smoke with `scripts/smoke_dinov2_local.py`
+
+C. Pair retrieval:
+
+- build SECOND/Hi-UCD manifests with `scripts/build_secondcc_pair_retrieval_manifest.py` and `scripts/build_hiucd_pair_retrieval_manifest.py`
+- train `simple_patch` first with `scripts/train_dino_pair_retrieval.py --visual-backbone simple_patch`
+- evaluate with `scripts/eval_dino_pair_retrieval.py`
+- query top-k neighbors with `scripts/query_pair_to_pair_retrieval.py`
+- only then switch to `--visual-backbone dinov2`
 - [scripts/build_prithvi_semantic_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_prithvi_semantic_manifest.py): converts semantic manifests into a Prithvi-style 6-band EO contract when multispectral paths are available
 - [scripts/run_prithvi_semantic_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_semantic_train_eval.py): runs the current semantic baseline in Prithvi-style 6-band mode
 - [scripts/run_prithvi_terratorch_experimental.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_terratorch_experimental.py): explicit Prithvi/TerraTorch experimental runner with honest fallback diagnostics

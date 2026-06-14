@@ -1,0 +1,61 @@
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+import torch
+
+from scripts.train_dino_pair_retrieval import (
+    build_dataloader,
+    choose_device,
+    load_retrieval_samples,
+    parse_args as train_parse_args,
+    run_epoch,
+)
+from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate DINO/simple-patch pair retrieval.")
+    parser.add_argument("--levir-manifest", type=Path, default=None)
+    parser.add_argument("--pair-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--batch-size", type=int, default=4)
+    parser.add_argument("--image-size", type=int, default=224)
+    parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
+    parser.add_argument("--dinov2-model-path", type=Path, default=None)
+    parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--pair-loss", choices=("supervised", "soft"), default="supervised")
+    parser.add_argument("--lambda-pair", type=float, default=0.2)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--max-train-samples", type=int, default=None)
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
+    device = choose_device(args.device)
+    model = DINOChangeRetriever(
+        DINOChangeRetrieverConfig(
+            visual_backbone=args.visual_backbone,
+            dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
+            local_files_only=args.local_files_only,
+            image_size=args.image_size,
+        )
+    ).to(device)
+    checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
+    model.load_state_dict(checkpoint["model_state"])
+    loader = build_dataloader(samples, args, shuffle=False)
+    metrics = run_epoch(model, loader, None, args, device)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(metrics, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
