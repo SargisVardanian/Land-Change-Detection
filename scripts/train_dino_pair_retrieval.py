@@ -153,6 +153,28 @@ def choose_device(choice: str) -> torch.device:
     return torch.device(choice)
 
 
+def json_safe_config(args: argparse.Namespace) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in vars(args).items():
+        if isinstance(value, Path):
+            payload[key] = str(value)
+        elif isinstance(value, list):
+            payload[key] = [str(item) if isinstance(item, Path) else item for item in value]
+        else:
+            payload[key] = value
+    return payload
+
+
+def transition_histograms_to_tensor(histograms: list[list[float] | None], device: torch.device) -> tuple[torch.Tensor | None, list[int]]:
+    valid_indices = [index for index, row in enumerate(histograms) if row]
+    if not valid_indices:
+        return None, []
+    valid_rows = [histograms[index] for index in valid_indices]
+    tensor = torch.tensor(valid_rows, dtype=torch.float32, device=device)
+    tensor = tensor / tensor.sum(dim=1, keepdim=True).clamp_min(1e-6)
+    return tensor, valid_indices
+
+
 def run_epoch(
     model: DINOChangeRetriever,
     loader: DataLoader,
@@ -190,14 +212,14 @@ def run_epoch(
                 all_text_embeddings.append(txt_emb.detach().cpu())
                 text_batches += 1
 
-        hist_rows = [row for row in batch["transition_histogram"] if row]
-        if hist_rows:
-            hist_tensor = torch.tensor(batch["transition_histogram"], dtype=torch.float32, device=device)
-            hist_tensor = hist_tensor / hist_tensor.sum(dim=1, keepdim=True).clamp_min(1e-6)
+        hist_tensor, hist_indices = transition_histograms_to_tensor(batch["transition_histogram"], device)
+        if hist_tensor is not None:
+            pair_embeddings = outputs["change_embedding"][hist_indices]
+            pair_labels = [label_list[index] for index in hist_indices]
             if args.pair_loss == "supervised":
-                pair_loss = supervised_contrastive_loss(outputs["change_embedding"], label_list)
+                pair_loss = supervised_contrastive_loss(pair_embeddings, pair_labels)
             else:
-                pair_loss = soft_histogram_contrastive_loss(outputs["change_embedding"], hist_tensor)
+                pair_loss = soft_histogram_contrastive_loss(pair_embeddings, hist_tensor)
             loss = loss + args.lambda_pair * pair_loss
             metrics_row["pair_loss"] = float(pair_loss.item())
 
@@ -277,7 +299,7 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     history: list[dict[str, Any]] = []
     best_metric = -1.0
-    config_payload = {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()}
+    config_payload = json_safe_config(args)
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(model, loader, optimizer, args, device)
         eval_metrics = run_epoch(model, loader, None, args, device)
