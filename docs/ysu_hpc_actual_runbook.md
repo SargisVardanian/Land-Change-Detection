@@ -49,19 +49,27 @@ sbatch cluster/ysu/overfit_levir_mci_100.sbatch
 
 B. Keep DINO retrieval on `--visual-backbone simple_patch` first.
 
-C. Download `dinov2-small` only after the `simple_patch` checks pass.
+C. Build and verify the simple pair-retrieval path before touching DINOv2.
+
+```bash
+sbatch cluster/ysu/train_dino_pair_retrieval.sbatch
+sbatch cluster/ysu/eval_dino_pair_retrieval.sbatch
+sbatch cluster/ysu/query_pair_to_pair_retrieval.sbatch
+```
+
+D. Download `dinov2-small` only after the `simple_patch` checks pass.
 
 ```bash
 sbatch cluster/ysu/download_dinov2_small.sbatch
 ```
 
-D. Run the local-only DINO smoke test.
+E. Run the local-only DINO smoke test.
 
 ```bash
 sbatch cluster/ysu/smoke_dinov2_local.sbatch
 ```
 
-E. Only then train with `--visual-backbone dinov2`.
+F. Only then train with `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only`.
 
 ## Baseline Jobs
 

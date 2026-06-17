@@ -8,7 +8,7 @@ from huggingface_hub import snapshot_download
 
 
 def parse_args() -> argparse.Namespace:
-    default_root = Path(os.environ.get("RS_PROJECT_ROOT", "/mnt/weka/shared/rs_change_project"))
+    default_root = Path(os.environ.get("RS_PROJECT_ROOT", f"/mnt/weka/{os.environ.get('USER', 'user')}/rs_change_project"))
     parser = argparse.ArgumentParser(description="Download DINOv2-small into RS project storage.")
     parser.add_argument("--output-dir", type=Path, default=default_root / "models" / "dinov2-small")
     parser.add_argument("--model-id", default="facebook/dinov2-small")

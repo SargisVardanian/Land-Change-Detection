@@ -93,9 +93,10 @@ The Slurm templates default to the `research` partition and keep logs under `/mn
 
 1. Run LEVIR-MCI validation, render, and `overfit_100` with the current simple baseline.
 2. Keep DINO retrieval on `--visual-backbone simple_patch` first.
-3. Download `dinov2-small` only after the simple baseline passes.
-4. Run `scripts/smoke_dinov2_local.py`.
-5. Only then use `--visual-backbone dinov2`.
+3. Run the pair-retrieval jobs with `simple_patch` before touching DINOv2.
+4. Download `dinov2-small` only after the simple baseline passes.
+5. Run `scripts/smoke_dinov2_local.py`.
+6. Only then use `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only`.
 
 `DINOv2` is optional. It is not required for default tests, LEVIR-MCI bootstrap, or simple baseline training.
 

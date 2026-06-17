@@ -245,9 +245,9 @@ Cluster-specific notes:
 
 For the remote-sensing change retrieval dataset workflow on YSU-HPC, the repo now also includes:
 
-- [docs/ysu_hpc_change_retrieval_setup.md](/Users/sargisvardanyan/Land-Change-Detection/docs/ysu_hpc_change_retrieval_setup.md): end-to-end runbook for `/data/$USER/rs_change_project`
+- [docs/ysu_hpc_change_retrieval_setup.md](/Users/sargisvardanyan/Land-Change-Detection/docs/ysu_hpc_change_retrieval_setup.md): end-to-end runbook for the Weka-first `RS_PROJECT_ROOT`
 - [scripts/setup_rs_change_project.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/setup_rs_change_project.py): creates the YSU-HPC directory layout and optional dataset manifest
-- [scripts/download_change_retrieval_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/download_change_retrieval_datasets.py): scripted download/prep stage for `LEVIR-CC`, `LEVIR-MCI`, `SECOND-CC`, and reference repos
+- [scripts/download_change_retrieval_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/download_change_retrieval_datasets.py): scripted download/prep stage for `LEVIR-CC`, `LEVIR-MCI`, `SECOND-CC`, and reference repos while preserving an existing unpacked LEVIR-MCI copy
 - [scripts/check_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/check_datasets.py): quick dataset counts and size summary
 - [scripts/bootstrap_change_retrieval_assets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/bootstrap_change_retrieval_assets.py): builds indexed retrieval assets from downloaded raw datasets
 - [scripts/index_change_retrieval_dataset.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/index_change_retrieval_dataset.py): indexes `LEVIR-MCI` or `SECOND-CC` style folders into JSONL samples
@@ -268,18 +268,26 @@ A. Existing LEVIR-MCI baseline:
 - run `scripts/overfit_levir_mci_100.py`
 - summarize with `scripts/summarize_run_metrics.py`
 
-B. DINO:
-
-- download `dinov2-small` into `$RS_PROJECT_ROOT/models/dinov2-small` with `scripts/download_dinov2_small.py`
-- run local-only smoke with `scripts/smoke_dinov2_local.py`
-
-C. Pair retrieval:
+B. Pair retrieval simple baseline:
 
 - build SECOND/Hi-UCD manifests with `scripts/build_secondcc_pair_retrieval_manifest.py` and `scripts/build_hiucd_pair_retrieval_manifest.py`
 - train `simple_patch` first with `scripts/train_dino_pair_retrieval.py --visual-backbone simple_patch`
 - evaluate with `scripts/eval_dino_pair_retrieval.py`
 - query top-k neighbors with `scripts/query_pair_to_pair_retrieval.py`
-- only then switch to `--visual-backbone dinov2`
+
+C. Optional DINOv2 download:
+
+- download `dinov2-small` into `$RS_PROJECT_ROOT/models/dinov2-small` with `scripts/download_dinov2_small.py`
+
+D. Optional local-only DINO smoke:
+
+- run `scripts/smoke_dinov2_local.py`
+
+E. Optional DINO pair retrieval:
+
+- switch to `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only` only after the `simple_patch` path is stable
+
+`DINOv2` is optional. It is not required for default tests, pair-retrieval manifest building, or `simple_patch` training.
 - [scripts/build_prithvi_semantic_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_prithvi_semantic_manifest.py): converts semantic manifests into a Prithvi-style 6-band EO contract when multispectral paths are available
 - [scripts/run_prithvi_semantic_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_semantic_train_eval.py): runs the current semantic baseline in Prithvi-style 6-band mode
 - [scripts/run_prithvi_terratorch_experimental.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_terratorch_experimental.py): explicit Prithvi/TerraTorch experimental runner with honest fallback diagnostics
@@ -313,7 +321,7 @@ C. Pair retrieval:
 Typical YSU-HPC retrieval setup flow:
 
 ```bash
-python scripts/setup_rs_change_project.py --root /data/$USER/rs_change_project --write-manifest
+python scripts/setup_rs_change_project.py --root "$RS_PROJECT_ROOT" --write-manifest
 bash cluster/ysu/download_change_retrieval_datasets.sh
 bash cluster/ysu/bootstrap_change_retrieval_assets.sh
 sbatch cluster/ysu/bootstrap_change_retrieval_assets.sbatch

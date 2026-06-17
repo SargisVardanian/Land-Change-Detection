@@ -164,3 +164,55 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     )
     assert query.returncode == 0, query.stderr
     assert (output_dir / "query_topk.png").exists()
+
+
+def test_train_cli_fails_cleanly_when_dinov2_path_is_missing(tmp_path: Path):
+    repo_root = Path(__file__).resolve().parents[1]
+    pair_manifest = tmp_path / "pair.jsonl"
+    data_root = tmp_path / "data"
+    _seed_pair(data_root / "pair_before.png", data_root / "pair_after.png", (0, 0, 255), (255, 255, 0))
+    _write_jsonl(
+        pair_manifest,
+        [
+            {
+                "sample_id": "pair_a",
+                "dataset_name": "SECOND-CC",
+                "before_path": str(data_root / "pair_before.png"),
+                "after_path": str(data_root / "pair_after.png"),
+                "transition_histogram": [1.0, 0.0, 0.0, 0.0],
+                "dominant_transition": "1->2",
+            }
+        ],
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/train_dino_pair_retrieval.py",
+            "--pair-manifest",
+            str(pair_manifest),
+            "--output-dir",
+            str(tmp_path / "run"),
+            "--epochs",
+            "1",
+            "--batch-size",
+            "1",
+            "--image-size",
+            "32",
+            "--visual-backbone",
+            "dinov2",
+            "--dinov2-model-path",
+            str(tmp_path / "missing-dinov2-small"),
+            "--local-files-only",
+            "--device",
+            "cpu",
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PYTHONPATH": "src"},
+    )
+    assert result.returncode != 0
+    assert "DINOv2 model path not found" in result.stderr
+    assert "simple_patch" in result.stderr
