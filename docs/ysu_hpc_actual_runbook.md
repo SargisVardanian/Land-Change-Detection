@@ -57,6 +57,11 @@ sbatch cluster/ysu/eval_dino_pair_retrieval.sbatch
 sbatch cluster/ysu/query_pair_to_pair_retrieval.sbatch
 ```
 
+The eval job now writes both:
+
+- `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_metrics.json`
+- `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_summary.json`
+
 D. Download `dinov2-small` only after the `simple_patch` checks pass.
 
 ```bash

@@ -26,3 +26,7 @@ mkdir -p logs "$RS_PROJECT_ROOT/runs" "$RS_PROJECT_ROOT/indexes" "$HF_HOME"
   --output "$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_metrics.json" \
   --visual-backbone simple_patch \
   --local-files-only
+
+"$PYTHON" scripts/summarize_pair_retrieval_eval.py \
+  --eval-json "$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_metrics.json" \
+  --output "$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_summary.json"
