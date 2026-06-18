@@ -138,6 +138,10 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     assert "mAP" in metrics
     assert "transition_recall@5" in metrics
     assert "transition_top1_hit_rate" in metrics
+    assert "overall" in metrics
+    assert "by_source" in metrics
+    assert "dataset_summary" in metrics
+    assert "SECOND-CC" in metrics["by_source"]
 
     query = subprocess.run(
         [

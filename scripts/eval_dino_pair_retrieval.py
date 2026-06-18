@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import sys
 from pathlib import Path
@@ -16,6 +17,7 @@ from scripts.train_dino_pair_retrieval import (
     choose_device,
     load_retrieval_samples,
     run_epoch,
+    RetrievalSample,
 )
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
 
@@ -39,6 +41,34 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _summarize_samples(samples: list[RetrievalSample]) -> dict[str, object]:
+    source_counts = Counter(sample.source for sample in samples)
+    transition_counts = Counter(sample.dominant_transition for sample in samples if sample.dominant_transition)
+    pair_samples = [sample for sample in samples if sample.transition_histogram]
+    caption_samples = [sample for sample in samples if sample.caption]
+    return {
+        "num_samples": len(samples),
+        "num_pair_samples": len(pair_samples),
+        "num_caption_samples": len(caption_samples),
+        "source_counts": dict(source_counts),
+        "dominant_transition_counts": dict(transition_counts),
+    }
+
+
+def _metrics_for_subset(
+    samples: list[RetrievalSample],
+    model: DINOChangeRetriever,
+    args: argparse.Namespace,
+    device: torch.device,
+) -> dict[str, float]:
+    if not samples:
+        return {}
+    subset_args = argparse.Namespace(**vars(args))
+    subset_args.max_train_samples = None
+    loader = build_dataloader(samples, subset_args, shuffle=False)
+    return run_epoch(model, loader, None, subset_args, device)
+
+
 def main() -> int:
     args = parse_args()
     samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
@@ -53,11 +83,24 @@ def main() -> int:
     ).to(device)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
-    loader = build_dataloader(samples, args, shuffle=False)
-    metrics = run_epoch(model, loader, None, args, device)
+    metrics = _metrics_for_subset(samples, model, args, device)
+    by_source = {
+        source: _metrics_for_subset([sample for sample in samples if sample.source == source], model, args, device)
+        for source in sorted({sample.source for sample in samples})
+    }
+    pair_only_samples = [sample for sample in samples if sample.transition_histogram]
+    caption_only_samples = [sample for sample in samples if sample.caption]
+    report = dict(metrics)
+    report["overall"] = metrics
+    report["by_source"] = by_source
+    report["dataset_summary"] = _summarize_samples(samples)
+    report["transition_summary"] = {
+        "pair_only": _summarize_samples(pair_only_samples),
+        "caption_or_grounded_text": _summarize_samples(caption_only_samples),
+    }
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
-    print(json.dumps(metrics, indent=2))
+    args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, indent=2))
     return 0
 
 
