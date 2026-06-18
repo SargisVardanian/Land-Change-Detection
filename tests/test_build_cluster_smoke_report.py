@@ -46,6 +46,9 @@ def test_build_project_assets_report_ready(tmp_path: Path):
         "indexes/preview_samples.json",
         "runs/levir_mci_preview.png",
         "runs/levir_mci_grid.png",
+        "runs/dino_pair_retrieval_simple_patch/train_summary.json",
+        "runs/dino_pair_retrieval_simple_patch/eval_metrics.json",
+        "runs/dino_pair_retrieval_simple_patch/eval_summary.json",
     ]:
         path = project_root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -54,6 +57,7 @@ def test_build_project_assets_report_ready(tmp_path: Path):
     assert report["ready"] is True
     assert report["datasets"]["LEVIR-MCI"]["canonical_path"].endswith("LEVIR-MCI-unpacked/LEVIR-MCI-dataset")
     assert report["benchmark_curriculum"]["stage_2_grounded"]["ready"] is True
+    assert report["optional_pair_retrieval_runs"]["dino_pair_retrieval_simple_patch/eval_summary.json"]["exists"] is True
 
 
 def test_main_report_includes_dataset_curriculum(tmp_path: Path):

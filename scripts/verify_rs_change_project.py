@@ -15,6 +15,11 @@ REQUIRED_INDEXES = (
 )
 OPTIONAL_INDEXES = ("levir_cc_text_manifest.jsonl", "second_cc_samples.jsonl", "levir_mci_train_manifest.jsonl")
 REQUIRED_PREVIEWS = ("levir_mci_preview.png", "levir_mci_grid.png")
+OPTIONAL_PAIR_RETRIEVAL_RUN_FILES = (
+    "dino_pair_retrieval_simple_patch/train_summary.json",
+    "dino_pair_retrieval_simple_patch/eval_metrics.json",
+    "dino_pair_retrieval_simple_patch/eval_summary.json",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +83,7 @@ def build_report(project_root: Path) -> dict:
     indexes = {name: _summarize_file(indexes_root / name) for name in REQUIRED_INDEXES}
     optional_indexes = {name: _summarize_file(indexes_root / name) for name in OPTIONAL_INDEXES}
     previews = {name: _summarize_file(runs_root / name) for name in REQUIRED_PREVIEWS}
+    optional_pair_retrieval_runs = {name: _summarize_file(runs_root / name) for name in OPTIONAL_PAIR_RETRIEVAL_RUN_FILES}
 
     all_required_datasets = all(item["exists"] for item in datasets.values())
     all_required_indexes = all(item["exists"] for item in indexes.values())
@@ -100,6 +106,7 @@ def build_report(project_root: Path) -> dict:
         "indexes": indexes,
         "optional_indexes": optional_indexes,
         "previews": previews,
+        "optional_pair_retrieval_runs": optional_pair_retrieval_runs,
         "overfit_run": _summarize_dir(overfit_dir),
         "smoke_report": _summarize_file(smoke_report),
         "root_verification_copy": _summarize_file(verification_copy),

@@ -43,6 +43,9 @@ def test_build_report_ready(tmp_path: Path):
         "indexes/preview_samples.json",
         "runs/levir_mci_preview.png",
         "runs/levir_mci_grid.png",
+        "runs/dino_pair_retrieval_simple_patch/train_summary.json",
+        "runs/dino_pair_retrieval_simple_patch/eval_metrics.json",
+        "runs/dino_pair_retrieval_simple_patch/eval_summary.json",
     ]:
         path = project_root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,3 +53,4 @@ def test_build_report_ready(tmp_path: Path):
     report = module.build_report(project_root)
     assert report["bootstrap_ready"] is True
     assert report["complete"] is False
+    assert report["optional_pair_retrieval_runs"]["dino_pair_retrieval_simple_patch/train_summary.json"]["exists"] is True

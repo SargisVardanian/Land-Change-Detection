@@ -80,6 +80,11 @@ def _build_project_assets_report(project_root: Path) -> dict:
     required_indexes = ("levir_mci_samples.jsonl", "levir_mci_validation.json", "preview_samples.json")
     optional_indexes = ("second_cc_samples.jsonl", "levir_cc_text_manifest.jsonl", "levir_mci_train_manifest.jsonl")
     required_previews = ("levir_mci_preview.png", "levir_mci_grid.png")
+    optional_pair_retrieval_runs = (
+        "dino_pair_retrieval_simple_patch/train_summary.json",
+        "dino_pair_retrieval_simple_patch/eval_metrics.json",
+        "dino_pair_retrieval_simple_patch/eval_summary.json",
+    )
 
     raw_root = project_root / "datasets" / "raw"
     indexes_root = project_root / "indexes"
@@ -100,6 +105,7 @@ def _build_project_assets_report(project_root: Path) -> dict:
     indexes = {name: _summarize_file(indexes_root / name) for name in required_indexes}
     optional_index_payload = {name: _summarize_file(indexes_root / name) for name in optional_indexes}
     previews = {name: _summarize_file(runs_root / name) for name in required_previews}
+    optional_pair_retrieval_payload = {name: _summarize_file(runs_root / name) for name in optional_pair_retrieval_runs}
     benchmark_curriculum = {
         "stage_1_text_to_pair": {
             "dataset": "LEVIR-CC",
@@ -123,6 +129,7 @@ def _build_project_assets_report(project_root: Path) -> dict:
         "indexes": indexes,
         "optional_indexes": optional_index_payload,
         "previews": previews,
+        "optional_pair_retrieval_runs": optional_pair_retrieval_payload,
         "benchmark_curriculum": benchmark_curriculum,
         "overfit_run": _summarize_dir(overfit_dir),
         "ready": all(
