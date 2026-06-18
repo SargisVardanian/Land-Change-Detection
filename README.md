@@ -272,6 +272,7 @@ B. Pair retrieval simple baseline:
 
 - build SECOND/Hi-UCD manifests with `scripts/build_secondcc_pair_retrieval_manifest.py` and `scripts/build_hiucd_pair_retrieval_manifest.py`
 - train `simple_patch` first with `scripts/train_dino_pair_retrieval.py --visual-backbone simple_patch`
+- summarize training output with `scripts/summarize_pair_retrieval_train.py`
 - evaluate with `scripts/eval_dino_pair_retrieval.py`
 - summarize eval output with `scripts/summarize_pair_retrieval_eval.py`
 - query top-k neighbors with `scripts/query_pair_to_pair_retrieval.py`

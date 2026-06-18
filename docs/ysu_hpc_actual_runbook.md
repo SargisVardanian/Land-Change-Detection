@@ -62,6 +62,10 @@ The eval job now writes both:
 - `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_metrics.json`
 - `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_summary.json`
 
+The train job now also writes:
+
+- `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/train_summary.json`
+
 D. Download `dinov2-small` only after the `simple_patch` checks pass.
 
 ```bash
