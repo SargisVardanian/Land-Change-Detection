@@ -5,6 +5,8 @@ import json
 import subprocess
 from pathlib import Path
 
+from land_change_detection.dataset_curriculum import curriculum_summary
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Inspect retrieval-first project state for YSU-HPC.")
@@ -58,6 +60,7 @@ def main() -> int:
         "recent_logs": _recent_paths(logs_root),
         "model_sizes": _run(["du", "-sh", str(models_root)], cwd=repo_root) if models_root.exists() else "missing",
         "cache_sizes": _run(["du", "-sh", str(cache_root)], cwd=repo_root) if cache_root.exists() else "missing",
+        "dataset_curriculum": curriculum_summary(args.project_root),
     }
     rendered = json.dumps(payload, indent=2)
     if args.output is not None:

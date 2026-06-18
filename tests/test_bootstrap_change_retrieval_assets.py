@@ -73,6 +73,7 @@ def test_bootstrap_change_retrieval_assets(tmp_path: Path):
     preview = json.loads(preview_manifest.read_text(encoding="utf-8"))
     assert preview["LEVIR-MCI"]["sample_id"] == "sample1"
     assert preview["SECOND-CC"]["sample_id"] == "tile42"
+    assert any(row["name"] == "LEVIR-MCI" for row in preview["curriculum"])
 
     render_result = subprocess.run(
         [

@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from land_change_detection.change_retrieval_datasets import discover_change_samples
+from land_change_detection.dataset_curriculum import curriculum_summary
 from land_change_detection.levir_mci import discover_levir_mci_samples
 
 
@@ -98,6 +99,7 @@ def _write_preview_manifest(project_root: Path, levir_samples: list[dict], secon
     payload = {
         "LEVIR-MCI": levir_samples[0] if levir_samples else None,
         "SECOND-CC": second_samples[0] if second_samples else None,
+        "curriculum": curriculum_summary(project_root),
     }
     preview_manifest.parent.mkdir(parents=True, exist_ok=True)
     preview_manifest.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

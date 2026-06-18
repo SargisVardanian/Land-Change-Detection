@@ -5,14 +5,7 @@ import os
 import subprocess
 from pathlib import Path
 
-
-DATASET_GROUPS = [
-    ("stage_1_text_to_pair", [("LEVIR-CC", "LEVIR-CC")]),
-    ("stage_2_grounded", [("LEVIR-MCI", "LEVIR-MCI-unpacked/LEVIR-MCI-dataset")]),
-    ("stage_3_transition_aware", [("SECOND-CC", "SECOND-CC"), ("Hi-UCD", "Hi-UCD")]),
-    ("stage_4_scale_up", [("RSCC", "RSCC"), ("RSRCC", "RSRCC"), ("ChangeIMTI", "ChangeIMTI"), ("CC-Foundation", "CC-Foundation"), ("UCCD", "UCCD")]),
-    ("stage_5_temporal_later", [("DynamicEarthNet", "DynamicEarthNet"), ("SpaceNet7", "SpaceNet7")]),
-]
+from land_change_detection.dataset_curriculum import datasets_by_stage
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,14 +35,17 @@ def main() -> int:
     args = parse_args()
     root = args.root.expanduser()
     print(f"Dataset root: {root}")
-    for group_name, datasets in DATASET_GROUPS:
+    project_root = root.parent.parent
+    for group_name, datasets in datasets_by_stage().items():
         print("=" * 80)
         print(group_name)
-        for label, rel_path in datasets:
-            path = root / rel_path
+        for spec in datasets:
+            path = spec.path_for(project_root)
             print("-" * 40)
-            print(label)
+            print(spec.name)
             print("path:", path)
+            print("role:", spec.role)
+            print("default_bootstrap:", spec.default_bootstrap)
             print("exists:", path.exists())
             if not path.exists():
                 continue

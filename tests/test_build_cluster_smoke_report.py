@@ -54,3 +54,11 @@ def test_build_project_assets_report_ready(tmp_path: Path):
     assert report["ready"] is True
     assert report["datasets"]["LEVIR-MCI"]["canonical_path"].endswith("LEVIR-MCI-unpacked/LEVIR-MCI-dataset")
     assert report["benchmark_curriculum"]["stage_2_grounded"]["ready"] is True
+
+
+def test_main_report_includes_dataset_curriculum(tmp_path: Path):
+    module = _load_module()
+    project_root = tmp_path / "rs_change_project"
+    (project_root / "datasets" / "raw" / "LEVIR-MCI-unpacked" / "LEVIR-MCI-dataset").mkdir(parents=True, exist_ok=True)
+    curriculum = module.curriculum_summary(project_root)
+    assert any(row["name"] == "LEVIR-MCI" for row in curriculum)

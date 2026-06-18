@@ -6,6 +6,7 @@ import platform
 import socket
 from pathlib import Path
 
+from land_change_detection.dataset_curriculum import curriculum_summary
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a unified smoke-test report for the YSU-HPC change project.")
@@ -149,6 +150,7 @@ def main() -> int:
             "host": "cluster.ysu.am",
             "resolved_addresses": _resolve_host("cluster.ysu.am"),
         },
+        "dataset_curriculum": curriculum_summary(project_root),
         "project_assets": verification,
     }
 
