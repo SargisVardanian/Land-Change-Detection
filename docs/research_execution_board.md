@@ -12,13 +12,21 @@ Research direction:
 
 `segmentation evidence -> retrieval evidence -> structured evidence bundle -> optional explainer`
 
+Scientific direction:
+
+`LEVIR-CC -> LEVIR-MCI -> SECOND-CC / Hi-UCD -> later scale-up datasets`
+
+Novelty direction:
+
+`transition-aware, direction-aware retrieval`
+
 ## Retrieval Modes
 
 - `static_region`
 - `pair_analog`
 - `text_bitemporal`
-- `novelty_single_image`
 - `transition_conditioned`
+- `novelty_single_image`
 - `trajectory`
 
 ## New Packages And Files
@@ -54,6 +62,7 @@ Research direction:
 - retrieval backends for static, pair, and text-conditioned retrieval
 - experimental Prithvi path
 - benchmark and dataset documentation
+- later temporal retrieval on DynamicEarthNet and SpaceNet 7
 
 ## Ownership
 
@@ -97,7 +106,9 @@ Must not edit:
 3. Implement research pipeline and evidence bundle using fake retrieval runtime.
 4. Run targeted tests for new modules.
 5. Run existing regression tests that protect the normal app contract.
-6. Only after Phase 1 and Phase 2 are green, proceed to UI, ingestion, and real backends.
+6. Validate the first grounded LEVIR-MCI experiment path on cluster data.
+7. Only after the grounded path is green, proceed to SECOND-CC and Hi-UCD transition-aware retrieval.
+8. Only after semantic retrieval is working, proceed to UI, ingestion, and real backends.
 
 ## Acceptance Criteria
 
@@ -159,3 +170,4 @@ For Phase 1 and Phase 2 iteration, run targeted subsets first and then the regre
 - no Sentinel credential flow
 - no dataset downloads
 - no modification of user-facing normal demo explanation flow
+- no claim that generic fusion retrieval is already a novel research contribution

@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Bootstrap indexed dataset assets for the first LEVIR-MCI binary+retrieval experiment."
     )
-    parser.add_argument("--project-root", type=Path, required=True, help="Root like /data/$USER/rs_change_project")
+    parser.add_argument("--project-root", type=Path, required=True, help="Root like /mnt/weka/$USER/rs_change_project")
     parser.add_argument(
         "--levir-cc-captions",
         type=Path,
@@ -110,7 +110,9 @@ def main() -> int:
     raw_root = project_root / "datasets" / "raw"
     indexes_root = project_root / "indexes"
 
-    levir_mci_root = raw_root / "LEVIR-MCI"
+    levir_mci_root = raw_root / "LEVIR-MCI-unpacked" / "LEVIR-MCI-dataset"
+    if not levir_mci_root.exists():
+        levir_mci_root = raw_root / "LEVIR-MCI"
     second_cc_root = raw_root / "SECOND-CC"
     levir_cc_root = raw_root / "LEVIR-CC"
 

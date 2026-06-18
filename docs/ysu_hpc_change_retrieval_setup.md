@@ -54,17 +54,21 @@ If the cluster requires VPN first, use the local WireGuard profiles under [clust
 
 ## 2. Recommended Directory Layout
 
-The repo already supports a Weka-backed layout under `/mnt/weka/...`, but for the retrieval datasets described in this workflow the requested project root is:
+Use Weka first and fall back to `/data/$USER` only if Weka is unavailable:
 
 ```bash
-/data/$USER/rs_change_project
+if [ -d "/mnt/weka/$USER" ] && [ -w "/mnt/weka/$USER" ]; then
+    export RS_PROJECT_ROOT="/mnt/weka/$USER/rs_change_project"
+else
+    export RS_PROJECT_ROOT="/data/$USER/rs_change_project"
+fi
 ```
 
 Create it:
 
 ```bash
-mkdir -p /data/$USER/rs_change_project
-cd /data/$USER/rs_change_project
+mkdir -p "$RS_PROJECT_ROOT"
+cd "$RS_PROJECT_ROOT"
 
 mkdir -p datasets/raw
 mkdir -p datasets/processed
@@ -81,7 +85,7 @@ mkdir -p indexes
 ```bash
 df -h /
 df -h /data
-du -sh /data/$USER/rs_change_project 2>/dev/null || true
+du -sh "$RS_PROJECT_ROOT" 2>/dev/null || true
 ```
 
 Current portal screenshot suggests `/data` has roughly `412 GB` free, which is enough for:
@@ -96,7 +100,7 @@ It is not enough for a comfortable `DynamicEarthNet` download.
 
 ```bash
 tmux new -s rsdata
-cd /data/$USER/rs_change_project
+cd "$RS_PROJECT_ROOT"
 ```
 
 Useful `tmux` keys:
@@ -114,7 +118,7 @@ source ~/.bashrc
 conda create -n rschange python=3.11 -y
 conda activate rschange
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e /data/$USER/rs_change_project/code/project[dev]
+python -m pip install -e "$RS_PROJECT_ROOT/code/project[dev]"
 python -m pip install -U hf_xet datasets gdown zenodo-get tqdm pandas pillow opencv-python pyarrow fastparquet
 export HF_HUB_ENABLE_HF_TRANSFER=1
 ```
@@ -125,7 +129,7 @@ Virtualenv fallback:
 python3.11 -m venv ~/venvs/rschange
 source ~/venvs/rschange/bin/activate
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e /data/$USER/rs_change_project/code/project[dev]
+python -m pip install -e "$RS_PROJECT_ROOT/code/project[dev]"
 python -m pip install -U hf_xet datasets gdown zenodo-get tqdm pandas pillow opencv-python pyarrow fastparquet
 export HF_HUB_ENABLE_HF_TRANSFER=1
 ```
@@ -219,7 +223,7 @@ If that fails, use the official repository reference and a Google Drive fallback
 Expected shape:
 
 ```text
-/data/$USER/rs_change_project/datasets/raw/SECOND-CC/
+$RS_PROJECT_ROOT/datasets/raw/SECOND-CC/
     train/
     val/
     test/
@@ -235,7 +239,7 @@ Use:
 ## 8. Clone Dataset Reference Repos
 
 ```bash
-cd /data/$USER/rs_change_project/code
+cd "$RS_PROJECT_ROOT/code"
 
 git clone https://github.com/Chen-Yang-Liu/LEVIR-CC-Dataset.git
 git clone https://github.com/ChangeCapsInRS/SecondCC.git
@@ -249,11 +253,11 @@ Treat `ChangeChat` as a format reference, not as a first training target.
 For the current repo:
 
 ```bash
-cd /data/$USER/rs_change_project/code/project
+cd "$RS_PROJECT_ROOT/code/project"
 source ~/.bashrc
 conda activate rschange
 python scripts/download_semantic_models.py \
-  --output-root /data/$USER/rs_change_project/checkpoints/models/semantic
+  --output-root "$RS_PROJECT_ROOT/checkpoints/models/semantic"
 ```
 
 This fetches the current required semantic diagnostic model:
@@ -265,7 +269,7 @@ If you explicitly want the research checkpoints too:
 ```bash
 python scripts/download_semantic_models.py \
   --include-research \
-  --output-root /data/$USER/rs_change_project/checkpoints/models/semantic
+  --output-root "$RS_PROJECT_ROOT/checkpoints/models/semantic"
 ```
 
 That also downloads:
@@ -278,47 +282,47 @@ Important:
 - `mask2former-satellite` is the current practical RGB fallback in this repo
 - `Prithvi-EO-2.0-300M-TL` is the preferred next semantic implementation target
 - `Prithvi-EO-2.0-600M-TL` is heavier and should wait until the 300M path is stable
-- keep downloaded checkpoints under `/data/$USER/rs_change_project/checkpoints/models/semantic`
+- keep downloaded checkpoints under `$RS_PROJECT_ROOT/checkpoints/models/semantic`
 
 ## 10. Build A Dataset Manifest
 
 Create:
 
 ```bash
-cat > /data/$USER/rs_change_project/datasets/dataset_manifest.md <<'EOF'
+cat > "$RS_PROJECT_ROOT/datasets/dataset_manifest.md" <<'EOF'
 # Dataset Manifest
 
 ## LEVIR-CC
-Path: /data/$USER/rs_change_project/datasets/raw/LEVIR-CC
+Path: $RS_PROJECT_ROOT/datasets/raw/LEVIR-CC
 Use:
 - pair-to-text captioning
 - text-to-change retrieval
 - image-pair embedding training
 
 ## LEVIR-MCI
-Path: /data/$USER/rs_change_project/datasets/raw/LEVIR-MCI
+Path: $RS_PROJECT_ROOT/datasets/raw/LEVIR-MCI-unpacked/LEVIR-MCI-dataset
 Use:
+- grounded text-to-pair retrieval
 - change masks
 - change captioning
-- prompt-conditioned mask learning
-- VLM instruction data base
+- caption-to-mask alignment
 
 ## SECOND-CC
-Path: /data/$USER/rs_change_project/datasets/raw/SECOND-CC
+Path: $RS_PROJECT_ROOT/datasets/raw/SECOND-CC
 Use:
 - semantic maps
 - change captions
-- transition segmentation
-- prompt-to-mask training
+- transition-aware pair retrieval
+- direction-aware retrieval supervision
 
 ## ChangeChat
-Path: /data/$USER/rs_change_project/code/ChangeChat
+Path: $RS_PROJECT_ROOT/code/ChangeChat
 Use:
 - reference for VLM/instruction tuning
 - not first-stage training
 
 ## BigEarthNet-v2 S2
-Path: /data/$USER/rs_change_project/datasets/raw/BigEarthNet-v2
+Path: $RS_PROJECT_ROOT/datasets/raw/BigEarthNet-v2
 Use:
 - static retrieval
 - classification pretraining
@@ -339,8 +343,8 @@ This repo now includes [scripts/check_datasets.py](/Users/sargisvardanyan/Land-C
 Run it on the cluster:
 
 ```bash
-python /data/$USER/rs_change_project/code/project/scripts/check_datasets.py \
-  --root /data/$USER/rs_change_project/datasets/raw
+python "$RS_PROJECT_ROOT/code/project/scripts/check_datasets.py" \
+  --root "$RS_PROJECT_ROOT/datasets/raw"
 ```
 
 ## 11.5. Bootstrap Indexed Retrieval Assets
@@ -348,14 +352,14 @@ python /data/$USER/rs_change_project/code/project/scripts/check_datasets.py \
 After the raw datasets are present, use the new bootstrap helper:
 
 ```bash
-cd /data/$USER/rs_change_project/code/project
+cd "$RS_PROJECT_ROOT/code/project"
 bash cluster/ysu/bootstrap_change_retrieval_assets.sh
 ```
 
 This will:
 
 - create or refresh the project layout and dataset manifest
-- scan `LEVIR-MCI` and `SECOND-CC` into JSONL sample indexes
+- scan unpacked `LEVIR-MCI` and `SECOND-CC` into JSONL sample indexes
 - search for a `LEVIR-CC` captions JSON and build a small text retrieval manifest
 - build a small `LEVIR-CC` text index prototype with `faiss` when available, otherwise with a numpy fallback
 - write a preview manifest under `indexes/` so you know which sample to render first
@@ -367,23 +371,23 @@ This will:
 Expected outputs:
 
 ```text
-/data/$USER/rs_change_project/indexes/levir_mci_samples.jsonl
-/data/$USER/rs_change_project/indexes/second_cc_samples.jsonl
-/data/$USER/rs_change_project/indexes/levir_cc_text_manifest.jsonl
-/data/$USER/rs_change_project/indexes/levir_cc_text_index/
-/data/$USER/rs_change_project/indexes/levir_mci_train_manifest.jsonl
-/data/$USER/rs_change_project/indexes/second_cc_train_manifest.jsonl
-/data/$USER/rs_change_project/indexes/semantic/
-/data/$USER/rs_change_project/indexes/preview_samples.json
+$RS_PROJECT_ROOT/indexes/levir_mci_samples.jsonl
+$RS_PROJECT_ROOT/indexes/second_cc_samples.jsonl
+$RS_PROJECT_ROOT/indexes/levir_cc_text_manifest.jsonl
+$RS_PROJECT_ROOT/indexes/levir_cc_text_index/
+$RS_PROJECT_ROOT/indexes/levir_mci_train_manifest.jsonl
+$RS_PROJECT_ROOT/indexes/second_cc_train_manifest.jsonl
+$RS_PROJECT_ROOT/indexes/semantic/
+$RS_PROJECT_ROOT/indexes/preview_samples.json
 ```
 
 To render the first preview manually:
 
 ```bash
 python scripts/render_change_retrieval_sample.py \
-  --index /data/$USER/rs_change_project/indexes/levir_mci_samples.jsonl \
+  --index "$RS_PROJECT_ROOT/indexes/levir_mci_samples.jsonl" \
   --sample-id YOUR_SAMPLE_ID \
-  --output /data/$USER/rs_change_project/runs/levir_mci_preview.png
+  --output "$RS_PROJECT_ROOT/runs/levir_mci_preview.png"
 ```
 
 ## 12. First Safe Slurm Job
@@ -393,7 +397,7 @@ This repo now includes [cluster/ysu/slurm_test_gpu.sbatch](/Users/sargisvardanya
 Submit it after syncing the repo:
 
 ```bash
-cd /data/$USER/rs_change_project/code/project
+cd "$RS_PROJECT_ROOT/code/project"
 sbatch cluster/ysu/slurm_test_gpu.sbatch
 ```
 
@@ -401,7 +405,7 @@ Watch it:
 
 ```bash
 squeue -u $USER
-tail -f /data/$USER/rs_change_project/logs/rschange_test_*.out
+tail -f "$RS_PROJECT_ROOT"/logs/rschange_test_*.out
 ```
 
 Bootstrap as a batch job if you prefer not to do it on the login node:

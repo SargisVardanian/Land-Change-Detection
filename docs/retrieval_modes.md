@@ -24,8 +24,14 @@ Single-image novelty or archive-comparison mode. This is not formal bi-temporal 
 
 ## `transition_conditioned`
 
-Retrieval constrained by an explicit semantic transition label.
+Retrieval constrained by an explicit semantic transition label or histogram direction such as:
+
+- `cropland -> built_up`
+- `vegetation -> bare_ground`
+- `water -> dryland`
 
 ## `trajectory`
 
 Short time-series retrieval for longer temporal behavior, not only T1/T2.
+
+This is the right later-stage home for datasets such as `DynamicEarthNet` and `SpaceNet 7`.

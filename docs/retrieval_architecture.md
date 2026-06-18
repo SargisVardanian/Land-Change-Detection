@@ -4,6 +4,13 @@
 
 Retrieval is a research-layer subsystem, not an extension of the locked demo explanation path.
 
+The scientific target is also constrained:
+
+- `LEVIR-CC` is the clean first text-to-pair benchmark
+- `LEVIR-MCI` is the first grounded retrieval and segmentation benchmark
+- `SECOND-CC` and `Hi-UCD` are the semantic transition bridge
+- `DynamicEarthNet` and `SpaceNet 7` are later temporal-retrieval datasets, not the default first download
+
 The architecture is intentionally additive:
 
 - existing `app.py` normal mode remains unchanged
@@ -40,6 +47,8 @@ The architecture is intentionally additive:
 
 Each retrieval mode should index the correct unit rather than forcing one universal index.
 
+For the paper direction, the preferred scientific unit is the bi-temporal pair plus its semantic transition summary.
+
 ## Evidence Flow
 
 Preferred research flow:
@@ -72,3 +81,17 @@ One shared retrieval head is preferred for both:
 - pair-to-pair retrieval
 
 That means the system should not add a separate pair-to-pair head unless experiments show a clear measurable gain.
+
+## Novelty Guardrail
+
+`DINOv2 + pair fusion + contrastive retrieval` is a strong engineering baseline, but not a sufficient paper claim by itself.
+
+The stronger claim is:
+
+`transition-aware, direction-aware retrieval`
+
+That means retrieval quality should improve when examples share:
+
+- similar semantic transition histograms
+- the same dominant transition direction
+- localized change structure that matches the target transition

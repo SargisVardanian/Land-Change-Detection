@@ -48,10 +48,15 @@ def test_research_report_contains_protocol_transitions_and_exports():
     report = build_research_evidence_report(result, scene_id="unit-test", bbox={"left": 0, "top": 0, "right": 8, "bottom": 8})
 
     assert report.protocol.research_questions[0].id == "RQ1"
+    assert report.protocol.research_questions[2].id == "RQ3"
+    assert "LEVIR-CC" in report.protocol.benchmark_curriculum[0]
+    assert "transition-aware" in report.protocol.novelty_statement
     assert report.grid == {"rows": 2, "cols": 2}
     assert report.segmentation_backend == "fake_semantic"
     assert report.transitions[0]["before"] == "cropland"
     assert report.transitions[0]["after"] == "built_up"
     assert len(report.cell_rows) == 4
     assert "Semantic Land-Cover Change Research Framework" in report.to_markdown()
+    assert "Benchmark Curriculum" in report.to_markdown()
+    assert "Novelty Guardrails" in report.to_markdown()
     assert report.to_dict()["scene_id"] == "unit-test"

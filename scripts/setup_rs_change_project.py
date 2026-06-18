@@ -9,26 +9,39 @@ from pathlib import Path
 DATASET_MANIFEST = """# Dataset Manifest
 
 ## LEVIR-MCI
-Path: {root}/datasets/raw/LEVIR-MCI
+Path: {root}/datasets/raw/LEVIR-MCI-unpacked/LEVIR-MCI-dataset
 Use:
-- first real binary change segmentation experiment
-- paired text-to-change retrieval
+- grounded text-to-pair retrieval after LEVIR-CC
+- binary change segmentation plus retrieval alignment
 - overfit-100 verification run
 - sample-grid QA
 
 ## SECOND-CC
 Path: {root}/datasets/raw/SECOND-CC
 Use:
-- semantic maps
-- change captions
-- transition segmentation
-- semantic transition follow-on work
+- pair-to-pair retrieval with semantic transitions
+- direction-aware transition supervision
+- semantic follow-on work beyond LEVIR-MCI
+
+## Hi-UCD
+Path: {root}/datasets/raw/Hi-UCD
+Use:
+- transition-aware retrieval with multi-phase urban change
+- follow-up semantic retrieval after SECOND-CC
+- not required for the first LEVIR-MCI bootstrap run
 
 ## LEVIR-CC
 Path: {root}/datasets/raw/LEVIR-CC
 Use:
-- optional caption-only auxiliary retrieval experiments
-- not required for the first LEVIR-MCI binary+retrieval run
+- clean first-stage text-to-pair retrieval benchmark
+- caption-only pretraining before grounded LEVIR-MCI retrieval
+
+## Later-Stage Temporal Datasets
+Path: {root}/datasets/raw/DynamicEarthNet and {root}/datasets/raw/SpaceNet7
+Use:
+- later trajectory retrieval
+- temporal prediction and trend retrieval
+- not part of the default cluster bootstrap
 """
 
 

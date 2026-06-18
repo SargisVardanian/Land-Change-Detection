@@ -29,7 +29,7 @@ def test_build_project_assets_report_ready(tmp_path: Path):
     project_root = tmp_path / "rs_change_project"
     for rel in [
         "datasets/raw/LEVIR-CC",
-        "datasets/raw/LEVIR-MCI",
+        "datasets/raw/LEVIR-MCI-unpacked/LEVIR-MCI-dataset",
         "datasets/raw/SECOND-CC",
         "checkpoints/models/semantic/mask2former-satellite",
         "checkpoints/models/semantic/Prithvi-EO-2.0-300M-TL",
@@ -40,14 +40,17 @@ def test_build_project_assets_report_ready(tmp_path: Path):
     (project_root / "datasets" / "dataset_manifest.md").write_text("# Dataset Manifest\n", encoding="utf-8")
     for rel in [
         "indexes/levir_mci_samples.jsonl",
+        "indexes/levir_mci_validation.json",
         "indexes/second_cc_samples.jsonl",
         "indexes/levir_cc_text_manifest.jsonl",
         "indexes/preview_samples.json",
         "runs/levir_mci_preview.png",
-        "runs/second_cc_preview.png",
+        "runs/levir_mci_grid.png",
     ]:
         path = project_root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x", encoding="utf-8")
     report = module._build_project_assets_report(project_root)
     assert report["ready"] is True
+    assert report["datasets"]["LEVIR-MCI"]["canonical_path"].endswith("LEVIR-MCI-unpacked/LEVIR-MCI-dataset")
+    assert report["benchmark_curriculum"]["stage_2_grounded"]["ready"] is True

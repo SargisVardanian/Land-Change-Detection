@@ -66,7 +66,14 @@ def build_report(project_root: Path) -> dict:
     smoke_report = runs_root / "cluster_smoke_report.json"
     verification_copy = project_root / "rs_change_project_verification.json"
 
-    datasets = {name: _summarize_dir(raw_root / name) for name in REQUIRED_DATASETS}
+    levir_unpacked = raw_root / "LEVIR-MCI-unpacked" / "LEVIR-MCI-dataset"
+    levir_fallback = raw_root / "LEVIR-MCI"
+    levir_payload = _summarize_dir(levir_unpacked)
+    if not levir_payload["exists"]:
+        levir_payload = _summarize_dir(levir_fallback)
+    levir_payload["canonical_path"] = str(levir_unpacked)
+    levir_payload["fallback_path"] = str(levir_fallback)
+    datasets = {"LEVIR-MCI": levir_payload}
     optional_datasets = {name: _summarize_dir(raw_root / name) for name in OPTIONAL_DATASETS}
     indexes = {name: _summarize_file(indexes_root / name) for name in REQUIRED_INDEXES}
     optional_indexes = {name: _summarize_file(indexes_root / name) for name in OPTIONAL_INDEXES}

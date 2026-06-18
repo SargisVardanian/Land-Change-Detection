@@ -75,7 +75,7 @@ def _summarize_file(path: Path) -> dict:
 
 def _build_project_assets_report(project_root: Path) -> dict:
     required_datasets = ("LEVIR-MCI",)
-    optional_datasets = ("LEVIR-CC", "SECOND-CC")
+    optional_datasets = ("LEVIR-CC", "SECOND-CC", "Hi-UCD")
     required_indexes = ("levir_mci_samples.jsonl", "levir_mci_validation.json", "preview_samples.json")
     optional_indexes = ("second_cc_samples.jsonl", "levir_cc_text_manifest.jsonl", "levir_mci_train_manifest.jsonl")
     required_previews = ("levir_mci_preview.png", "levir_mci_grid.png")
@@ -86,11 +86,33 @@ def _build_project_assets_report(project_root: Path) -> dict:
     datasets_manifest = project_root / "datasets" / "dataset_manifest.md"
     overfit_dir = runs_root / "levir_mci_overfit"
 
-    datasets = {name: _summarize_dir(raw_root / name) for name in required_datasets}
+    levir_root = raw_root / "LEVIR-MCI-unpacked" / "LEVIR-MCI-dataset"
+    levir_fallback = raw_root / "LEVIR-MCI"
+    levir_payload = _summarize_dir(levir_root)
+    if not levir_payload["exists"]:
+        levir_payload = _summarize_dir(levir_fallback)
+    levir_payload["canonical_path"] = str(levir_root)
+    levir_payload["fallback_path"] = str(levir_fallback)
+
+    datasets = {"LEVIR-MCI": levir_payload}
     optional_dataset_payload = {name: _summarize_dir(raw_root / name) for name in optional_datasets}
     indexes = {name: _summarize_file(indexes_root / name) for name in required_indexes}
     optional_index_payload = {name: _summarize_file(indexes_root / name) for name in optional_indexes}
     previews = {name: _summarize_file(runs_root / name) for name in required_previews}
+    benchmark_curriculum = {
+        "stage_1_text_to_pair": {
+            "dataset": "LEVIR-CC",
+            "ready": optional_dataset_payload["LEVIR-CC"]["exists"] and optional_index_payload["levir_cc_text_manifest.jsonl"]["exists"],
+        },
+        "stage_2_grounded": {
+            "dataset": "LEVIR-MCI",
+            "ready": levir_payload["exists"] and indexes["levir_mci_validation.json"]["exists"] and previews["levir_mci_grid.png"]["exists"],
+        },
+        "stage_3_transition_aware": {
+            "dataset": "SECOND-CC",
+            "ready": optional_dataset_payload["SECOND-CC"]["exists"] and optional_index_payload["second_cc_samples.jsonl"]["exists"],
+        },
+    }
 
     return {
         "project_root": str(project_root),
@@ -100,6 +122,7 @@ def _build_project_assets_report(project_root: Path) -> dict:
         "indexes": indexes,
         "optional_indexes": optional_index_payload,
         "previews": previews,
+        "benchmark_curriculum": benchmark_curriculum,
         "overfit_run": _summarize_dir(overfit_dir),
         "ready": all(
             [

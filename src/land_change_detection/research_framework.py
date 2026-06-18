@@ -28,8 +28,11 @@ class ResearchProtocol:
     objective: str
     unit_of_analysis: str
     primary_pipeline: str
+    benchmark_curriculum: tuple[str, ...]
     baselines: tuple[str, ...]
     quality_checks: tuple[str, ...]
+    novelty_statement: str
+    novelty_guardrails: tuple[str, ...]
     research_questions: tuple[ResearchQuestion, ...]
 
 
@@ -66,10 +69,26 @@ class ResearchEvidenceReport:
             "## Objective",
             self.protocol.objective,
             "",
-            "## Research Questions",
+            "## Benchmark Curriculum",
         ]
+        for stage in self.protocol.benchmark_curriculum:
+            lines.append(f"- {stage}")
+        lines.extend([
+            "",
+            "## Research Questions",
+        ])
         for question in self.protocol.research_questions:
             lines.append(f"- **{question.id}**: {question.prompt} Evidence: {question.evidence}. Decision value: {question.decision_value}.")
+        lines.extend(
+            [
+                "",
+                "## Novelty Position",
+                self.protocol.novelty_statement,
+                "",
+                "## Novelty Guardrails",
+            ]
+        )
+        lines.extend(f"- {item}" for item in self.protocol.novelty_guardrails)
         lines.extend(["", "## Scene Overview", self.scene_overview, "", "## Top Semantic Transitions"])
         if self.transitions:
             for item in self.transitions[:12]:
@@ -98,16 +117,33 @@ DEFAULT_RESEARCH_PROTOCOL = ResearchProtocol(
     ),
     unit_of_analysis="aligned crop plus 4x4 research grid cells",
     primary_pipeline="T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> ranked cell evidence -> report",
+    benchmark_curriculum=(
+        "Stage 1: LEVIR-CC for clean text-to-pair retrieval benchmarking.",
+        "Stage 2: LEVIR-MCI for grounded retrieval with binary change masks and overfit verification.",
+        "Stage 3: SECOND-CC and Hi-UCD for transition-aware, direction-aware pair retrieval.",
+        "Stage 4: RSCC, RSRCC, ChangeIMTI, CC-Foundation, and UCCD for scale-up and reasoning-oriented evaluation.",
+        "Stage 5: DynamicEarthNet and SpaceNet 7 for longer-horizon temporal retrieval, not first-pass caption retrieval.",
+    ),
     baselines=(
         "visual RGB before/after inspection",
         "cell-level pixel-difference prioritization",
-        "future binary changed/unchanged baseline for localization only",
+        "binary changed/unchanged baseline for localization only",
+        "simple_patch retrieval before optional DINOv2 replacement",
     ),
     quality_checks=(
         "T1 and T2 crop dimensions must match",
         "semantic maps must be aligned to the crop grid",
         "transition claims must cite class support and cell location",
         "VLM prose must remain secondary to segmentation-derived evidence",
+    ),
+    novelty_statement=(
+        "The intended contribution is transition-aware, direction-aware change retrieval that ranks examples by "
+        "what changed from T1 to T2, not only by the final appearance of the scene."
+    ),
+    novelty_guardrails=(
+        "Do not position DINOv2 plus pair fusion plus contrastive retrieval as sufficient novelty by itself.",
+        "Use LEVIR-CC and LEVIR-MCI as engineering and grounding benchmarks before claiming semantic retrieval novelty.",
+        "Treat DynamicEarthNet, SpaceNet 7, and JEPA-style ideas as later-stage temporal representation work.",
     ),
     research_questions=(
         ResearchQuestion(
@@ -124,6 +160,12 @@ DEFAULT_RESEARCH_PROTOCOL = ResearchProtocol(
         ),
         ResearchQuestion(
             id="RQ3",
+            prompt="Which retrieval examples match the same semantic transition direction?",
+            evidence="transition histograms, dominant transition labels, and pair-to-pair retrieval rankings",
+            decision_value="tests whether retrieval is transition-aware instead of scene-similarity-only",
+        ),
+        ResearchQuestion(
+            id="RQ4",
             prompt="Which changes are policy-relevant for Armenia-focused environmental and agricultural monitoring?",
             evidence="class transitions involving cropland, vegetation, built-up, bare ground, and water",
             decision_value="supports practical monitoring narratives",
