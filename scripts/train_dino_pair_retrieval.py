@@ -57,6 +57,7 @@ class RetrievalSample:
     after_path: str
     caption: str | None
     transition_label: str
+    dominant_transition: str | None
     transition_histogram: list[float] | None
     source: str
 
@@ -76,6 +77,7 @@ def load_retrieval_samples(levir_manifest: Path | None, pair_manifests: list[Pat
                     after_path=str(row["after_path"]),
                     caption=str(row.get("caption") or ""),
                     transition_label=str(row.get("metadata", {}).get("transition_label") or row.get("sample_id")),
+                    dominant_transition=str(row.get("metadata", {}).get("transition_label") or row.get("sample_id")),
                     transition_histogram=None,
                     source="levir",
                 )
@@ -89,6 +91,7 @@ def load_retrieval_samples(levir_manifest: Path | None, pair_manifests: list[Pat
                     after_path=str(row["after_path"]),
                     caption=None,
                     transition_label=str(row.get("dominant_transition") or row.get("sample_id")),
+                    dominant_transition=str(row.get("dominant_transition") or row.get("sample_id")),
                     transition_histogram=[float(value) for value in row.get("transition_histogram", [])] or None,
                     source=str(row.get("dataset_name", "pair")),
                 )
@@ -117,6 +120,7 @@ class PairRetrievalDataset(Dataset):
             "after": self._load_rgb(sample.after_path),
             "caption": sample.caption,
             "transition_label": sample.transition_label,
+            "dominant_transition": sample.dominant_transition,
             "transition_histogram": sample.transition_histogram,
             "source": sample.source,
         }
@@ -130,6 +134,7 @@ def collate_batch(batch: list[dict[str, Any]]) -> dict[str, Any]:
         "after": torch.stack([row["after"] for row in batch]),
         "caption": [row["caption"] for row in batch],
         "transition_label": [row["transition_label"] for row in batch],
+        "dominant_transition": [row["dominant_transition"] for row in batch],
         "transition_histogram": histograms,
         "source": [row["source"] for row in batch],
     }
@@ -187,7 +192,9 @@ def run_epoch(
     rows: list[dict[str, float]] = []
     all_embeddings: list[torch.Tensor] = []
     all_labels: list[str] = []
+    all_dominant_transitions: list[str | None] = []
     all_histograms: list[list[float]] = []
+    all_sources: list[str] = []
     all_text_embeddings: list[torch.Tensor] = []
     text_batches = 0
 
@@ -232,7 +239,9 @@ def run_epoch(
         rows.append(metrics_row)
         all_embeddings.append(outputs["change_embedding"].detach().cpu())
         all_labels.extend(label_list)
+        all_dominant_transitions.extend(batch["dominant_transition"])
         all_histograms.extend(batch["transition_histogram"])
+        all_sources.extend(batch["source"])
 
     embeddings = torch.cat(all_embeddings, dim=0)
     similarities = embeddings @ embeddings.transpose(0, 1)
@@ -240,6 +249,10 @@ def run_epoch(
     pair_map_scores: list[float] = []
     hist_sims: list[float] = []
     text_mrr = 0.0
+    pair_only_indices = [index for index, histogram in enumerate(all_histograms) if histogram]
+    pair_recalls = {1: 0, 5: 0, 10: 0}
+    pair_mrr = 0.0
+    pair_top1_transition_hits = 0
 
     for index in range(similarities.shape[0]):
         ranking = torch.argsort(similarities[index], descending=True).tolist()
@@ -263,8 +276,17 @@ def run_epoch(
                 hist_sims.append(
                     float(np.mean([transition_similarity(ref, np.asarray(all_histograms[candidate], dtype=np.float64)) for candidate in top_k]))
                 )
+            pair_relevances = [candidate for candidate in ranking if all_histograms[candidate] and all_dominant_transitions[candidate] == all_dominant_transitions[index]]
+            for k in pair_recalls:
+                pair_recalls[k] += 1 if pair_relevances[:k] else 0
+            if pair_relevances:
+                first_rank = next(rank_index for rank_index, candidate in enumerate(ranking, start=1) if candidate == pair_relevances[0])
+                pair_mrr += 1.0 / first_rank
+            if ranking and all_histograms[ranking[0]] and all_dominant_transitions[ranking[0]] == all_dominant_transitions[index]:
+                pair_top1_transition_hits += 1
 
     total = max(len(all_labels), 1)
+    pair_total = max(len(pair_only_indices), 1)
     mean_row = {key: sum(row.get(key, 0.0) for row in rows) / max(len(rows), 1) for key in {"loss", "text_loss", "pair_loss"}}
     mean_row.update(
         {
@@ -274,6 +296,12 @@ def run_epoch(
             "mAP": sum(pair_map_scores) / max(len(pair_map_scores), 1),
             "mean_transition_similarity_top5": sum(hist_sims) / max(len(hist_sims), 1) if hist_sims else 0.0,
             "MRR": text_mrr / total if text_batches else 0.0,
+            "transition_recall@1": pair_recalls[1] / pair_total if pair_only_indices else 0.0,
+            "transition_recall@5": pair_recalls[5] / pair_total if pair_only_indices else 0.0,
+            "transition_recall@10": pair_recalls[10] / pair_total if pair_only_indices else 0.0,
+            "transition_MRR": pair_mrr / pair_total if pair_only_indices else 0.0,
+            "transition_top1_hit_rate": pair_top1_transition_hits / pair_total if pair_only_indices else 0.0,
+            "pair_sample_fraction": len(pair_only_indices) / total,
         }
     )
     return mean_row

@@ -52,6 +52,8 @@ def test_fake_second_like_manifest_builder(tmp_path: Path):
     assert len(rows) == 1
     assert rows[0]["dataset_name"] == "SECOND-CC"
     assert "dominant_transition" in rows[0]
+    assert rows[0]["metadata"]["curriculum_stage"] == "stage_3_transition_aware"
+    assert rows[0]["metadata"]["transition_label"] == rows[0]["dominant_transition"]
 
 
 def test_fake_hiucd_like_manifest_builder(tmp_path: Path):
@@ -100,3 +102,4 @@ def test_fake_hiucd_like_manifest_builder(tmp_path: Path):
     assert len(rows) == 1
     assert rows[0]["dataset_name"] == "Hi-UCD"
     assert "transition_histogram" in rows[0]
+    assert rows[0]["metadata"]["curriculum_stage"] == "stage_3_transition_aware"

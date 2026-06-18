@@ -136,6 +136,8 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     metrics = json.loads((output_dir / "eval_metrics.json").read_text(encoding="utf-8"))
     assert "recall@5" in metrics
     assert "mAP" in metrics
+    assert "transition_recall@5" in metrics
+    assert "transition_top1_hit_rate" in metrics
 
     query = subprocess.run(
         [
