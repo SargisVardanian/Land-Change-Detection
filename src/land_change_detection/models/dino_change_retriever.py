@@ -82,7 +82,7 @@ class DINOChangeRetriever(nn.Module):
             raise ValueError(f"Unsupported visual_backbone={self.config.visual_backbone}")
 
         self.change_cls = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
-        self.input_projection = nn.Linear(encoder_dim * 4, self.config.hidden_dim)
+        self.input_projection = nn.Linear(encoder_dim * 5, self.config.hidden_dim)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.config.hidden_dim,
             nhead=self.config.transformer_heads,
@@ -107,7 +107,17 @@ class DINOChangeRetriever(nn.Module):
     def forward(self, before: torch.Tensor, after: torch.Tensor, texts: list[str] | None = None) -> dict[str, torch.Tensor]:
         patch_before, cls_before = self.visual_encoder(before)
         patch_after, cls_after = self.visual_encoder(after)
-        fused = torch.cat([patch_before, patch_after, torch.abs(patch_after - patch_before), patch_before * patch_after], dim=-1)
+        signed_delta = patch_after - patch_before
+        fused = torch.cat(
+            [
+                patch_before,
+                patch_after,
+                signed_delta,
+                torch.abs(signed_delta),
+                patch_before * patch_after,
+            ],
+            dim=-1,
+        )
         tokens = self.input_projection(fused)
         change_cls = self.change_cls.expand(before.shape[0], -1, -1)
         encoded = self.transformer(torch.cat([change_cls, tokens], dim=1))

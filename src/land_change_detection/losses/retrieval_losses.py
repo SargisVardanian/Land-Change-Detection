@@ -4,10 +4,33 @@ import torch
 from torch.nn import functional as F
 
 
-def symmetric_infonce_loss(image_embeddings: torch.Tensor, text_embeddings: torch.Tensor, temperature: float = 0.07) -> torch.Tensor:
+def _masked_contrastive_loss(logits: torch.Tensor, positive_mask: torch.Tensor) -> torch.Tensor:
+    row_positive_counts = positive_mask.sum(dim=1)
+    valid_rows = row_positive_counts > 0
+    if not torch.any(valid_rows):
+        return logits.sum() * 0.0
+    log_probs = logits - torch.logsumexp(logits, dim=1, keepdim=True)
+    positive_log_probs = log_probs.masked_fill(~positive_mask, 0.0).sum(dim=1)
+    per_row = -(positive_log_probs / row_positive_counts.clamp_min(1))
+    return per_row[valid_rows].mean()
+
+
+def symmetric_infonce_loss(
+    image_embeddings: torch.Tensor,
+    text_embeddings: torch.Tensor,
+    temperature: float = 0.07,
+    positive_mask: torch.Tensor | None = None,
+) -> torch.Tensor:
     logits = image_embeddings @ text_embeddings.transpose(0, 1) / temperature
-    targets = torch.arange(logits.shape[0], device=logits.device)
-    return 0.5 * (F.cross_entropy(logits, targets) + F.cross_entropy(logits.transpose(0, 1), targets))
+    if positive_mask is None:
+        targets = torch.arange(logits.shape[0], device=logits.device)
+        return 0.5 * (F.cross_entropy(logits, targets) + F.cross_entropy(logits.transpose(0, 1), targets))
+    if positive_mask.shape != logits.shape:
+        raise ValueError(f"positive_mask shape {positive_mask.shape} does not match logits shape {logits.shape}")
+    return 0.5 * (
+        _masked_contrastive_loss(logits, positive_mask)
+        + _masked_contrastive_loss(logits.transpose(0, 1), positive_mask.transpose(0, 1))
+    )
 
 
 def supervised_contrastive_loss(embeddings: torch.Tensor, labels: list[str] | torch.Tensor, temperature: float = 0.07) -> torch.Tensor:

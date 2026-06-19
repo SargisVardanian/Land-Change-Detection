@@ -15,6 +15,34 @@ def test_symmetric_infonce_loss_runs():
     assert loss.item() >= 0.0
 
 
+def test_symmetric_infonce_supports_multi_positive_mask():
+    image_embeddings = torch.tensor(
+        [
+            [1.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    text_embeddings = torch.tensor(
+        [
+            [1.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+        ],
+        dtype=torch.float32,
+    )
+    positive_mask = torch.tensor(
+        [
+            [True, True, False],
+            [True, True, False],
+            [False, False, True],
+        ]
+    )
+    loss = symmetric_infonce_loss(image_embeddings, text_embeddings, positive_mask=positive_mask)
+    assert loss.item() >= 0.0
+
+
 def test_supervised_contrastive_loss_runs():
     embeddings = torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]], dtype=torch.float32)
     loss = supervised_contrastive_loss(embeddings, ["a", "a", "b"])
