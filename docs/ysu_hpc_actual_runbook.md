@@ -32,9 +32,22 @@ git pull origin codex/ysu-hpc-bootstrap-and-verification
 
 ```bash
 bash cluster/ysu/setup_rschange_env.sh
+PYTHONPATH=src /mnt/weka/shared-cache/miniforge3/bin/python \
+  scripts/plan_change_retrieval_downloads.py \
+  --project-root "$RS_PROJECT_ROOT" \
+  --phase baseline \
+  --reserve-gb 120 \
+  --max-download-gb 50 \
+  --output-json "$RS_PROJECT_ROOT/reports/download_plan.json"
 bash cluster/ysu/download_change_retrieval_datasets.sh
 bash cluster/ysu/bootstrap_change_retrieval_assets.sh
 bash cluster/ysu/verify_project_assets.sh
+```
+
+The planner uses a single Hugging Face cache root at:
+
+```bash
+$RS_PROJECT_ROOT/cache/huggingface
 ```
 
 ## Step Order
