@@ -32,7 +32,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--lambda-pair", type=float, default=0.2)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
+    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
+    parser.add_argument("--remoteclip-model-path", type=Path, default=None)
+    parser.add_argument("--openclip-model-name", default="ViT-B-32")
+    parser.add_argument("--openclip-pretrained", default=None)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--pair-loss", choices=("supervised", "soft"), default="supervised")
     parser.add_argument("--max-train-samples", type=int, default=None)
@@ -394,6 +398,7 @@ def run_epoch(
     all_sources: list[str] = []
     all_text_embeddings: list[torch.Tensor] = []
     text_batches = 0
+    anchor_positive_ratios: list[float] = []
 
     for batch in loader:
         before = batch["before"].to(device)
@@ -412,6 +417,7 @@ def run_epoch(
                 txt_emb = outputs["text_embedding"][text_mask]
                 text_group_ids = [batch["sample_id"][index] for index in text_mask]
                 positive_mask = build_positive_mask(text_group_ids, device)
+                anchor_positive_ratios.append(float((positive_mask.sum(dim=1) > 1).float().mean().item()))
                 text_loss = symmetric_infonce_loss(img_emb, txt_emb, positive_mask=positive_mask)
                 loss = loss + text_loss
                 metrics_row["text_loss"] = float(text_loss.item())
@@ -422,6 +428,8 @@ def run_epoch(
         if hist_tensor is not None:
             pair_embeddings = outputs["change_embedding"][hist_indices]
             pair_labels = [label_list[index] for index in hist_indices]
+            pair_positive_mask = build_positive_mask(pair_labels, device)
+            anchor_positive_ratios.append(float((pair_positive_mask.sum(dim=1) > 1).float().mean().item()))
             if args.pair_loss == "supervised":
                 pair_loss = supervised_contrastive_loss(pair_embeddings, pair_labels)
             else:
@@ -453,6 +461,14 @@ def run_epoch(
             text_batches=text_batches,
         )
     )
+    mean_row["anchors_with_positive_ratio"] = (
+        sum(anchor_positive_ratios) / len(anchor_positive_ratios) if anchor_positive_ratios else 0.0
+    )
+    if training and anchor_positive_ratios and mean_row["anchors_with_positive_ratio"] < 0.5:
+        print(
+            f"Warning: anchors_with_positive_ratio is low ({mean_row['anchors_with_positive_ratio']:.3f}); "
+            "consider larger or more source-aware batches."
+        )
     return mean_row
 
 
@@ -465,11 +481,15 @@ def main() -> int:
     device = choose_device(args.device)
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
-            visual_backbone=args.visual_backbone,
-            dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
-            local_files_only=args.local_files_only,
-            image_size=args.image_size,
-        )
+                visual_backbone=args.visual_backbone,
+                text_backbone=args.text_backbone,
+                dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
+                remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
+                openclip_model_name=args.openclip_model_name,
+                openclip_pretrained=args.openclip_pretrained,
+                local_files_only=args.local_files_only,
+                image_size=args.image_size,
+            )
     ).to(device)
     loader = build_dataloader(samples, args, shuffle=True)
     optimizer = torch.optim.AdamW([parameter for parameter in model.parameters() if parameter.requires_grad], lr=args.learning_rate)

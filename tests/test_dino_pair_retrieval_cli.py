@@ -94,6 +94,8 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
             "32",
             "--visual-backbone",
             "simple_patch",
+            "--text-backbone",
+            "simple_text",
             "--device",
             "cpu",
         ],
@@ -123,6 +125,8 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
             "32",
             "--visual-backbone",
             "simple_patch",
+            "--text-backbone",
+            "simple_text",
             "--device",
             "cpu",
         ],
@@ -138,6 +142,7 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     assert "mAP" in metrics
     assert "transition_recall@5" in metrics
     assert "transition_top1_hit_rate" in metrics
+    assert "anchors_with_positive_ratio" in metrics
     assert "overall" in metrics
     assert "by_source" in metrics
     assert "dataset_summary" in metrics
@@ -159,6 +164,8 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
             "32",
             "--visual-backbone",
             "simple_patch",
+            "--text-backbone",
+            "simple_text",
             "--device",
             "cpu",
         ],
@@ -207,6 +214,8 @@ def test_train_cli_fails_cleanly_when_dinov2_path_is_missing(tmp_path: Path):
             "32",
             "--visual-backbone",
             "dinov2",
+            "--text-backbone",
+            "simple_text",
             "--dinov2-model-path",
             str(tmp_path / "missing-dinov2-small"),
             "--local-files-only",

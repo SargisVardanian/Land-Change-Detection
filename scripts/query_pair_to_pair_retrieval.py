@@ -25,7 +25,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
+    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
+    parser.add_argument("--remoteclip-model-path", type=Path, default=None)
+    parser.add_argument("--openclip-model-name", default="ViT-B-32")
+    parser.add_argument("--openclip-pretrained", default=None)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     return parser.parse_args()
@@ -54,7 +58,11 @@ def main() -> int:
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
             visual_backbone=args.visual_backbone,
+            text_backbone=args.text_backbone,
             dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
+            remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
+            openclip_model_name=args.openclip_model_name,
+            openclip_pretrained=args.openclip_pretrained,
             local_files_only=args.local_files_only,
             image_size=args.image_size,
         )
