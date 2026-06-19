@@ -31,12 +31,19 @@ def _count_pngs(path: Path) -> int:
     return sum(1 for item in path.rglob("*.png")) if path.exists() else 0
 
 
+def _load_json(path: Path) -> dict | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def main() -> int:
     args = parse_args()
     repo_root = args.project_root / "code" / "project"
     dataset_root = args.project_root / "datasets" / "raw" / "LEVIR-MCI-unpacked" / "LEVIR-MCI-dataset"
     indexes_root = args.project_root / "indexes"
     runs_root = args.project_root / "runs"
+    pair_run_root = runs_root / "dino_pair_retrieval_simple_patch"
     logs_root = args.project_root / "logs"
     models_root = args.project_root / "models"
     cache_root = args.project_root / ".cache"
@@ -58,6 +65,9 @@ def main() -> int:
         } if indexes_root.exists() else {},
         "recent_runs": _recent_paths(runs_root),
         "recent_logs": _recent_paths(logs_root),
+        "pair_retrieval_run_dir": str(pair_run_root),
+        "pair_retrieval_train_summary": _load_json(pair_run_root / "train_summary.json"),
+        "pair_retrieval_eval_summary": _load_json(pair_run_root / "eval_summary.json"),
         "model_sizes": _run(["du", "-sh", str(models_root)], cwd=repo_root) if models_root.exists() else "missing",
         "cache_sizes": _run(["du", "-sh", str(cache_root)], cwd=repo_root) if cache_root.exists() else "missing",
         "dataset_curriculum": curriculum_summary(args.project_root),
