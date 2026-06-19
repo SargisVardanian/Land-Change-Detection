@@ -140,8 +140,11 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     metrics = json.loads((output_dir / "eval_metrics.json").read_text(encoding="utf-8"))
     assert "recall@5" in metrics
     assert "mAP" in metrics
+    assert "median_rank" in metrics
     assert "transition_recall@5" in metrics
     assert "transition_top1_hit_rate" in metrics
+    assert "transition_nDCG@10" in metrics
+    assert "directionality_accuracy" in metrics
     assert "anchors_with_positive_ratio" in metrics
     assert "overall" in metrics
     assert "by_source" in metrics

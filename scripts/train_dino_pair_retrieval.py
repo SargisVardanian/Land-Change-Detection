@@ -4,6 +4,7 @@ import argparse
 import json
 import random
 from dataclasses import dataclass
+from math import log2
 from pathlib import Path
 from typing import Any
 
@@ -226,26 +227,50 @@ class PositiveAwareBatchSampler(BatchSampler):
         return max(1, (len(self.samples) + self.batch_size - 1) // self.batch_size)
 
 
-def build_dataloader(samples: list[RetrievalSample], args: argparse.Namespace, shuffle: bool) -> DataLoader:
-    if args.max_train_samples is not None:
-        samples = samples[: args.max_train_samples]
+class AlternatingTaskLoader:
+    def __init__(self, loaders: list[DataLoader]):
+        self.loaders = loaders
+
+    def __iter__(self):
+        iterators = [iter(loader) for loader in self.loaders]
+        active = [True] * len(iterators)
+        while any(active):
+            for index, iterator in enumerate(iterators):
+                if not active[index]:
+                    continue
+                try:
+                    yield next(iterator)
+                except StopIteration:
+                    active[index] = False
+
+    def __len__(self) -> int:
+        return sum(len(loader) for loader in self.loaders)
+
+
+def _build_subset_dataloader(samples: list[RetrievalSample], args: argparse.Namespace, shuffle: bool) -> DataLoader:
     dataset = PairRetrievalDataset(samples, args.image_size)
     batch_size = min(args.batch_size, len(samples))
     if shuffle:
         batch_sampler = PositiveAwareBatchSampler(samples, batch_size=batch_size, shuffle=True, seed=args.seed)
-        return DataLoader(
-            dataset,
-            batch_sampler=batch_sampler,
-            num_workers=args.num_workers,
-            collate_fn=collate_batch,
-        )
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=collate_batch,
-    )
+        return DataLoader(dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, collate_fn=collate_batch)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=collate_batch)
+
+
+def build_dataloader(samples: list[RetrievalSample], args: argparse.Namespace, shuffle: bool) -> DataLoader | AlternatingTaskLoader:
+    if args.max_train_samples is not None:
+        samples = samples[: args.max_train_samples]
+    caption_samples = [sample for sample in samples if sample.caption]
+    transition_samples = [sample for sample in samples if sample.transition_histogram]
+    loaders: list[DataLoader] = []
+    if caption_samples:
+        loaders.append(_build_subset_dataloader(caption_samples, args, shuffle=shuffle))
+    if transition_samples:
+        loaders.append(_build_subset_dataloader(transition_samples, args, shuffle=shuffle))
+    if not loaders:
+        raise ValueError("No caption or transition samples available for dataloader construction.")
+    if len(loaders) == 1:
+        return loaders[0]
+    return AlternatingTaskLoader(loaders)
 
 
 def choose_device(choice: str) -> torch.device:
@@ -293,19 +318,47 @@ def any_relevant_in_top_k(
     return any(is_relevant(candidate) for candidate in ranking[:k])
 
 
+def _average_precision(relevances: list[bool]) -> float:
+    hits = 0
+    precision_sum = 0.0
+    for rank_index, relevant in enumerate(relevances, start=1):
+        if relevant:
+            hits += 1
+            precision_sum += hits / rank_index
+    return precision_sum / hits if hits else 0.0
+
+
+def _ndcg_at_k(grades: list[float], k: int) -> float:
+    dcg = sum(((2.0**grade) - 1.0) / log2(rank + 2.0) for rank, grade in enumerate(grades[:k]))
+    ideal = sorted(grades, reverse=True)
+    idcg = sum(((2.0**grade) - 1.0) / log2(rank + 2.0) for rank, grade in enumerate(ideal[:k]))
+    return dcg / idcg if idcg > 0 else 0.0
+
+
 def compute_retrieval_metrics(
     embeddings: torch.Tensor,
-    labels: list[str],
+    sample_ids: list[str],
     dominant_transitions: list[str | None],
     histograms: list[list[float] | None],
-    *,
-    text_batches: int,
+    text_query_embeddings: torch.Tensor | None,
+    text_query_sample_ids: list[str],
 ) -> dict[str, float]:
-    similarities = embeddings @ embeddings.transpose(0, 1)
-    recalls = {1: 0, 5: 0, 10: 0}
-    pair_map_scores: list[float] = []
+    text_recalls = {1: 0, 5: 0, 10: 0}
+    text_map_scores: list[float] = []
+    text_ranks: list[int] = []
+    if text_query_embeddings is not None and text_query_sample_ids:
+        text_similarities = text_query_embeddings @ embeddings.transpose(0, 1)
+        for query_index, query_sample_id in enumerate(text_query_sample_ids):
+            ranking = torch.argsort(text_similarities[query_index], descending=True).tolist()
+            relevances = [sample_ids[candidate] == query_sample_id for candidate in ranking]
+            for k in text_recalls:
+                text_recalls[k] += 1 if any(relevances[:k]) else 0
+            first_rank = next((rank for rank, relevant in enumerate(relevances, start=1) if relevant), len(ranking) + 1)
+            text_ranks.append(first_rank)
+            text_map_scores.append(_average_precision(relevances))
+
+    pair_similarities = embeddings @ embeddings.transpose(0, 1)
     hist_sims: list[float] = []
-    text_mrr = 0.0
     pair_only_indices = [index for index, histogram in enumerate(histograms) if histogram]
     pair_query_indices = [
         index
@@ -318,66 +371,67 @@ def compute_retrieval_metrics(
     pair_recalls = {1: 0, 5: 0, 10: 0}
     pair_mrr = 0.0
     pair_top1_transition_hits = 0
+    pair_ndcg_scores: list[float] = []
+    pair_ap_scores: list[float] = []
 
-    for index in range(similarities.shape[0]):
-        ranking = torch.argsort(similarities[index], descending=True).tolist()
+    for index in pair_query_indices:
+        ranking = torch.argsort(pair_similarities[index], descending=True).tolist()
         ranking = [candidate for candidate in ranking if candidate != index]
-        relevances = [labels[candidate] == labels[index] for candidate in ranking]
-        for k in recalls:
-            recalls[k] += 1 if any(relevances[:k]) else 0
-        hits = 0
-        precision_sum = 0.0
-        for rank_index, relevant in enumerate(relevances, start=1):
-            if relevant:
-                hits += 1
-                precision_sum += hits / rank_index
-                if hits == 1:
-                    text_mrr += 1.0 / rank_index
-        pair_map_scores.append(precision_sum / hits if hits else 0.0)
-        if histograms[index]:
-            ref = np.asarray(histograms[index], dtype=np.float64)
-            top_k = [candidate for candidate in ranking[:5] if histograms[candidate]]
-            if top_k:
-                hist_sims.append(
-                    float(np.mean([transition_similarity(ref, np.asarray(histograms[candidate], dtype=np.float64)) for candidate in top_k]))
+        binary_relevances = [
+            bool(histograms[candidate] and dominant_transitions[candidate] == dominant_transitions[index]) for candidate in ranking
+        ]
+        graded_relevances = [
+            transition_similarity(np.asarray(histograms[index], dtype=np.float64), np.asarray(histograms[candidate], dtype=np.float64))
+            if histograms[candidate]
+            else 0.0
+            for candidate in ranking
+        ]
+        for k in pair_recalls:
+            pair_recalls[k] += 1 if any(binary_relevances[:k]) else 0
+        first_relevant_rank = next((rank for rank, relevant in enumerate(binary_relevances, start=1) if relevant), None)
+        if first_relevant_rank is not None:
+            pair_mrr += 1.0 / first_relevant_rank
+        pair_ap_scores.append(_average_precision(binary_relevances))
+        pair_ndcg_scores.append(_ndcg_at_k(graded_relevances, 10))
+        top_k = [candidate for candidate in ranking[:5] if histograms[candidate]]
+        if top_k:
+            hist_sims.append(
+                float(
+                    np.mean(
+                        [
+                            transition_similarity(
+                                np.asarray(histograms[index], dtype=np.float64),
+                                np.asarray(histograms[candidate], dtype=np.float64),
+                            )
+                            for candidate in top_k
+                        ]
+                    )
                 )
-            if index in pair_query_indices:
-                for k in pair_recalls:
-                    pair_recalls[k] += 1 if any_relevant_in_top_k(
-                        ranking,
-                        k=k,
-                        is_relevant=lambda candidate, idx=index: bool(
-                            histograms[candidate] and dominant_transitions[candidate] == dominant_transitions[idx]
-                        ),
-                    ) else 0
-                first_relevant_rank = next(
-                    (
-                        rank_index
-                        for rank_index, candidate in enumerate(ranking, start=1)
-                        if histograms[candidate] and dominant_transitions[candidate] == dominant_transitions[index]
-                    ),
-                    None,
-                )
-                if first_relevant_rank is not None:
-                    pair_mrr += 1.0 / first_relevant_rank
-                if ranking and histograms[ranking[0]] and dominant_transitions[ranking[0]] == dominant_transitions[index]:
-                    pair_top1_transition_hits += 1
+            )
+        if ranking and histograms[ranking[0]] and dominant_transitions[ranking[0]] == dominant_transitions[index]:
+            pair_top1_transition_hits += 1
 
-    total = max(len(labels), 1)
+    text_total = max(len(text_query_sample_ids), 1)
     pair_total = max(len(pair_query_indices), 1)
+    text_mrr = sum(1.0 / rank for rank in text_ranks) / len(text_ranks) if text_ranks else 0.0
+    median_rank = float(np.median(text_ranks)) if text_ranks else 0.0
     return {
-        "recall@1": recalls[1] / total,
-        "recall@5": recalls[5] / total,
-        "recall@10": recalls[10] / total,
-        "mAP": sum(pair_map_scores) / max(len(pair_map_scores), 1),
+        "recall@1": text_recalls[1] / text_total if text_query_sample_ids else 0.0,
+        "recall@5": text_recalls[5] / text_total if text_query_sample_ids else 0.0,
+        "recall@10": text_recalls[10] / text_total if text_query_sample_ids else 0.0,
+        "mAP": sum(text_map_scores) / max(len(text_map_scores), 1),
+        "median_rank": median_rank,
         "mean_transition_similarity_top5": sum(hist_sims) / max(len(hist_sims), 1) if hist_sims else 0.0,
-        "MRR": text_mrr / total if text_batches else 0.0,
+        "MRR": text_mrr,
         "transition_recall@1": pair_recalls[1] / pair_total if pair_query_indices else 0.0,
         "transition_recall@5": pair_recalls[5] / pair_total if pair_query_indices else 0.0,
         "transition_recall@10": pair_recalls[10] / pair_total if pair_query_indices else 0.0,
         "transition_MRR": pair_mrr / pair_total if pair_query_indices else 0.0,
         "transition_top1_hit_rate": pair_top1_transition_hits / pair_total if pair_query_indices else 0.0,
-        "pair_sample_fraction": len(pair_only_indices) / total,
+        "transition_nDCG@10": sum(pair_ndcg_scores) / max(len(pair_ndcg_scores), 1),
+        "directionality_accuracy": pair_top1_transition_hits / pair_total if pair_query_indices else 0.0,
+        "pair_mAP": sum(pair_ap_scores) / max(len(pair_ap_scores), 1),
+        "pair_sample_fraction": len(pair_only_indices) / max(len(sample_ids), 1),
     }
 
 
@@ -397,7 +451,7 @@ def run_epoch(
     all_histograms: list[list[float]] = []
     all_sources: list[str] = []
     all_text_embeddings: list[torch.Tensor] = []
-    text_batches = 0
+    all_text_query_ids: list[str] = []
     anchor_positive_ratios: list[float] = []
 
     for batch in loader:
@@ -422,7 +476,7 @@ def run_epoch(
                 loss = loss + text_loss
                 metrics_row["text_loss"] = float(text_loss.item())
                 all_text_embeddings.append(txt_emb.detach().cpu())
-                text_batches += 1
+                all_text_query_ids.extend(text_group_ids)
 
         hist_tensor, hist_indices = transition_histograms_to_tensor(batch["transition_histogram"], device)
         if hist_tensor is not None:
@@ -445,12 +499,13 @@ def run_epoch(
         metrics_row["loss"] = float(loss.item())
         rows.append(metrics_row)
         all_embeddings.append(outputs["change_embedding"].detach().cpu())
-        all_labels.extend(label_list)
+        all_labels.extend(batch["sample_id"])
         all_dominant_transitions.extend(batch["dominant_transition"])
         all_histograms.extend(batch["transition_histogram"])
         all_sources.extend(batch["source"])
 
     embeddings = torch.cat(all_embeddings, dim=0)
+    text_embeddings = torch.cat(all_text_embeddings, dim=0) if all_text_embeddings else None
     mean_row = {key: sum(row.get(key, 0.0) for row in rows) / max(len(rows), 1) for key in {"loss", "text_loss", "pair_loss"}}
     mean_row.update(
         compute_retrieval_metrics(
@@ -458,7 +513,8 @@ def run_epoch(
             all_labels,
             all_dominant_transitions,
             all_histograms,
-            text_batches=text_batches,
+            text_embeddings,
+            all_text_query_ids,
         )
     )
     mean_row["anchors_with_positive_ratio"] = (
