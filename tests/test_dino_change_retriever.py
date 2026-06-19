@@ -103,6 +103,29 @@ def test_dinov2_hidden_size_is_inferred_from_loaded_model(monkeypatch, tmp_path)
     assert model.input_projection.in_features == 72 * 5
 
 
+def test_pair_feature_modes_adjust_input_projection():
+    model_t2 = DINOChangeRetriever(
+        DINOChangeRetrieverConfig(
+            visual_backbone="simple_patch",
+            text_backbone="simple_text",
+            pair_feature_mode="t2_only",
+            hidden_dim=64,
+            transformer_heads=4,
+        )
+    )
+    model_delta = DINOChangeRetriever(
+        DINOChangeRetrieverConfig(
+            visual_backbone="simple_patch",
+            text_backbone="simple_text",
+            pair_feature_mode="signed_delta",
+            hidden_dim=64,
+            transformer_heads=4,
+        )
+    )
+    assert model_t2.input_projection.in_features == 64
+    assert model_delta.input_projection.in_features == 128
+
+
 def test_remoteclip_text_encoder_uses_local_hf_components(monkeypatch, tmp_path):
     class FakeTokenizer:
         @classmethod

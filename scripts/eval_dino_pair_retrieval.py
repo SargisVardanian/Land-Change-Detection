@@ -13,6 +13,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.train_dino_pair_retrieval import (
+    apply_preset,
     build_dataloader,
     choose_device,
     load_retrieval_samples,
@@ -20,18 +21,23 @@ from scripts.train_dino_pair_retrieval import (
     RetrievalSample,
 )
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
+from land_change_detection.retrieval_baselines import preset_names
+from land_change_detection.run_metadata import jsonl_fingerprint, locate_storage_inventory, path_fingerprint, safe_git_commit
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate DINO/simple-patch pair retrieval.")
+    parser.add_argument("--preset", choices=preset_names(), default=None)
     parser.add_argument("--levir-manifest", type=Path, default=None)
     parser.add_argument("--pair-manifest", type=Path, action="append", default=[])
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
     parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
+    parser.add_argument("--pair-feature-mode", choices=("t2_only", "signed_delta", "change_fusion"), default="change_fusion")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
     parser.add_argument("--remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
@@ -75,12 +81,14 @@ def _metrics_for_subset(
 
 def main() -> int:
     args = parse_args()
+    args, preset_payload = apply_preset(args)
     samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
     device = choose_device(args.device)
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
             visual_backbone=args.visual_backbone,
             text_backbone=args.text_backbone,
+            pair_feature_mode=args.pair_feature_mode,
             dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
             remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
             openclip_model_name=args.openclip_model_name,
@@ -105,6 +113,27 @@ def main() -> int:
     report["transition_summary"] = {
         "pair_only": _summarize_samples(pair_only_samples),
         "caption_or_grounded_text": _summarize_samples(caption_only_samples),
+    }
+    report["run_metadata"] = {
+        "preset": preset_payload,
+        "git_commit": safe_git_commit(Path(__file__).resolve().parents[1]),
+        "storage_inventory": locate_storage_inventory(args.project_root),
+        "model_fingerprints": {
+            "checkpoint": path_fingerprint(args.checkpoint),
+            "dinov2_model_path": path_fingerprint(args.dinov2_model_path),
+            "remoteclip_model_path": path_fingerprint(args.remoteclip_model_path),
+        },
+        "dataset_versions": {
+            "levir_manifest": jsonl_fingerprint(args.levir_manifest),
+            "pair_manifests": [jsonl_fingerprint(path) for path in args.pair_manifest],
+        },
+        "exact_split": {
+            "levir_manifest_path": str(args.levir_manifest) if args.levir_manifest else None,
+            "pair_manifest_paths": [str(path) for path in args.pair_manifest],
+            "num_samples": len(samples),
+            "num_pair_samples": len(pair_only_samples),
+            "num_caption_samples": len(caption_only_samples),
+        },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

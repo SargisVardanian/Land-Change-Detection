@@ -19,14 +19,18 @@ from land_change_detection.losses.retrieval_losses import (
     symmetric_infonce_loss,
 )
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
+from land_change_detection.retrieval_baselines import preset_by_name, preset_names
+from land_change_detection.run_metadata import jsonl_fingerprint, locate_storage_inventory, path_fingerprint, safe_git_commit
 from land_change_detection.semantic_transitions import transition_similarity
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train retrieval-first DINO/simple-patch change retriever.")
+    parser.add_argument("--preset", choices=preset_names(), default=None)
     parser.add_argument("--levir-manifest", type=Path, default=None)
     parser.add_argument("--pair-manifest", type=Path, action="append", default=[])
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--image-size", type=int, default=224)
@@ -34,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lambda-pair", type=float, default=0.2)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
     parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
+    parser.add_argument("--pair-feature-mode", choices=("t2_only", "signed_delta", "change_fusion"), default="change_fusion")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
     parser.add_argument("--remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
@@ -291,6 +296,20 @@ def json_safe_config(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
+def apply_preset(args: argparse.Namespace) -> tuple[argparse.Namespace, dict[str, Any] | None]:
+    if not args.preset:
+        return args, None
+    preset = preset_by_name(args.preset)
+    if not preset.supported:
+        raise SystemExit(
+            f"Preset '{preset.name}' is registered but not implemented yet. Notes: {', '.join(preset.notes)}"
+        )
+    args.visual_backbone = preset.visual_backbone
+    args.text_backbone = preset.text_backbone
+    args.pair_feature_mode = preset.pair_feature_mode
+    return args, preset.to_dict()
+
+
 def transition_histograms_to_tensor(histograms: list[list[float] | None], device: torch.device) -> tuple[torch.Tensor | None, list[int]]:
     valid_indices = [index for index, row in enumerate(histograms) if row]
     if not valid_indices:
@@ -530,6 +549,7 @@ def run_epoch(
 
 def main() -> int:
     args = parse_args()
+    args, preset_payload = apply_preset(args)
     set_seed(args.seed)
     samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
     if not samples:
@@ -539,6 +559,7 @@ def main() -> int:
         DINOChangeRetrieverConfig(
                 visual_backbone=args.visual_backbone,
                 text_backbone=args.text_backbone,
+                pair_feature_mode=args.pair_feature_mode,
                 dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
                 remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
                 openclip_model_name=args.openclip_model_name,
@@ -553,18 +574,41 @@ def main() -> int:
     history: list[dict[str, Any]] = []
     best_metric = -1.0
     config_payload = json_safe_config(args)
+    run_metadata = {
+        "preset": preset_payload,
+        "git_commit": safe_git_commit(Path(__file__).resolve().parents[1]),
+        "storage_inventory": locate_storage_inventory(args.project_root),
+        "model_fingerprints": {
+            "dinov2_model_path": path_fingerprint(args.dinov2_model_path),
+            "remoteclip_model_path": path_fingerprint(args.remoteclip_model_path),
+        },
+        "dataset_versions": {
+            "levir_manifest": jsonl_fingerprint(args.levir_manifest),
+            "pair_manifests": [jsonl_fingerprint(path) for path in args.pair_manifest],
+        },
+        "exact_split": {
+            "levir_manifest_path": str(args.levir_manifest) if args.levir_manifest else None,
+            "pair_manifest_paths": [str(path) for path in args.pair_manifest],
+            "num_samples": len(samples),
+            "num_caption_samples": sum(1 for sample in samples if sample.caption),
+            "num_transition_samples": sum(1 for sample in samples if sample.transition_histogram),
+        },
+    }
     for epoch in range(1, args.epochs + 1):
         train_metrics = run_epoch(model, loader, optimizer, args, device)
         eval_metrics = run_epoch(model, loader, None, args, device)
         row = {"epoch": epoch, "train": train_metrics, "eval": eval_metrics}
         history.append(row)
         score = float(eval_metrics.get("recall@5", 0.0) + eval_metrics.get("mAP", 0.0))
-        torch.save({"model_state": model.state_dict(), "config": config_payload, "metrics": row}, args.output_dir / "last.pt")
+        torch.save({"model_state": model.state_dict(), "config": config_payload, "run_metadata": run_metadata, "metrics": row}, args.output_dir / "last.pt")
         if score > best_metric:
             best_metric = score
-            torch.save({"model_state": model.state_dict(), "config": config_payload, "metrics": row}, args.output_dir / "best.pt")
+            torch.save({"model_state": model.state_dict(), "config": config_payload, "run_metadata": run_metadata, "metrics": row}, args.output_dir / "best.pt")
         print(json.dumps(row, indent=2))
-    (args.output_dir / "metrics_history.json").write_text(json.dumps({"history": history}, indent=2), encoding="utf-8")
+    (args.output_dir / "metrics_history.json").write_text(
+        json.dumps({"history": history, "config": config_payload, "run_metadata": run_metadata}, indent=2),
+        encoding="utf-8",
+    )
     (args.output_dir / "config.json").write_text(json.dumps(config_payload, indent=2), encoding="utf-8")
     return 0
 

@@ -24,6 +24,7 @@ OPENCLIP_IMPORT_ERROR = "open_clip is not installed. Use --text-backbone simple_
 class DINOChangeRetrieverConfig:
     visual_backbone: str = "simple_patch"
     text_backbone: str = "remoteclip"
+    pair_feature_mode: str = "change_fusion"
     dinov2_model_path: str | None = None
     remoteclip_model_path: str | None = None
     openclip_model_name: str = "ViT-B-32"
@@ -175,7 +176,14 @@ class DINOChangeRetriever(nn.Module):
         self.after_token_type = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
         self.temporal_order_embedding = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
         self.change_cls = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
-        self.input_projection = nn.Linear(encoder_dim * 5, self.config.hidden_dim)
+        pair_feature_dim = {
+            "t2_only": encoder_dim,
+            "signed_delta": encoder_dim * 2,
+            "change_fusion": encoder_dim * 5,
+        }.get(self.config.pair_feature_mode)
+        if pair_feature_dim is None:
+            raise ValueError(f"Unsupported pair_feature_mode={self.config.pair_feature_mode}")
+        self.input_projection = nn.Linear(pair_feature_dim, self.config.hidden_dim)
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=self.config.hidden_dim,
             nhead=self.config.transformer_heads,
@@ -223,16 +231,21 @@ class DINOChangeRetriever(nn.Module):
         patch_before, cls_before = self.visual_encoder(before)
         patch_after, cls_after = self.visual_encoder(after)
         signed_delta = patch_after - patch_before
-        fused = torch.cat(
-            [
-                patch_before,
-                patch_after,
-                signed_delta,
-                torch.abs(signed_delta),
-                patch_before * patch_after,
-            ],
-            dim=-1,
-        )
+        if self.config.pair_feature_mode == "t2_only":
+            fused = patch_after
+        elif self.config.pair_feature_mode == "signed_delta":
+            fused = torch.cat([signed_delta, torch.abs(signed_delta)], dim=-1)
+        else:
+            fused = torch.cat(
+                [
+                    patch_before,
+                    patch_after,
+                    signed_delta,
+                    torch.abs(signed_delta),
+                    patch_before * patch_after,
+                ],
+                dim=-1,
+            )
         tokens = self.input_projection(fused)
         tokens = tokens + self.before_token_type + self.after_token_type + self.temporal_order_embedding
         change_cls = self.change_cls.expand(before.shape[0], -1, -1)

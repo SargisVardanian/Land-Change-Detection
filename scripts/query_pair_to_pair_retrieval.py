@@ -14,10 +14,13 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.train_dino_pair_retrieval import PairRetrievalDataset, choose_device, collate_batch, load_retrieval_samples
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
+from land_change_detection.retrieval_baselines import preset_names
+from scripts.train_dino_pair_retrieval import apply_preset
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Query pair-to-pair retrieval and render top-k results.")
+    parser.add_argument("--preset", choices=preset_names(), default=None)
     parser.add_argument("--manifest", type=Path, action="append", required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--query-sample-id", required=True)
@@ -26,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
     parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
+    parser.add_argument("--pair-feature-mode", choices=("t2_only", "signed_delta", "change_fusion"), default="change_fusion")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
     parser.add_argument("--remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
@@ -50,6 +54,7 @@ def _render_pair(before_path: str, after_path: str, size: tuple[int, int]) -> Im
 
 def main() -> int:
     args = parse_args()
+    args, _preset_payload = apply_preset(args)
     samples = load_retrieval_samples(None, list(args.manifest))
     sample_by_id = {sample.sample_id: sample for sample in samples}
     if args.query_sample_id not in sample_by_id:
@@ -59,6 +64,7 @@ def main() -> int:
         DINOChangeRetrieverConfig(
             visual_backbone=args.visual_backbone,
             text_backbone=args.text_backbone,
+            pair_feature_mode=args.pair_feature_mode,
             dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
             remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
             openclip_model_name=args.openclip_model_name,

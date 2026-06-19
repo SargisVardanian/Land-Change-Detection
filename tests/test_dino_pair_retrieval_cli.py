@@ -80,22 +80,22 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
         [
             sys.executable,
             "scripts/train_dino_pair_retrieval.py",
+            "--preset",
+            "simple_patch_smoke",
             "--levir-manifest",
             str(levir_manifest),
             "--pair-manifest",
             str(pair_manifest),
             "--output-dir",
             str(output_dir),
+            "--project-root",
+            str(tmp_path / "project_root"),
             "--epochs",
             "1",
             "--batch-size",
             "2",
             "--image-size",
             "32",
-            "--visual-backbone",
-            "simple_patch",
-            "--text-backbone",
-            "simple_text",
             "--device",
             "cpu",
         ],
@@ -108,11 +108,16 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     assert train.returncode == 0, train.stderr
     assert (output_dir / "best.pt").exists()
     assert (output_dir / "metrics_history.json").exists()
+    history_payload = json.loads((output_dir / "metrics_history.json").read_text(encoding="utf-8"))
+    assert history_payload["config"]["preset"] == "simple_patch_smoke"
+    assert history_payload["run_metadata"]["preset"]["name"] == "simple_patch_smoke"
 
     evaluate = subprocess.run(
         [
             sys.executable,
             "scripts/eval_dino_pair_retrieval.py",
+            "--preset",
+            "simple_patch_smoke",
             "--levir-manifest",
             str(levir_manifest),
             "--pair-manifest",
@@ -121,12 +126,10 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
             str(output_dir / "best.pt"),
             "--output",
             str(output_dir / "eval_metrics.json"),
+            "--project-root",
+            str(tmp_path / "project_root"),
             "--image-size",
             "32",
-            "--visual-backbone",
-            "simple_patch",
-            "--text-backbone",
-            "simple_text",
             "--device",
             "cpu",
         ],
@@ -150,11 +153,14 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
     assert "by_source" in metrics
     assert "dataset_summary" in metrics
     assert "SECOND-CC" in metrics["by_source"]
+    assert metrics["run_metadata"]["preset"]["name"] == "simple_patch_smoke"
 
     query = subprocess.run(
         [
             sys.executable,
             "scripts/query_pair_to_pair_retrieval.py",
+            "--preset",
+            "simple_patch_smoke",
             "--manifest",
             str(pair_manifest),
             "--checkpoint",
@@ -165,10 +171,6 @@ def test_train_eval_query_pair_retrieval_cli(tmp_path: Path):
             str(output_dir / "query_topk.png"),
             "--image-size",
             "32",
-            "--visual-backbone",
-            "simple_patch",
-            "--text-backbone",
-            "simple_text",
             "--device",
             "cpu",
         ],
@@ -234,3 +236,26 @@ def test_train_cli_fails_cleanly_when_dinov2_path_is_missing(tmp_path: Path):
     assert result.returncode != 0
     assert "DINOv2 model path not found" in result.stderr
     assert "simple_patch" in result.stderr
+
+
+def test_train_cli_rejects_unimplemented_preset(tmp_path: Path):
+    repo_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/train_dino_pair_retrieval.py",
+            "--preset",
+            "remoteclip_pair_fusion",
+            "--output-dir",
+            str(tmp_path / "run"),
+            "--pair-manifest",
+            str(tmp_path / "missing.jsonl"),
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PYTHONPATH": "src"},
+    )
+    assert result.returncode != 0
+    assert "not implemented yet" in result.stderr or "not implemented yet" in result.stdout
