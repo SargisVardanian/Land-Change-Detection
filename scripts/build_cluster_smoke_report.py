@@ -74,6 +74,12 @@ def _summarize_file(path: Path) -> dict:
     return payload
 
 
+def _load_json(path: Path) -> dict | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def _build_project_assets_report(project_root: Path) -> dict:
     required_datasets = ("LEVIR-MCI",)
     optional_datasets = ("LEVIR-CC", "SECOND-CC", "Hi-UCD")
@@ -106,6 +112,9 @@ def _build_project_assets_report(project_root: Path) -> dict:
     optional_index_payload = {name: _summarize_file(indexes_root / name) for name in optional_indexes}
     previews = {name: _summarize_file(runs_root / name) for name in required_previews}
     optional_pair_retrieval_payload = {name: _summarize_file(runs_root / name) for name in optional_pair_retrieval_runs}
+    pair_run_dir = runs_root / "dino_pair_retrieval_simple_patch"
+    train_summary = _load_json(pair_run_dir / "train_summary.json")
+    eval_summary = _load_json(pair_run_dir / "eval_summary.json")
     benchmark_curriculum = {
         "stage_1_text_to_pair": {
             "dataset": "LEVIR-CC",
@@ -130,6 +139,10 @@ def _build_project_assets_report(project_root: Path) -> dict:
         "optional_indexes": optional_index_payload,
         "previews": previews,
         "optional_pair_retrieval_runs": optional_pair_retrieval_payload,
+        "pair_retrieval_summary_highlights": {
+            "train_summary": train_summary,
+            "eval_summary": eval_summary,
+        },
         "benchmark_curriculum": benchmark_curriculum,
         "overfit_run": _summarize_dir(overfit_dir),
         "ready": all(

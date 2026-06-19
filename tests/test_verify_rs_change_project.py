@@ -43,14 +43,20 @@ def test_build_report_ready(tmp_path: Path):
         "indexes/preview_samples.json",
         "runs/levir_mci_preview.png",
         "runs/levir_mci_grid.png",
-        "runs/dino_pair_retrieval_simple_patch/train_summary.json",
         "runs/dino_pair_retrieval_simple_patch/eval_metrics.json",
-        "runs/dino_pair_retrieval_simple_patch/eval_summary.json",
     ]:
         path = project_root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("x", encoding="utf-8")
+    (project_root / "runs" / "dino_pair_retrieval_simple_patch" / "train_summary.json").write_text(
+        '{"best_epoch": 3}\n', encoding="utf-8"
+    )
+    (project_root / "runs" / "dino_pair_retrieval_simple_patch" / "eval_summary.json").write_text(
+        '{"overall_highlights": {"transition_recall@5": 1.0}}\n', encoding="utf-8"
+    )
     report = module.build_report(project_root)
     assert report["bootstrap_ready"] is True
     assert report["complete"] is False
     assert report["optional_pair_retrieval_runs"]["dino_pair_retrieval_simple_patch/train_summary.json"]["exists"] is True
+    assert report["pair_retrieval_summary_highlights"]["train_summary"]["best_epoch"] == 3
+    assert report["pair_retrieval_summary_highlights"]["eval_summary"]["overall_highlights"]["transition_recall@5"] == 1.0

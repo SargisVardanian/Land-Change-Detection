@@ -62,6 +62,12 @@ def _summarize_file(path: Path) -> dict:
     return payload
 
 
+def _load_json(path: Path) -> dict | None:
+    if not path.exists() or not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def build_report(project_root: Path) -> dict:
     raw_root = project_root / "datasets" / "raw"
     indexes_root = project_root / "indexes"
@@ -84,6 +90,7 @@ def build_report(project_root: Path) -> dict:
     optional_indexes = {name: _summarize_file(indexes_root / name) for name in OPTIONAL_INDEXES}
     previews = {name: _summarize_file(runs_root / name) for name in REQUIRED_PREVIEWS}
     optional_pair_retrieval_runs = {name: _summarize_file(runs_root / name) for name in OPTIONAL_PAIR_RETRIEVAL_RUN_FILES}
+    pair_run_dir = runs_root / "dino_pair_retrieval_simple_patch"
 
     all_required_datasets = all(item["exists"] for item in datasets.values())
     all_required_indexes = all(item["exists"] for item in indexes.values())
@@ -107,6 +114,10 @@ def build_report(project_root: Path) -> dict:
         "optional_indexes": optional_indexes,
         "previews": previews,
         "optional_pair_retrieval_runs": optional_pair_retrieval_runs,
+        "pair_retrieval_summary_highlights": {
+            "train_summary": _load_json(pair_run_dir / "train_summary.json"),
+            "eval_summary": _load_json(pair_run_dir / "eval_summary.json"),
+        },
         "overfit_run": _summarize_dir(overfit_dir),
         "smoke_report": _summarize_file(smoke_report),
         "root_verification_copy": _summarize_file(verification_copy),
