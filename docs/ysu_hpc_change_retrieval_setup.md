@@ -72,7 +72,7 @@ cd "$RS_PROJECT_ROOT"
 
 mkdir -p datasets/raw
 mkdir -p datasets/processed
-mkdir -p datasets/cache
+mkdir -p .cache/huggingface
 mkdir -p code
 mkdir -p logs
 mkdir -p runs

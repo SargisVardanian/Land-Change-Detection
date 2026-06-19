@@ -32,7 +32,7 @@ if [ -z "${REMOTE_CODE_ROOT}" ]; then
 fi
 
 echo "Creating remote project directories..."
-ssh "${SSH_TARGET}" "mkdir -p '${PROJECT_ROOT}/datasets/raw' '${PROJECT_ROOT}/datasets/processed' '${PROJECT_ROOT}/datasets/cache' '${PROJECT_ROOT}/code' '${PROJECT_ROOT}/logs' '${PROJECT_ROOT}/runs' '${PROJECT_ROOT}/checkpoints/models' '${PROJECT_ROOT}/indexes' '${PROJECT_ROOT}/envs'"
+ssh "${SSH_TARGET}" "mkdir -p '${PROJECT_ROOT}/datasets/raw' '${PROJECT_ROOT}/datasets/processed' '${PROJECT_ROOT}/.cache/huggingface' '${PROJECT_ROOT}/code' '${PROJECT_ROOT}/logs' '${PROJECT_ROOT}/runs' '${PROJECT_ROOT}/models' '${PROJECT_ROOT}/checkpoints/models' '${PROJECT_ROOT}/indexes' '${PROJECT_ROOT}/envs'"
 
 echo "Syncing project code to ${REMOTE_CODE_ROOT}..."
 rsync -avP \

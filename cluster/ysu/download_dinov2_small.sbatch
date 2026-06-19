@@ -14,7 +14,7 @@ export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
 export PROJECT_DIR="$RS_PROJECT_ROOT/code/project"
 export PYTHON="/mnt/weka/shared-cache/miniforge3/bin/python"
 export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
-export HF_HOME="$RS_PROJECT_ROOT/cache/huggingface"
+export HF_HOME="$RS_PROJECT_ROOT/.cache/huggingface"
 export TRANSFORMERS_CACHE="$HF_HOME/transformers"
 export HF_DATASETS_CACHE="$HF_HOME/datasets"
 

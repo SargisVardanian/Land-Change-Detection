@@ -493,7 +493,7 @@ def detect_existing_entry(entry: DatasetRegistryEntry, project_root: Path) -> tu
 
 
 def current_hf_home(project_root: Path) -> Path:
-    return project_root / "cache" / "huggingface"
+    return project_root / ".cache" / "huggingface"
 
 
 def _hf_cache_path(project_root: Path, entry: DatasetRegistryEntry) -> Path | None:

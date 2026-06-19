@@ -4,15 +4,13 @@ import argparse
 import os
 from pathlib import Path
 
-from huggingface_hub import snapshot_download
-
 
 def parse_args() -> argparse.Namespace:
     default_root = Path(os.environ.get("RS_PROJECT_ROOT", f"/mnt/weka/{os.environ.get('USER', 'user')}/rs_change_project"))
     parser = argparse.ArgumentParser(description="Download DINOv2-small into RS project storage.")
     parser.add_argument("--output-dir", type=Path, default=default_root / "models" / "dinov2-small")
     parser.add_argument("--model-id", default="facebook/dinov2-small")
-    parser.add_argument("--cache-dir", type=Path, default=default_root / "cache" / "huggingface")
+    parser.add_argument("--cache-dir", type=Path, default=default_root / ".cache" / "huggingface")
     parser.add_argument("--token", default=os.environ.get("HF_TOKEN", ""))
     parser.add_argument("--max-workers", type=int, default=8)
     return parser.parse_args()
@@ -26,6 +24,8 @@ def _du(path: Path) -> str:
 
 
 def main() -> int:
+    from huggingface_hub import snapshot_download
+
     args = parse_args()
     args.output_dir.parent.mkdir(parents=True, exist_ok=True)
     args.cache_dir.mkdir(parents=True, exist_ok=True)

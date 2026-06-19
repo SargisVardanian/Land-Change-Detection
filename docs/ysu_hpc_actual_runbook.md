@@ -47,7 +47,7 @@ bash cluster/ysu/verify_project_assets.sh
 The planner uses a single Hugging Face cache root at:
 
 ```bash
-$RS_PROJECT_ROOT/cache/huggingface
+$RS_PROJECT_ROOT/.cache/huggingface
 ```
 
 ## Step Order

@@ -17,10 +17,17 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if not args.model_path.exists():
+        raise SystemExit(
+            "DINOv2 model path not found. Download it first with scripts/download_dinov2_small.py "
+            "or use --visual-backbone simple_patch."
+        )
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("CUDA device requested but torch.cuda.is_available() is False.")
     model = AutoModel.from_pretrained(str(args.model_path), local_files_only=True).to(device)
     model.eval()
     dummy = torch.randn(args.batch_size, 3, 224, 224, device=device)
@@ -31,7 +38,7 @@ def main() -> int:
     patches = hidden[:, 1:]
     print(f"torch version: {torch.__version__}")
     print(f"cuda available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
+    if device.type == "cuda":
         print(f"device name: {torch.cuda.get_device_name(device)}")
     print(f"last_hidden_state shape: {tuple(hidden.shape)}")
     print(f"CLS token shape: {tuple(cls.shape)}")
