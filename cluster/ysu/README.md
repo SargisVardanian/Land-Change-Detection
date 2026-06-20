@@ -100,6 +100,29 @@ The Slurm templates default to the `research` partition and keep logs under `/mn
 
 `DINOv2` is optional. It is not required for default tests, LEVIR-MCI bootstrap, or simple baseline training.
 
+## LEVIR-CC Retrieval Baseline
+
+For the first real LEVIR-CC retrieval baseline, use:
+
+```bash
+PYTHONPATH=src /mnt/weka/shared-cache/miniforge3/bin/python \
+  scripts/build_levir_cc_pair_manifest.py \
+  --root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-CC" \
+  --output "$RS_PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl"
+
+bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
+```
+
+This submits, in order:
+
+1. pair-manifest validation
+2. optional real DINOv2 + RemoteCLIP one-batch smoke
+3. overfit on 100 unique pair IDs with all sibling captions
+4. evaluation JSON + eval summary
+5. top-5 qualitative text-query grid for 10 queries
+
 ## MacBook One-Command Push
 
 If your laptop can resolve and reach the cluster directly, you can push the repo and start the first dataset/model bootstrap with:

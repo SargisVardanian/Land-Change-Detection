@@ -1,0 +1,78 @@
+#!/bin/bash
+set -euo pipefail
+
+PRESET="${PRESET:-simple_patch_smoke}"
+RUN_NAME="${RUN_NAME:-$PRESET}"
+PAIR_FEATURE_MODE="${PAIR_FEATURE_MODE:-signed_delta}"
+
+if [ -d "/mnt/weka/$USER" ] && [ -w "/mnt/weka/$USER" ]; then
+  export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
+else
+  export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/data/$USER/rs_change_project}"
+fi
+
+mkdir -p "$RS_PROJECT_ROOT/runs"
+
+echo "Submitting LEVIR-CC baseline for preset=$PRESET run_name=$RUN_NAME"
+
+validate_job_id="$(sbatch --parsable cluster/ysu/validate_levir_cc_pair_manifest.sbatch)"
+echo "validate_levir_cc_pair_manifest: $validate_job_id"
+
+if [ "$PRESET" = "simple_patch_smoke" ]; then
+  smoke_dependency="$validate_job_id"
+else
+  smoke_job_id="$(
+    sbatch --parsable \
+      --dependency=afterok:$validate_job_id \
+      --export=ALL,PAIR_FEATURE_MODE="$PAIR_FEATURE_MODE",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip-rn50}" \
+      cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
+  )"
+  echo "smoke_levir_cc_dino_remoteclip_batch: $smoke_job_id"
+  smoke_dependency="$smoke_job_id"
+fi
+
+overfit_job_id="$(
+  sbatch --parsable \
+    --dependency=afterok:$smoke_dependency \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip-rn50}" \
+    cluster/ysu/overfit_levir_cc_retrieval_100.sbatch
+)"
+echo "overfit_levir_cc_retrieval_100: $overfit_job_id"
+
+eval_job_id="$(
+  sbatch --parsable \
+    --dependency=afterok:$overfit_job_id \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip-rn50}" \
+    cluster/ysu/eval_levir_cc_retrieval.sbatch
+)"
+echo "eval_levir_cc_retrieval: $eval_job_id"
+
+grid_job_id="$(
+  sbatch --parsable \
+    --dependency=afterok:$eval_job_id \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip-rn50}" \
+    cluster/ysu/render_levir_cc_text_query_grid.sbatch
+)"
+echo "render_levir_cc_text_query_grid: $grid_job_id"
+
+cat <<EOF
+
+Run directory:
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100
+
+Watch jobs:
+  squeue -u $USER
+  tail -f logs/*.out
+  tail -f logs/*.err
+
+Expected artifacts:
+  $RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/best.pt
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/metrics_history.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/train_summary.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/eval_metrics.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/eval_summary.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/text_query_top5_grid.png
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/text_query_top5_grid.json
+
+EOF

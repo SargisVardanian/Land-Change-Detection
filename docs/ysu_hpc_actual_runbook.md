@@ -93,6 +93,57 @@ sbatch cluster/ysu/smoke_dinov2_local.sbatch
 
 F. Only then train with `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only`.
 
+## LEVIR-CC Baseline Order
+
+Build the pair manifest first if it is not already present:
+
+```bash
+PYTHONPATH=src /mnt/weka/shared-cache/miniforge3/bin/python \
+  scripts/build_levir_cc_pair_manifest.py \
+  --root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-CC" \
+  --output "$RS_PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl"
+```
+
+Validate the manifest:
+
+```bash
+sbatch cluster/ysu/validate_levir_cc_pair_manifest.sbatch
+```
+
+Optional real DINOv2 + RemoteCLIP one-batch smoke:
+
+```bash
+sbatch --export=ALL,PAIR_FEATURE_MODE=signed_delta,DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base",REMOTECLIP_MODEL_PATH="$RS_PROJECT_ROOT/models/remoteclip-rn50" \
+  cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
+```
+
+Submit the full LEVIR-CC baseline chain with Slurm dependencies:
+
+```bash
+bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
+```
+
+For the DINOv2 presets, also export model paths if they differ from defaults:
+
+```bash
+export DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base"
+export REMOTECLIP_MODEL_PATH="$RS_PROJECT_ROOT/models/remoteclip-rn50"
+```
+
+Each run writes:
+
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/best.pt`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/metrics_history.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/train_summary.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/eval_metrics.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/eval_summary.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/text_query_top5_grid.png`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/text_query_top5_grid.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_dino_remoteclip_smoke_report.json` for the explicit smoke step
+
 ## Baseline Jobs
 
 ```bash
