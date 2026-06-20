@@ -60,6 +60,49 @@ def _load_caption_rows(path: Path) -> list[dict]:
     raise ValueError(f"Unsupported caption JSON format: {path}")
 
 
+def _discover_levir_cc_pairs(root: Path) -> list[dict[str, str]]:
+    def infer_split(path: Path) -> str:
+        normalized = [part.lower() for part in path.parts]
+        if "train" in normalized:
+            return "train"
+        if "val" in normalized or "valid" in normalized or "validation" in normalized:
+            return "val"
+        if "test" in normalized:
+            return "test"
+        return "unknown"
+
+    groups: dict[str, dict[str, str]] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        lowered = path.stem.lower()
+        key = lowered.rsplit("_", 1)[0] if lowered.endswith(("_before", "_after", "_a", "_b", "_t1", "_t2")) else lowered
+        row = groups.setdefault(key, {})
+        full = str(path)
+        if lowered.endswith(("_before", "_a", "_t1")):
+            row["before_path"] = full
+        elif lowered.endswith(("_after", "_b", "_t2")):
+            row["after_path"] = full
+    rows = []
+    for key, value in groups.items():
+        if {"before_path", "after_path"} <= set(value):
+            before_path = Path(value["before_path"])
+            after_path = Path(value["after_path"])
+            split = infer_split(before_path)
+            other_split = infer_split(after_path)
+            if split != other_split and other_split != "unknown":
+                raise SystemExit(f"Split mismatch for {key}: before={split}, after={other_split}")
+            rows.append(
+                {
+                    "sample_id": key,
+                    "before_path": value["before_path"],
+                    "after_path": value["after_path"],
+                    "split": split if split != "unknown" else other_split,
+                }
+            )
+    return rows
+
+
 def _build_text_manifest(captions_json: Path, output_path: Path, feature_dim: int) -> int:
     rows = _load_caption_rows(captions_json)
     grouped: dict[str, list[str]] = {}
@@ -92,6 +135,58 @@ def _build_text_manifest(captions_json: Path, output_path: Path, feature_dim: in
         )
     _write_jsonl(output_path, output_rows)
     return len(output_rows)
+
+
+def _build_pair_manifest(root: Path, output_path: Path) -> int:
+    samples = _discover_levir_cc_pairs(root)
+    caption_json = _find_caption_json(root)
+    caption_rows = _load_caption_rows(caption_json) if caption_json is not None else []
+    caption_map: dict[str, list[dict[str, str]]] = {}
+    for row in caption_rows:
+        if not isinstance(row, dict):
+            continue
+        key = str(row.get("id") or row.get("image_id") or row.get("sample_id") or row.get("filename") or "").lower()
+        if not key:
+            continue
+        caption_map.setdefault(key, []).append(
+            {
+                "caption": str(row.get("caption") or row.get("text") or row.get("change_caption") or ""),
+                "transition_label": str(row.get("transition_label") or row.get("class") or row.get("change_type") or key),
+            }
+        )
+    rows = []
+    split_to_pair_ids: dict[str, set[str]] = {}
+    for sample in samples:
+        pair_id = str(sample["sample_id"])
+        split = str(sample.get("split") or "unknown")
+        split_to_pair_ids.setdefault(split, set()).add(pair_id)
+        caption_entries = caption_map.get(pair_id.lower()) or [{"caption": "", "transition_label": pair_id}]
+        for caption_index, caption_entry in enumerate(caption_entries):
+            row_sample_id = pair_id if len(caption_entries) == 1 else f"{pair_id}#cap{caption_index:03d}"
+            rows.append(
+                {
+                    "sample_id": row_sample_id,
+                    "pair_id": pair_id,
+                    "dataset_name": "LEVIR-CC",
+                    "before_path": sample["before_path"],
+                    "after_path": sample["after_path"],
+                    "caption": caption_entry["caption"],
+                    "split": split,
+                    "metadata": {
+                        "source_root": str(root),
+                        "transition_label": caption_entry["transition_label"],
+                        "retrieval_role": "text_to_pair_retrieval",
+                        "curriculum_stage": "stage_1_text_to_pair",
+                    },
+                }
+            )
+    non_unknown = {split: pair_ids for split, pair_ids in split_to_pair_ids.items() if split != "unknown"}
+    pair_ids = set().union(*non_unknown.values()) if non_unknown else set()
+    pair_id_count = sum(len(pair_ids_for_split) for pair_ids_for_split in non_unknown.values())
+    if pair_id_count != len(pair_ids):
+        raise SystemExit("Detected LEVIR-CC pair_id leakage across train/val/test splits.")
+    _write_jsonl(output_path, rows)
+    return len(rows)
 
 
 def _write_preview_manifest(project_root: Path, levir_samples: list[dict], second_samples: list[dict]) -> Path:
@@ -140,6 +235,8 @@ def main() -> int:
     if captions_json is not None and captions_json.exists():
         rows = _build_text_manifest(captions_json, indexes_root / "levir_cc_text_manifest.jsonl", args.feature_dim)
         print(f"Built LEVIR-CC text retrieval manifest: {rows} rows")
+        pair_rows = _build_pair_manifest(levir_cc_root, indexes_root / "levir_cc_pair_manifest.jsonl")
+        print(f"Built LEVIR-CC pair retrieval manifest: {pair_rows} rows")
     else:
         print("LEVIR-CC text manifest skipped: captions JSON not found.")
 

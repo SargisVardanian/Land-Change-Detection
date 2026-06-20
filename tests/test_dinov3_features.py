@@ -1,5 +1,9 @@
 from pathlib import Path
 
+import pytest
+
+timm = pytest.importorskip("timm")
+
 from land_change_detection.dinov3_features import (
     DINO_V3_FACEBOOK_VITL16_SAT,
     DINO_V3_VITL16_SAT,

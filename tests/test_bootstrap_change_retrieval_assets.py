@@ -32,10 +32,17 @@ def test_bootstrap_change_retrieval_assets(tmp_path: Path):
     _write_mask(raw / "SECOND-CC" / "val" / "tile42_mask.png")
 
     (raw / "LEVIR-CC").mkdir(parents=True, exist_ok=True)
+    _write_rgb(raw / "LEVIR-CC" / "train" / "a_before.png", (9, 9, 9))
+    _write_rgb(raw / "LEVIR-CC" / "train" / "a_after.png", (10, 10, 10))
+    _write_rgb(raw / "LEVIR-CC" / "train" / "b_before.png", (11, 11, 11))
+    _write_rgb(raw / "LEVIR-CC" / "train" / "b_after.png", (12, 12, 12))
+    _write_rgb(raw / "LEVIR-CC" / "train" / "c_before.png", (13, 13, 13))
+    _write_rgb(raw / "LEVIR-CC" / "train" / "c_after.png", (14, 14, 14))
     (raw / "LEVIR-CC" / "captions.json").write_text(
         json.dumps(
             [
                 {"id": "a", "caption": "new building appears", "transition_label": "cropland->built_up"},
+                {"id": "a", "caption": "urban expansion is visible", "transition_label": "cropland->built_up"},
                 {"id": "b", "caption": "another building appears", "transition_label": "cropland->built_up"},
                 {"id": "c", "caption": "water expands", "transition_label": "dryland->water"},
             ]
@@ -63,12 +70,19 @@ def test_bootstrap_change_retrieval_assets(tmp_path: Path):
     levir_index = project_root / "indexes" / "levir_mci_samples.jsonl"
     second_index = project_root / "indexes" / "second_cc_samples.jsonl"
     text_manifest = project_root / "indexes" / "levir_cc_text_manifest.jsonl"
+    pair_manifest = project_root / "indexes" / "levir_cc_pair_manifest.jsonl"
     preview_manifest = project_root / "indexes" / "preview_samples.json"
 
     assert levir_index.exists()
     assert second_index.exists()
     assert text_manifest.exists()
+    assert pair_manifest.exists()
     assert preview_manifest.exists()
+    pair_rows = [json.loads(line) for line in pair_manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(pair_rows) == 4
+    assert pair_rows[0]["pair_id"] == "a"
+    assert pair_rows[0]["sample_id"].startswith("a")
+    assert sum(1 for row in pair_rows if row["pair_id"] == "a") == 2
 
     preview = json.loads(preview_manifest.read_text(encoding="utf-8"))
     assert preview["LEVIR-MCI"]["sample_id"] == "sample1"

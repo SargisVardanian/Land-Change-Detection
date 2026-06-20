@@ -56,12 +56,19 @@ def _summarize_samples(samples: list[RetrievalSample]) -> dict[str, object]:
     transition_counts = Counter(sample.dominant_transition for sample in samples if sample.dominant_transition)
     pair_samples = [sample for sample in samples if sample.transition_histogram]
     caption_samples = [sample for sample in samples if sample.caption]
+    split_pair_counts = {
+        split: len({sample.pair_id for sample in samples if sample.split == split})
+        for split in sorted({sample.split for sample in samples})
+    }
     return {
         "num_samples": len(samples),
+        "num_unique_pairs": len({sample.pair_id for sample in samples}),
+        "num_caption_rows": len(caption_samples),
         "num_pair_samples": len(pair_samples),
         "num_caption_samples": len(caption_samples),
         "source_counts": dict(source_counts),
         "dominant_transition_counts": dict(transition_counts),
+        "split_pair_counts": split_pair_counts,
     }
 
 
@@ -83,6 +90,9 @@ def main() -> int:
     args = parse_args()
     args, preset_payload = apply_preset(args)
     samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
+    from scripts.train_dino_pair_retrieval import validate_pair_id_split_integrity
+
+    validate_pair_id_split_integrity(samples)
     device = choose_device(args.device)
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
@@ -131,6 +141,8 @@ def main() -> int:
             "levir_manifest_path": str(args.levir_manifest) if args.levir_manifest else None,
             "pair_manifest_paths": [str(path) for path in args.pair_manifest],
             "num_samples": len(samples),
+            "num_unique_pairs": len({sample.pair_id for sample in samples}),
+            "num_caption_rows": len(caption_only_samples),
             "num_pair_samples": len(pair_only_samples),
             "num_caption_samples": len(caption_only_samples),
         },

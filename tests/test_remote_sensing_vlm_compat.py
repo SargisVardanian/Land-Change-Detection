@@ -1,7 +1,9 @@
 import os
 
-import transformers
-from transformers import LlamaTokenizer
+import pytest
+
+transformers = pytest.importorskip("transformers")
+LlamaTokenizer = pytest.importorskip("transformers").LlamaTokenizer
 
 from land_change_detection.remote_sensing_vlm import EARTHDIAL_RGB_DIR, _ensure_earthdial_import_path, _patch_transformers_compat
 

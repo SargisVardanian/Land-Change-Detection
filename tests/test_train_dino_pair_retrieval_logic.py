@@ -16,6 +16,7 @@ from scripts.train_dino_pair_retrieval import (
     RetrievalSample,
     _build_subset_dataloader,
     compute_retrieval_metrics,
+    validate_pair_id_split_integrity,
 )
 
 
@@ -23,6 +24,8 @@ def test_positive_aware_batch_sampler_co_batches_positive_examples():
     samples = [
         RetrievalSample(
             sample_id="pair_a",
+            pair_id="pair_a",
+            split="unknown",
             before_path="a_before.png",
             after_path="a_after.png",
             caption="caption one",
@@ -32,7 +35,9 @@ def test_positive_aware_batch_sampler_co_batches_positive_examples():
             source="levir",
         ),
         RetrievalSample(
-            sample_id="pair_a",
+            sample_id="pair_a#cap001",
+            pair_id="pair_a",
+            split="unknown",
             before_path="a_before.png",
             after_path="a_after.png",
             caption="caption two",
@@ -43,6 +48,8 @@ def test_positive_aware_batch_sampler_co_batches_positive_examples():
         ),
         RetrievalSample(
             sample_id="pair_b",
+            pair_id="pair_b",
+            split="unknown",
             before_path="b_before.png",
             after_path="b_after.png",
             caption=None,
@@ -53,6 +60,8 @@ def test_positive_aware_batch_sampler_co_batches_positive_examples():
         ),
         RetrievalSample(
             sample_id="pair_c",
+            pair_id="pair_c",
+            split="unknown",
             before_path="c_before.png",
             after_path="c_after.png",
             caption=None,
@@ -129,6 +138,61 @@ def test_compute_retrieval_metrics_uses_pair_identity_for_text_queries():
     assert metrics["median_rank"] == 1.0
 
 
+def test_compute_retrieval_metrics_measures_directionality_against_reversed_and_opposite():
+    change_embeddings = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+    reversed_embeddings = torch.tensor([[0.0, 1.0], [1.0, 0.0]], dtype=torch.float32)
+    text_embeddings = torch.tensor([[1.0, 0.0]], dtype=torch.float32)
+
+    metrics = compute_retrieval_metrics(
+        change_embeddings,
+        ["pair_a", "pair_b"],
+        ["urban_growth", "water_expansion"],
+        [None, None],
+        text_embeddings,
+        ["pair_a"],
+        ["urban_growth"],
+        reversed_embeddings,
+    )
+
+    assert metrics["directionality_accuracy"] == 1.0
+
+
+def test_validate_pair_id_split_integrity_rejects_leakage():
+    samples = [
+        RetrievalSample(
+            sample_id="pair_a#cap000",
+            pair_id="pair_a",
+            split="train",
+            before_path="a_before.png",
+            after_path="a_after.png",
+            caption="caption one",
+            transition_label="urban_growth",
+            dominant_transition="urban_growth",
+            transition_histogram=None,
+            source="levir",
+        ),
+        RetrievalSample(
+            sample_id="pair_a#cap001",
+            pair_id="pair_a",
+            split="val",
+            before_path="a_before.png",
+            after_path="a_after.png",
+            caption="caption two",
+            transition_label="urban_growth",
+            dominant_transition="urban_growth",
+            transition_histogram=None,
+            source="levir",
+        ),
+    ]
+
+    try:
+        validate_pair_id_split_integrity(samples)
+    except ValueError as exc:
+        assert "pair_id leakage" in str(exc)
+    else:
+        raise AssertionError("Expected pair_id leakage validation to fail.")
+
+
 def test_alternating_task_loader_keeps_caption_and_transition_batches_separate():
     temp_root = Path(__file__).resolve().parent / ".tmp_train_logic"
     temp_root.mkdir(parents=True, exist_ok=True)
@@ -137,6 +201,8 @@ def test_alternating_task_loader_keeps_caption_and_transition_batches_separate()
     samples = [
         RetrievalSample(
             sample_id="pair_a",
+            pair_id="pair_a",
+            split="unknown",
             before_path=str(temp_root / "a_before.png"),
             after_path=str(temp_root / "a_after.png"),
             caption="caption one",
@@ -146,7 +212,9 @@ def test_alternating_task_loader_keeps_caption_and_transition_batches_separate()
             source="levir",
         ),
         RetrievalSample(
-            sample_id="pair_a",
+            sample_id="pair_a#cap001",
+            pair_id="pair_a",
+            split="unknown",
             before_path=str(temp_root / "a_before.png"),
             after_path=str(temp_root / "a_after.png"),
             caption="caption two",
@@ -157,6 +225,8 @@ def test_alternating_task_loader_keeps_caption_and_transition_batches_separate()
         ),
         RetrievalSample(
             sample_id="pair_b",
+            pair_id="pair_b",
+            split="unknown",
             before_path=str(temp_root / "b_before.png"),
             after_path=str(temp_root / "b_after.png"),
             caption=None,
@@ -167,6 +237,8 @@ def test_alternating_task_loader_keeps_caption_and_transition_batches_separate()
         ),
         RetrievalSample(
             sample_id="pair_c",
+            pair_id="pair_c",
+            split="unknown",
             before_path=str(temp_root / "c_before.png"),
             after_path=str(temp_root / "c_after.png"),
             caption=None,

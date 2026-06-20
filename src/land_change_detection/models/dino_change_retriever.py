@@ -172,8 +172,6 @@ class DINOChangeRetriever(nn.Module):
 
         self._text_encoder: nn.Module | None = None
         self._text_encoder_dim: int | None = None
-        self.before_token_type = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
-        self.after_token_type = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
         self.temporal_order_embedding = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
         self.change_cls = nn.Parameter(torch.zeros(1, 1, self.config.hidden_dim))
         pair_feature_dim = {
@@ -246,8 +244,7 @@ class DINOChangeRetriever(nn.Module):
                 ],
                 dim=-1,
             )
-        tokens = self.input_projection(fused)
-        tokens = tokens + self.before_token_type + self.after_token_type + self.temporal_order_embedding
+        tokens = self.input_projection(fused) + self.temporal_order_embedding
         change_cls = self.change_cls.expand(before.shape[0], -1, -1)
         encoded = self.transformer(torch.cat([change_cls, tokens], dim=1))
         z_change = F.normalize(encoded[:, 0], dim=-1)

@@ -20,6 +20,7 @@ def _score(row: dict[str, Any]) -> float:
         + eval_metrics.get("mAP", 0.0)
         + eval_metrics.get("transition_recall@5", 0.0)
         + eval_metrics.get("transition_top1_hit_rate", 0.0)
+        + eval_metrics.get("directionality_accuracy", 0.0)
     )
 
 
@@ -36,6 +37,7 @@ def _highlights(metrics: dict[str, Any]) -> dict[str, Any]:
         "transition_recall@10": metrics.get("transition_recall@10"),
         "transition_MRR": metrics.get("transition_MRR"),
         "transition_top1_hit_rate": metrics.get("transition_top1_hit_rate"),
+        "directionality_accuracy": metrics.get("directionality_accuracy"),
         "mean_transition_similarity_top5": metrics.get("mean_transition_similarity_top5"),
         "pair_sample_fraction": metrics.get("pair_sample_fraction"),
     }
