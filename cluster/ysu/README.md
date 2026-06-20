@@ -105,6 +105,15 @@ The Slurm templates default to the `research` partition and keep logs under `/mn
 For the first real LEVIR-CC retrieval baseline, use:
 
 ```bash
+bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh
+
+PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
+```
+
+If you want the explicit step-by-step variant instead, use:
+
+```bash
 PYTHONPATH=src /mnt/weka/shared-cache/miniforge3/bin/python \
   scripts/build_levir_cc_pair_manifest.py \
   --root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-CC" \

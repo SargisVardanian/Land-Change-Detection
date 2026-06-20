@@ -95,6 +95,22 @@ F. Only then train with `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJE
 
 ## LEVIR-CC Baseline Order
 
+Fastest end-to-end bootstrap for the first `simple_patch_smoke` run:
+
+```bash
+bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh
+```
+
+That will:
+
+1. set up the environment
+2. run the storage planner
+3. download the baseline bundle
+4. bootstrap indexes/assets
+5. verify project assets
+6. build `levir_cc_pair_manifest.jsonl`
+7. submit the full `simple_patch_smoke` LEVIR-CC chain
+
 Build the pair manifest first if it is not already present:
 
 ```bash
