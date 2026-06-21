@@ -22,7 +22,7 @@ OUTPUT_PATH="${OUTPUT_PATH:-${PROJECT_ROOT}/runs/cluster_smoke_report.json}"
 
 cd "${CODE_ROOT}"
 mkdir -p logs "$RS_PROJECT_ROOT/logs" "$RS_PROJECT_ROOT/runs"
-source ~/.bashrc
+source "$(dirname "$0")/common_env.sh"
 
 if command -v conda >/dev/null 2>&1; then
     conda activate rschange

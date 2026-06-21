@@ -14,7 +14,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-/data/$USER/rs_change_project/code/project}"
 DATA_ROOT="${DATA_ROOT:-/data/$USER/rs_change_project/datasets/raw}"
 
 cd "${PROJECT_ROOT}"
-source ~/.bashrc
+source "$(dirname "$0")/common_env.sh"
 
 if command -v conda >/dev/null 2>&1; then
     conda activate rschange

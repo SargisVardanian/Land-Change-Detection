@@ -6,7 +6,7 @@ CODE_ROOT="${CODE_ROOT:-${PROJECT_ROOT}/code/project}"
 OUTPUT_PATH="${OUTPUT_PATH:-${PROJECT_ROOT}/artifacts/models/semantic/Prithvi-EO-2.0-300M-TL/terratorch_config.yaml}"
 
 cd "${CODE_ROOT}"
-source ~/.bashrc
+source "$(dirname "$0")/common_env.sh"
 
 if command -v conda >/dev/null 2>&1; then
     conda activate rschange

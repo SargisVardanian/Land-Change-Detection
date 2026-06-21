@@ -15,7 +15,7 @@ INPUT_MANIFEST="${INPUT_MANIFEST:-${PROJECT_ROOT}/indexes/semantic/second_cc_tra
 OUTPUT_MANIFEST="${OUTPUT_MANIFEST:-${PROJECT_ROOT}/indexes/semantic/second_cc_prithvi_manifest.jsonl}"
 
 cd "${CODE_ROOT}"
-source ~/.bashrc
+source "$(dirname "$0")/common_env.sh"
 
 if command -v conda >/dev/null 2>&1; then
     conda activate rschange

@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import tarfile
+import zipfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePosixPath
+from typing import Any, Iterable
 
 from PIL import Image, UnidentifiedImageError
 
@@ -14,9 +16,12 @@ from land_change_detection.run_metadata import file_sha256
 
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+ARCHIVE_EXTENSIONS = (".zip", ".tar", ".tar.gz", ".tgz")
 BEFORE_HINTS = {"a", "t1", "before"}
 AFTER_HINTS = {"b", "t2", "after"}
 SPLIT_ORDER = ("train", "val", "test")
+EXTRACTION_MANIFEST_NAME = "levir_cc_extraction_manifest.json"
+EXTRACTION_SENTINEL_NAME = ".extraction_complete.json"
 
 
 @dataclass(frozen=True)
@@ -30,9 +35,17 @@ class PairRecord:
     captions: tuple[dict[str, str], ...]
 
 
+@dataclass(frozen=True)
+class ArchiveMember:
+    archive_path: Path
+    archive_type: str
+    member_name: str
+    size: int
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Deterministically preprocess LEVIR-CC into pair-safe retrieval manifests.")
-    parser.add_argument("--root", type=Path, required=True)
+    parser = argparse.ArgumentParser(description="Archive-aware deterministic LEVIR-CC preprocessing.")
+    parser.add_argument("--root", type=Path, required=True, help="Raw LEVIR-CC root under datasets/raw/LEVIR-CC")
     parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--verify-only", action="store_true")
@@ -114,9 +127,7 @@ def _load_caption_rows(path: Path) -> list[dict[str, Any]]:
 def _find_caption_json(root: Path) -> Path:
     candidates = sorted(root.rglob("*.json"))
     ranked = [
-        path
-        for path in candidates
-        if any(token in path.name.lower() for token in ("caption", "change", "label", "levir"))
+        path for path in candidates if any(token in path.name.lower() for token in ("caption", "change", "label", "levir"))
     ]
     chosen = ranked[0] if ranked else (candidates[0] if candidates else None)
     if chosen is None:
@@ -129,9 +140,7 @@ def _caption_key_variants(raw: str) -> set[str]:
     if not value:
         return set()
     normalized = value.replace("\\", "/")
-    candidates = {normalized.lower()}
-    candidates.add(Path(normalized).stem.lower())
-    candidates.add(_strip_known_suffixes(Path(normalized).stem).lower())
+    candidates = {normalized.lower(), Path(normalized).stem.lower(), _strip_known_suffixes(Path(normalized).stem).lower()}
     return {candidate for candidate in candidates if candidate}
 
 
@@ -141,17 +150,209 @@ def _build_caption_map(path: Path) -> dict[str, list[dict[str, str]]]:
         keys = set()
         for field in ("id", "image_id", "sample_id", "filename", "image", "name"):
             keys |= _caption_key_variants(str(row.get(field) or ""))
-        caption = str(row.get("caption") or row.get("text") or row.get("change_caption") or "").strip()
-        transition_label = str(row.get("transition_label") or row.get("class") or row.get("change_type") or "").strip()
+        caption = str(row.get("caption") or row.get("text") or row.get("change_caption") or "")
+        transition_label = str(row.get("transition_label") or row.get("class") or row.get("change_type") or "")
         split = str(row.get("split") or row.get("partition") or row.get("subset") or "").strip().lower()
-        payload = {
-            "caption": caption,
-            "transition_label": transition_label,
-            "split": split if split in {"train", "val", "test"} else "",
-        }
+        payload = {"caption": caption, "transition_label": transition_label, "split": split if split in {"train", "val", "test"} else ""}
         for key in keys:
             mapping[key].append(payload)
     return mapping
+
+
+def _detect_archives(root: Path) -> list[Path]:
+    archives: list[Path] = []
+    for path in sorted(root.iterdir()):
+        if not path.is_file():
+            continue
+        name = path.name.lower()
+        if name.endswith(ARCHIVE_EXTENSIONS):
+            archives.append(path)
+    return archives
+
+
+def _member_is_safe(member_name: str) -> bool:
+    member = PurePosixPath(member_name)
+    if member.is_absolute():
+        return False
+    parts = [part for part in member.parts if part not in ("", ".")]
+    return all(part != ".." for part in parts)
+
+
+def _zip_members(path: Path) -> list[ArchiveMember]:
+    with zipfile.ZipFile(path) as archive:
+        return [
+            ArchiveMember(path, "zip", info.filename, 0 if info.is_dir() else int(info.file_size))
+            for info in archive.infolist()
+        ]
+
+
+def _tar_members(path: Path) -> list[ArchiveMember]:
+    mode = "r:gz" if path.name.lower().endswith((".tar.gz", ".tgz")) else "r:"
+    with tarfile.open(path, mode) as archive:
+        members = []
+        for member in archive.getmembers():
+            if member.isdir():
+                size = 0
+            else:
+                size = int(member.size)
+            members.append(ArchiveMember(path, "tar", member.name, size))
+        return members
+
+
+def _inspect_archives(archives: list[Path]) -> tuple[list[ArchiveMember], list[str], dict[str, Any]]:
+    members: list[ArchiveMember] = []
+    issues: list[str] = []
+    sha_payload: list[dict[str, Any]] = []
+    for archive in archives:
+        if archive.name.lower().endswith(".zip"):
+            archive_members = _zip_members(archive)
+            archive_type = "zip"
+        else:
+            archive_members = _tar_members(archive)
+            archive_type = "tar"
+        for member in archive_members:
+            if not _member_is_safe(member.member_name):
+                issues.append(f"path_traversal:{archive.name}:{member.member_name}")
+        members.extend(archive_members)
+        sha_payload.append(
+            {
+                "path": str(archive),
+                "archive_type": archive_type,
+                "sha256": file_sha256(archive),
+                "bytes": archive.stat().st_size,
+                "member_count": len(archive_members),
+            }
+        )
+    summary = {
+        "archive_count": len(archives),
+        "member_count": len(members),
+        "raw_archives": sha_payload,
+    }
+    return members, issues, summary
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _safe_extract_zip(path: Path, destination: Path) -> tuple[int, int]:
+    file_count = 0
+    total_bytes = 0
+    with zipfile.ZipFile(path) as archive:
+        for info in archive.infolist():
+            if not _member_is_safe(info.filename):
+                raise ValueError(f"Archive path traversal detected: {path.name}:{info.filename}")
+            member_path = destination / PurePosixPath(info.filename)
+            if info.is_dir():
+                member_path.mkdir(parents=True, exist_ok=True)
+                continue
+            member_path.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as source, member_path.open("wb") as target:
+                data = source.read()
+                target.write(data)
+            file_count += 1
+            total_bytes += len(data)
+    return file_count, total_bytes
+
+
+def _safe_extract_tar(path: Path, destination: Path) -> tuple[int, int]:
+    file_count = 0
+    total_bytes = 0
+    mode = "r:gz" if path.name.lower().endswith((".tar.gz", ".tgz")) else "r:"
+    with tarfile.open(path, mode) as archive:
+        for member in archive.getmembers():
+            if not _member_is_safe(member.name):
+                raise ValueError(f"Archive path traversal detected: {path.name}:{member.name}")
+            member_path = destination / PurePosixPath(member.name)
+            if member.isdir():
+                member_path.mkdir(parents=True, exist_ok=True)
+                continue
+            extracted = archive.extractfile(member)
+            if extracted is None:
+                continue
+            member_path.parent.mkdir(parents=True, exist_ok=True)
+            data = extracted.read()
+            with member_path.open("wb") as target:
+                target.write(data)
+            file_count += 1
+            total_bytes += len(data)
+    return file_count, total_bytes
+
+
+def _collect_tree_stats(root: Path) -> tuple[int, int]:
+    files = [path for path in root.rglob("*") if path.is_file()]
+    return len(files), sum(path.stat().st_size for path in files)
+
+
+def _ensure_extracted(raw_root: Path, processed_root: Path, verify_only: bool, force: bool) -> dict[str, Any]:
+    archives = _detect_archives(raw_root)
+    manifest_path = processed_root / EXTRACTION_MANIFEST_NAME
+    sentinel_path = processed_root / EXTRACTION_SENTINEL_NAME
+    extracted_layout_root = processed_root / "extracted"
+    members, issues, archive_summary = _inspect_archives(archives)
+    if issues:
+        raise ValueError("; ".join(issues))
+
+    expected_manifest = {
+        "raw_root": str(raw_root.resolve()),
+        "processed_root": str(processed_root.resolve()),
+        "raw_archives": archive_summary["raw_archives"],
+        "archive_member_count": archive_summary["member_count"],
+    }
+    current_manifest = _load_json(manifest_path)
+    extraction_complete = (
+        current_manifest is not None
+        and all(current_manifest.get(key) == value for key, value in expected_manifest.items())
+        and sentinel_path.exists()
+        and extracted_layout_root.exists()
+    )
+    if verify_only:
+        if archives and not extraction_complete:
+            raise ValueError("Archive extraction has not been completed yet for verify-only mode.")
+        if not archives and not raw_root.exists():
+            raise ValueError(f"Raw root does not exist: {raw_root}")
+    if archives and (force or not extraction_complete):
+        if verify_only:
+            raise ValueError("verify-only refuses to perform archive extraction.")
+        processed_root.mkdir(parents=True, exist_ok=True)
+        extracted_layout_root.mkdir(parents=True, exist_ok=True)
+        extracted_files_before, _ = _collect_tree_stats(extracted_layout_root)
+        if extracted_files_before and force:
+            for item in sorted(extracted_layout_root.rglob("*"), reverse=True):
+                if item.is_file():
+                    item.unlink()
+                elif item.is_dir():
+                    item.rmdir()
+            extracted_layout_root.mkdir(parents=True, exist_ok=True)
+        extracted_file_count = 0
+        extracted_byte_size = 0
+        for archive in archives:
+            if archive.name.lower().endswith(".zip"):
+                count, byte_size = _safe_extract_zip(archive, extracted_layout_root)
+            else:
+                count, byte_size = _safe_extract_tar(archive, extracted_layout_root)
+            extracted_file_count += count
+            extracted_byte_size += byte_size
+        manifest_payload = dict(expected_manifest)
+        manifest_payload["extracted_file_count"] = extracted_file_count
+        manifest_payload["extracted_byte_size"] = extracted_byte_size
+        manifest_path.write_text(json.dumps(manifest_payload, indent=2) + "\n", encoding="utf-8")
+        sentinel_path.write_text(json.dumps({"complete": True, "manifest_sha256": file_sha256(manifest_path)}, indent=2) + "\n", encoding="utf-8")
+    active_root = extracted_layout_root if archives else raw_root
+    extracted_file_count, extracted_byte_size = _collect_tree_stats(active_root) if active_root.exists() else (0, 0)
+    return {
+        **archive_summary,
+        "used_archives": bool(archives),
+        "processed_root": str(processed_root.resolve()),
+        "active_data_root": str(active_root.resolve()),
+        "extraction_manifest": str(manifest_path.resolve()) if manifest_path.exists() else None,
+        "extraction_sentinel": str(sentinel_path.resolve()) if sentinel_path.exists() else None,
+        "extracted_file_count": extracted_file_count,
+        "extracted_byte_size": extracted_byte_size,
+        "active_root": active_root,
+    }
 
 
 def _discover_image_pairs(root: Path) -> tuple[dict[str, dict[str, Path]], list[str]]:
@@ -190,44 +391,45 @@ def _sample_id(pair_id: str, index: int, total: int) -> str:
     return pair_id if total == 1 else f"{pair_id}#cap{index:03d}"
 
 
-def _hash_outputs(paths: list[Path]) -> dict[str, str]:
-    return {path.name: file_sha256(path) for path in paths if path.exists()}
-
-
 def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows) + "\n", encoding="utf-8")
 
 
+def _hash_outputs(paths: Iterable[Path]) -> dict[str, str]:
+    return {path.name: file_sha256(path) for path in paths if path.exists()}
+
+
 def _write_text_report(path: Path, report: dict[str, Any]) -> None:
-    histogram = report.get("captions_per_pair_histogram", {})
     lines = [
-        f"root: {report['root']}",
+        f"raw_root: {report['raw_root']}",
+        f"active_data_root: {report['active_data_root']}",
         f"caption_json: {report['caption_json']}",
-        f"unique_pair_count: {report.get('unique_pair_count', 0)}",
-        f"caption_row_count: {report.get('caption_row_count', 0)}",
-        f"dataset_bytes: {report['dataset_bytes']}",
-        f"pairs_by_split: {json.dumps(report.get('pairs_by_split', {}), sort_keys=True)}",
-        f"captions_by_split: {json.dumps(report.get('captions_by_split', {}), sort_keys=True)}",
-        f"captions_per_pair_histogram: {json.dumps(histogram, sort_keys=True)}",
+        f"used_archives: {report['used_archives']}",
+        f"unique_pair_count: {report['unique_pair_count']}",
+        f"caption_row_count: {report['caption_row_count']}",
+        f"pairs_by_split: {json.dumps(report['pairs_by_split'], sort_keys=True)}",
+        f"captions_by_split: {json.dumps(report['captions_by_split'], sort_keys=True)}",
+        f"captions_per_pair_histogram: {json.dumps(report['captions_per_pair_histogram'], sort_keys=True)}",
+        f"raw_archive_sha256: {json.dumps(report['raw_archive_sha256'], sort_keys=True)}",
+        f"extracted_file_count: {report['extracted_file_count']}",
+        f"extracted_byte_size: {report['extracted_byte_size']}",
         f"missing_files: {len(report['missing_files'])}",
         f"corrupt_files: {len(report['corrupt_files'])}",
         f"dimension_mismatches: {len(report['dimension_mismatches'])}",
         f"split_leakage: {len(report['split_leakage'])}",
-        f"manifest_hashes: {json.dumps(report.get('manifest_hashes', {}), sort_keys=True)}",
+        f"manifest_hashes: {json.dumps(report['manifest_hashes'], sort_keys=True)}",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _collect_dataset_bytes(root: Path) -> int:
-    return sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
-
-
-def _build_records(root: Path, max_pairs: int | None) -> tuple[list[PairRecord], dict[str, Any]]:
-    caption_json = _find_caption_json(root)
+def _build_records(data_root: Path, max_pairs: int | None) -> tuple[list[PairRecord], dict[str, Any]]:
+    caption_json = _find_caption_json(data_root)
     caption_map = _build_caption_map(caption_json)
-    discovered, discovery_issues = _discover_image_pairs(root)
+    discovered, discovery_issues = _discover_image_pairs(data_root)
+    if not discovered:
+        raise ValueError(f"Could not map extracted layout under {data_root} to T1/T2 image pairs.")
     pair_ids = sorted(discovered)
     if max_pairs is not None:
         pair_ids = pair_ids[: max(0, max_pairs)]
@@ -246,9 +448,6 @@ def _build_records(root: Path, max_pairs: int | None) -> tuple[list[PairRecord],
             continue
         before_path = row["before"]
         after_path = row["after"]
-        if not before_path.exists() or not after_path.exists():
-            missing_files.append(f"missing_image:{pair_id}")
-            continue
         try:
             before_size = _verify_image(before_path)
             after_size = _verify_image(after_path)
@@ -266,10 +465,7 @@ def _build_records(root: Path, max_pairs: int | None) -> tuple[list[PairRecord],
             continue
         split = next(iter(split_assignments[pair_id]), _deterministic_split(pair_id))
         normalized_captions = tuple(
-            {
-                "caption": entry["caption"],
-                "transition_label": entry["transition_label"] or pair_id,
-            }
+            {"caption": entry["caption"], "transition_label": entry["transition_label"] or pair_id}
             for entry in caption_entries
         ) or ({"caption": "", "transition_label": pair_id},)
         caption_histogram[len(normalized_captions)] += 1
@@ -281,15 +477,13 @@ def _build_records(root: Path, max_pairs: int | None) -> tuple[list[PairRecord],
                 after_path=after_path.resolve(),
                 width=before_size[0],
                 height=before_size[1],
-                captions=tuple(normalized_captions),
+                captions=normalized_captions,
             )
         )
 
     split_leakage = sorted(pair_id for pair_id, splits in split_assignments.items() if len(splits) > 1)
     report = {
-        "root": str(root.resolve()),
         "caption_json": str(caption_json.resolve()),
-        "dataset_bytes": _collect_dataset_bytes(root),
         "missing_files": missing_files,
         "corrupt_files": corrupt_files,
         "dimension_mismatches": dimension_mismatches,
@@ -365,8 +559,9 @@ def _overfit_rows(caption_rows: list[dict[str, Any]], limit_pairs: int = 100) ->
 
 def main() -> int:
     args = parse_args()
-    root = args.root.resolve()
-    project_root = (args.project_root or root.parents[2]).resolve()
+    raw_root = args.root.resolve()
+    project_root = (args.project_root or raw_root.parents[2]).resolve()
+    processed_root = project_root / "datasets" / "processed" / "LEVIR-CC"
     indexes_dir = project_root / "indexes"
     reports_dir = project_root / "reports"
     outputs = {
@@ -379,29 +574,36 @@ def main() -> int:
         "report_txt": reports_dir / "levir_cc_preprocess_report.txt",
     }
 
-    if args.force and not args.verify_only:
-        for path in outputs.values():
-            if path.exists():
-                path.unlink()
+    extraction = _ensure_extracted(raw_root, processed_root, verify_only=args.verify_only, force=args.force)
+    pair_records, record_report = _build_records(extraction["active_root"], args.max_pairs)
+    report = {
+        "raw_root": str(raw_root),
+        "active_data_root": extraction["active_data_root"],
+        "processed_root": extraction["processed_root"],
+        "used_archives": extraction["used_archives"],
+        "raw_archive_sha256": {entry["path"]: entry["sha256"] for entry in extraction["raw_archives"]},
+        "archive_member_count": extraction["member_count"],
+        "extracted_file_count": extraction["extracted_file_count"],
+        "extracted_byte_size": extraction["extracted_byte_size"],
+        "extraction_manifest": extraction["extraction_manifest"],
+        "extraction_sentinel": extraction["extraction_sentinel"],
+        **record_report,
+    }
 
-    pair_records, report = _build_records(root, args.max_pairs)
-    report.update(
-        {
-            "unique_pair_count": len(pair_records),
-            "caption_row_count": sum(len(record.captions) for record in pair_records),
-            "pairs_by_split": dict(Counter(record.split for record in pair_records)),
-            "captions_by_split": dict(
-                Counter(record.split for record in pair_records for _ in record.captions)
-            ),
-            "manifest_hashes": {},
-        }
-    )
     if report["missing_files"] or report["corrupt_files"] or report["dimension_mismatches"] or report["split_leakage"]:
+        report.update(
+            {
+                "unique_pair_count": len(pair_records),
+                "caption_row_count": sum(len(record.captions) for record in pair_records),
+                "pairs_by_split": dict(Counter(record.split for record in pair_records)),
+                "captions_by_split": dict(Counter(record.split for record in pair_records for _ in record.captions)),
+                "manifest_hashes": {},
+            }
+        )
         rendered = json.dumps(report, indent=2)
-        if not args.verify_only:
-            reports_dir.mkdir(parents=True, exist_ok=True)
-            outputs["report_json"].write_text(rendered + "\n", encoding="utf-8")
-            _write_text_report(outputs["report_txt"], report)
+        reports_dir.mkdir(parents=True, exist_ok=True)
+        outputs["report_json"].write_text(rendered + "\n", encoding="utf-8")
+        _write_text_report(outputs["report_txt"], report)
         print(rendered)
         return 1
 
@@ -428,8 +630,8 @@ def main() -> int:
         }
     )
 
-    rendered = json.dumps(report, indent=2)
     reports_dir.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(report, indent=2)
     outputs["report_json"].write_text(rendered + "\n", encoding="utf-8")
     _write_text_report(outputs["report_txt"], report)
     print(rendered)

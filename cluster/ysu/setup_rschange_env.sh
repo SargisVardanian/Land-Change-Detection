@@ -12,7 +12,7 @@ CODE_ROOT="${CODE_ROOT:-${PROJECT_ROOT}/code/project}"
 ENV_NAME="${ENV_NAME:-rschange}"
 PYTHON_VERSION="${PYTHON_VERSION:-3.11}"
 
-source ~/.bashrc
+source "$(dirname "$0")/common_env.sh"
 
 if command -v conda >/dev/null 2>&1; then
   CONDA_BASE="$(conda info --base)"

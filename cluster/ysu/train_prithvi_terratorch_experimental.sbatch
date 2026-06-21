@@ -17,7 +17,7 @@ OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/runs/prithvi_terratorch_experimental}"
 EPOCHS="${EPOCHS:-3}"
 
 cd "${CODE_ROOT}"
-source ~/.bashrc
+source "$(dirname "$0")/common_env.sh"
 
 if command -v conda >/dev/null 2>&1; then
     conda activate rschange

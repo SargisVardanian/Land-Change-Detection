@@ -29,6 +29,7 @@ def test_no_cluster_script_hardcodes_legacy_python_paths():
         content = path.read_text(encoding="utf-8")
         assert SHARED_BASE_PYTHON not in content, path
         assert CONDA_BASE_PYTHON not in content, path
+        assert "source ~/.bashrc" not in content, path
 
 
 def test_cluster_shell_scripts_pass_bash_n():
