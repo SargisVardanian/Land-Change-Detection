@@ -21,8 +21,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--max-train-samples", type=int, default=100)
     parser.add_argument("--min-loss-drop", type=float, default=0.05)
+    parser.add_argument("--min-recall-at-1", type=float, default=0.80)
     parser.add_argument("--min-recall-at-5", type=float, default=0.90)
-    parser.add_argument("--min-recall-at-10", type=float, default=0.95)
+    parser.add_argument("--min-recall-at-10", type=float, default=0.99)
+    parser.add_argument("--min-pair-to-text-recall-at-5", type=float, default=0.50)
     parser.add_argument("--min-anchor-positive-ratio", type=float, default=0.95)
     parser.add_argument("--grad-accum-steps", type=int, default=1)
     parser.add_argument("--remoteclip-arch", default="ViT-B-32")
@@ -81,8 +83,10 @@ def main() -> int:
     start_loss = float(eval_rows[0].get("loss", 0.0))
     best_row = max(eval_rows, key=lambda row: float(row.get("recall@5", 0.0)) + float(row.get("recall@10", 0.0)))
     best_loss = float(best_row.get("loss", 0.0))
+    best_r1 = float(best_row.get("recall@1", 0.0))
     best_r5 = float(best_row.get("recall@5", 0.0))
     best_r10 = float(best_row.get("recall@10", 0.0))
+    best_pair_r5 = float(best_row.get("pair_to_text_recall@5", 0.0))
     best_anchor_ratio = float(best_row.get("anchors_with_positive_ratio", 0.0))
     finite_metrics = all(
         all(isinstance(value, (int, float)) and abs(float(value)) != float("inf") and float(value) == float(value) for value in row.values())
@@ -91,8 +95,10 @@ def main() -> int:
     loss_decreased = best_loss <= start_loss * (1.0 - args.min_loss_drop)
     improved = (
         loss_decreased
+        and best_r1 >= args.min_recall_at_1
         and best_r5 >= args.min_recall_at_5
         and best_r10 >= args.min_recall_at_10
+        and best_pair_r5 >= args.min_pair_to_text_recall_at_5
         and best_anchor_ratio >= args.min_anchor_positive_ratio
         and finite_metrics
     )
@@ -100,8 +106,10 @@ def main() -> int:
         "preset": args.preset,
         "start_loss": start_loss,
         "best_loss": best_loss,
+        "best_recall@1": best_r1,
         "best_recall@5": best_r5,
         "best_recall@10": best_r10,
+        "best_pair_to_text_recall@5": best_pair_r5,
         "best_anchors_with_positive_ratio": best_anchor_ratio,
         "loss_decreased_materially": loss_decreased,
         "finite_metrics": finite_metrics,

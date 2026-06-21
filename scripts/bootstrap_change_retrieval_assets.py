@@ -237,6 +237,8 @@ def main() -> int:
         print(f"Built LEVIR-CC text retrieval manifest: {rows} rows")
         pair_rows = _build_pair_manifest(levir_cc_root, indexes_root / "levir_cc_pair_manifest.jsonl")
         print(f"Built LEVIR-CC pair retrieval manifest: {pair_rows} rows")
+        _build_text_manifest(captions_json, indexes_root / "levir_cc_caption_queries.jsonl", args.feature_dim)
+        _build_pair_manifest(levir_cc_root, indexes_root / "levir_cc_pairs.jsonl")
     else:
         print("LEVIR-CC text manifest skipped: captions JSON not found.")
 

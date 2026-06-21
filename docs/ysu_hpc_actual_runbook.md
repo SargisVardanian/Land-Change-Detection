@@ -108,16 +108,17 @@ That will:
 3. download the baseline bundle
 4. bootstrap indexes/assets
 5. verify project assets
-6. build `levir_cc_pair_manifest.jsonl`
+6. build `levir_cc_pairs.jsonl` and `levir_cc_caption_queries.jsonl`
 7. submit the full `simple_patch_smoke` LEVIR-CC chain
 
-Build the pair manifest first if it is not already present:
+Build the coordinated manifests first if they are not already present:
 
 ```bash
 PYTHONPATH=src /mnt/weka/shared-cache/miniforge3/bin/python \
   scripts/build_levir_cc_pair_manifest.py \
   --root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-CC" \
-  --output "$RS_PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl"
+  --output "$RS_PROJECT_ROOT/indexes/levir_cc_pairs.jsonl" \
+  --caption-output "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries.jsonl"
 ```
 
 Validate the manifest:
@@ -129,8 +130,15 @@ sbatch cluster/ysu/validate_levir_cc_pair_manifest.sbatch
 Optional real DINOv2 + RemoteCLIP one-batch smoke:
 
 ```bash
-sbatch --export=ALL,PAIR_FEATURE_MODE=signed_delta,DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base",REMOTECLIP_MODEL_PATH="$RS_PROJECT_ROOT/models/remoteclip-rn50" \
+sbatch --export=ALL,PAIR_FEATURE_MODE=signed_delta,DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base",REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt" \
   cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
+```
+
+After the raw-image GPU smoke passes, build frozen caches:
+
+```bash
+sbatch cluster/ysu/cache_levir_cc_dinov2_features.sbatch
+sbatch cluster/ysu/cache_levir_cc_remoteclip_text.sbatch
 ```
 
 Submit the full LEVIR-CC baseline chain with Slurm dependencies:
@@ -145,7 +153,7 @@ For the DINOv2 presets, also export model paths if they differ from defaults:
 
 ```bash
 export DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base"
-export REMOTECLIP_MODEL_PATH="$RS_PROJECT_ROOT/models/remoteclip-rn50"
+export REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt"
 ```
 
 Each run writes:
@@ -159,6 +167,8 @@ Each run writes:
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/text_query_top5_grid.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_dino_remoteclip_smoke_report.json` for the explicit smoke step
+- `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json`
+- `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/index.json`
 
 ## Baseline Jobs
 

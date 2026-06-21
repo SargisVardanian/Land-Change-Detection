@@ -566,10 +566,15 @@ def main() -> int:
     reports_dir = project_root / "reports"
     outputs = {
         "pairs": indexes_dir / "levir_cc_pairs.jsonl",
-        "train": indexes_dir / "levir_cc_train.jsonl",
-        "val": indexes_dir / "levir_cc_val.jsonl",
-        "test": indexes_dir / "levir_cc_test.jsonl",
-        "overfit": indexes_dir / "levir_cc_overfit_100.jsonl",
+        "caption_queries": indexes_dir / "levir_cc_caption_queries.jsonl",
+        "train": indexes_dir / "levir_cc_caption_queries_train.jsonl",
+        "val": indexes_dir / "levir_cc_caption_queries_val.jsonl",
+        "test": indexes_dir / "levir_cc_caption_queries_test.jsonl",
+        "overfit": indexes_dir / "levir_cc_caption_queries_overfit_100.jsonl",
+        "legacy_train": indexes_dir / "levir_cc_train.jsonl",
+        "legacy_val": indexes_dir / "levir_cc_val.jsonl",
+        "legacy_test": indexes_dir / "levir_cc_test.jsonl",
+        "legacy_overfit": indexes_dir / "levir_cc_overfit_100.jsonl",
         "report_json": reports_dir / "levir_cc_preprocess_report.json",
         "report_txt": reports_dir / "levir_cc_preprocess_report.txt",
     }
@@ -615,10 +620,15 @@ def main() -> int:
 
     if not args.verify_only:
         _write_jsonl(outputs["pairs"], pair_rows)
+        _write_jsonl(outputs["caption_queries"], caption_rows)
         _write_jsonl(outputs["train"], train_rows)
         _write_jsonl(outputs["val"], val_rows)
         _write_jsonl(outputs["test"], test_rows)
         _write_jsonl(outputs["overfit"], overfit_rows)
+        _write_jsonl(outputs["legacy_train"], train_rows)
+        _write_jsonl(outputs["legacy_val"], val_rows)
+        _write_jsonl(outputs["legacy_test"], test_rows)
+        _write_jsonl(outputs["legacy_overfit"], overfit_rows)
 
     report.update(
         {
@@ -626,7 +636,16 @@ def main() -> int:
             "caption_row_count": len(caption_rows),
             "pairs_by_split": {split: len({row["pair_id"] for row in _split_rows(caption_rows, split)}) for split in SPLIT_ORDER},
             "captions_by_split": {split: len(_split_rows(caption_rows, split)) for split in SPLIT_ORDER},
-            "manifest_hashes": _hash_outputs([outputs["pairs"], outputs["train"], outputs["val"], outputs["test"], outputs["overfit"]]),
+            "manifest_hashes": _hash_outputs(
+                [
+                    outputs["pairs"],
+                    outputs["caption_queries"],
+                    outputs["train"],
+                    outputs["val"],
+                    outputs["test"],
+                    outputs["overfit"],
+                ]
+            ),
         }
     )
 

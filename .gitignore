@@ -1,29 +1,19 @@
-**/.DS_Store
-
-# Local agent / editor state
+runs_remote/
+.DS_Store
 .agent/
-.codex/
 .agent-capability-report.md
 .idea/
-
-# Python environments and generated package metadata
 .venv/
-__pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-build/
-dist/
-
-# Downloaded models, datasets, and local run artifacts
 artifacts/
 data/
-
-# Large local research/source files should stay outside git.
-*.pdf
-*.zip
-
-# Local YSU cluster credentials and generated cluster state
 cluster/ysu/private/
+pages/__pycache__/
+scripts/__pycache__/
+src/land_change_detection.egg-info/
+src/land_change_detection/**/__pycache__/
+tests/.tmp_train_logic/
+tests/__pycache__/
+2211.15660v3.pdf
+25DD-1B035_LandCoverChangeDetection2025_am_250723_202701.pdf
+25DD-1B035_LandCoverChangeDetection2025_am_250723_202701.zip
+zhang2022.pdf

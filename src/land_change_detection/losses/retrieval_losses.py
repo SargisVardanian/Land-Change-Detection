@@ -33,6 +33,41 @@ def symmetric_infonce_loss(
     )
 
 
+def asymmetric_caption_pair_loss(
+    pair_embeddings: torch.Tensor,
+    text_embeddings: torch.Tensor,
+    caption_to_pair: torch.Tensor,
+    temperature: float = 0.07,
+) -> tuple[torch.Tensor, dict[str, float]]:
+    if pair_embeddings.ndim != 2 or text_embeddings.ndim != 2:
+        raise ValueError("pair_embeddings and text_embeddings must be rank-2 tensors.")
+    if caption_to_pair.ndim != 1:
+        raise ValueError("caption_to_pair must be a rank-1 tensor.")
+    if text_embeddings.shape[0] != caption_to_pair.shape[0]:
+        raise ValueError("caption_to_pair length must equal the number of caption embeddings.")
+    if pair_embeddings.shape[0] == 0 or text_embeddings.shape[0] == 0:
+        zero = pair_embeddings.sum() * 0.0 + text_embeddings.sum() * 0.0
+        return zero, {
+            "text_to_pair_loss": 0.0,
+            "pair_to_text_loss": 0.0,
+            "anchors_with_positive_ratio": 0.0,
+        }
+
+    logits = text_embeddings @ pair_embeddings.transpose(0, 1) / temperature
+    positive_text_to_pair = F.one_hot(caption_to_pair, num_classes=pair_embeddings.shape[0]).to(torch.bool)
+    text_to_pair_loss = _masked_contrastive_loss(logits, positive_text_to_pair)
+
+    pair_to_text_positive = positive_text_to_pair.transpose(0, 1)
+    pair_to_text_loss = _masked_contrastive_loss(logits.transpose(0, 1), pair_to_text_positive)
+    loss = 0.5 * (text_to_pair_loss + pair_to_text_loss)
+    anchors_with_positive_ratio = float((pair_to_text_positive.sum(dim=1) > 0).float().mean().item())
+    return loss, {
+        "text_to_pair_loss": float(text_to_pair_loss.item()),
+        "pair_to_text_loss": float(pair_to_text_loss.item()),
+        "anchors_with_positive_ratio": anchors_with_positive_ratio,
+    }
+
+
 def supervised_contrastive_loss(embeddings: torch.Tensor, labels: list[str] | torch.Tensor, temperature: float = 0.07) -> torch.Tensor:
     if isinstance(labels, torch.Tensor):
         label_list = [str(item) for item in labels.detach().cpu().tolist()]

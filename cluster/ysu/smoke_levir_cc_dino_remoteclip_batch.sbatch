@@ -17,7 +17,7 @@ cd "$CODE_ROOT"
 mkdir -p logs "$RS_PROJECT_ROOT/reports"
 
 "$PYTHON" scripts/smoke_levir_cc_dino_remoteclip_batch.py \
-  --manifest "$RS_PROJECT_ROOT/indexes/levir_cc_train.jsonl" \
+  --manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_train.jsonl" \
   --project-root "$RS_PROJECT_ROOT" \
   --output "$RS_PROJECT_ROOT/reports/levir_cc_gpu_smoke.json" \
   --dinov2-model-path "${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}" \

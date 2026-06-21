@@ -21,8 +21,8 @@ cd "$CODE_ROOT"
 mkdir -p logs "$RUN_DIR" "$RS_PROJECT_ROOT/reports"
 
 TRAIN_ARGS=(
-  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_train.jsonl"
-  --eval-levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_val.jsonl"
+  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_train.jsonl"
+  --eval-levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_val.jsonl"
   --output-dir "$RUN_DIR"
   --project-root "$RS_PROJECT_ROOT"
   --preset "$PRESET"
@@ -32,6 +32,13 @@ TRAIN_ARGS=(
   --grad-accum-steps "${GRAD_ACCUM_STEPS:-2}"
   --device auto
 )
+
+if [ -n "${LEVIR_PAIR_CACHE_INDEX:-}" ] && [ -n "${LEVIR_TEXT_CACHE_INDEX:-}" ] && [ -f "$LEVIR_PAIR_CACHE_INDEX" ] && [ -f "$LEVIR_TEXT_CACHE_INDEX" ]; then
+  TRAIN_ARGS+=(
+    --levir-pair-cache-index "$LEVIR_PAIR_CACHE_INDEX"
+    --levir-text-cache-index "$LEVIR_TEXT_CACHE_INDEX"
+  )
+fi
 
 if [ "$PRESET" != "simple_patch_smoke" ]; then
   TRAIN_ARGS+=(
@@ -51,7 +58,7 @@ fi
 
 "$PYTHON" scripts/write_environment_fingerprint.py \
   --project-root "$RS_PROJECT_ROOT" \
-  --dataset-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_train.jsonl" \
+  --dataset-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_train.jsonl" \
   --dinov2-model-path "${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}" \
   --remoteclip-checkpoint "${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
   --config-json "$RUN_DIR/config.json" \

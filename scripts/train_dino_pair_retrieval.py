@@ -15,11 +15,12 @@ from PIL import Image
 from torch.utils.data import BatchSampler, DataLoader, Dataset
 
 from land_change_detection.losses.retrieval_losses import (
+    asymmetric_caption_pair_loss,
     soft_histogram_contrastive_loss,
     supervised_contrastive_loss,
-    symmetric_infonce_loss,
 )
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
+from land_change_detection.retrieval_cache import IndexedShardReader
 from land_change_detection.retrieval_baselines import preset_by_name, preset_names
 from land_change_detection.run_metadata import jsonl_fingerprint, locate_storage_inventory, path_fingerprint, safe_git_commit
 from land_change_detection.semantic_transitions import transition_similarity
@@ -47,6 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hf-remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
     parser.add_argument("--openclip-pretrained", default=None)
+    parser.add_argument("--levir-pair-cache-index", type=Path, default=None)
+    parser.add_argument("--levir-text-cache-index", type=Path, default=None)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--pair-loss", choices=("supervised", "soft"), default="supervised")
     parser.add_argument("--max-train-samples", type=int, default=None)
@@ -256,6 +259,37 @@ class PositiveAwareBatchSampler(BatchSampler):
         return max(1, (len(self.samples) + self.batch_size - 1) // self.batch_size)
 
 
+class CaptionPairBatchSampler(BatchSampler):
+    def __init__(self, samples: list[RetrievalSample], batch_size: int, shuffle: bool, seed: int):
+        self.samples = samples
+        self.batch_size = max(1, batch_size)
+        self.shuffle = shuffle
+        self.seed = seed
+        grouped: dict[str, list[int]] = {}
+        for index, sample in enumerate(samples):
+            grouped.setdefault(sample.pair_id, []).append(index)
+        self._pair_groups = grouped
+        self._pair_ids = list(grouped)
+
+    def __iter__(self):
+        pair_ids = list(self._pair_ids)
+        rng = random.Random(self.seed if not self.shuffle else random.randint(0, 10**9))
+        if self.shuffle:
+            rng.shuffle(pair_ids)
+        for start in range(0, len(pair_ids), self.batch_size):
+            batch_pair_ids = pair_ids[start : start + self.batch_size]
+            batch: list[int] = []
+            for pair_id in batch_pair_ids:
+                indices = list(self._pair_groups[pair_id])
+                if self.shuffle:
+                    rng.shuffle(indices)
+                batch.extend(indices)
+            yield batch
+
+    def __len__(self) -> int:
+        return max(1, (len(self._pair_ids) + self.batch_size - 1) // self.batch_size)
+
+
 class AlternatingTaskLoader:
     def __init__(self, loaders: list[DataLoader]):
         self.loaders = loaders
@@ -276,11 +310,47 @@ class AlternatingTaskLoader:
         return sum(len(loader) for loader in self.loaders)
 
 
+class CachedLevirFeatures:
+    def __init__(self, pair_index: Path | None, text_index: Path | None):
+        self.pair_reader = IndexedShardReader(pair_index) if pair_index is not None else None
+        self.text_reader = IndexedShardReader(text_index) if text_index is not None else None
+
+    @property
+    def enabled(self) -> bool:
+        return self.pair_reader is not None and self.text_reader is not None
+
+    def pair_tokens(self, pair_ids: list[str], device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+        assert self.pair_reader is not None
+        before_rows = []
+        after_rows = []
+        pair_index = self.pair_reader.index["pairs"]
+        for pair_id in pair_ids:
+            payload = pair_index[pair_id]
+            before_rows.append(self.pair_reader.get(payload["shard"], payload["before_key"]))
+            after_rows.append(self.pair_reader.get(payload["shard"], payload["after_key"]))
+        return torch.stack(before_rows).to(device=device, dtype=torch.float32), torch.stack(after_rows).to(
+            device=device, dtype=torch.float32
+        )
+
+    def text_features(self, sample_ids: list[str], device: torch.device) -> torch.Tensor:
+        assert self.text_reader is not None
+        caption_index = self.text_reader.index["captions"]
+        rows = []
+        for sample_id in sample_ids:
+            payload = caption_index[sample_id]
+            rows.append(self.text_reader.get(payload["shard"], payload["key"]))
+        return torch.stack(rows).to(device=device, dtype=torch.float32)
+
+
 def _build_subset_dataloader(samples: list[RetrievalSample], args: argparse.Namespace, shuffle: bool) -> DataLoader:
     dataset = PairRetrievalDataset(samples, args.image_size)
     batch_size = min(args.batch_size, len(samples))
+    seed = int(getattr(args, "seed", 7))
+    if samples and all(sample.caption for sample in samples):
+        batch_sampler = CaptionPairBatchSampler(samples, batch_size=batch_size, shuffle=shuffle, seed=seed)
+        return DataLoader(dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, collate_fn=collate_batch)
     if shuffle:
-        batch_sampler = PositiveAwareBatchSampler(samples, batch_size=batch_size, shuffle=True, seed=args.seed)
+        batch_sampler = PositiveAwareBatchSampler(samples, batch_size=batch_size, shuffle=True, seed=seed)
         return DataLoader(dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, collate_fn=collate_batch)
     return DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=collate_batch)
 
@@ -414,6 +484,25 @@ def validate_pair_id_disjoint_sets(train_samples: list[RetrievalSample], eval_sa
         raise ValueError(f"Detected pair_id overlap between train and eval manifests: {leaked_preview}")
 
 
+def unique_pair_batch(batch: dict[str, Any], device: torch.device) -> tuple[torch.Tensor, torch.Tensor, list[str], torch.Tensor]:
+    pair_to_index: dict[str, int] = {}
+    unique_before: list[torch.Tensor] = []
+    unique_after: list[torch.Tensor] = []
+    unique_pair_ids: list[str] = []
+    caption_to_pair: list[int] = []
+    for row_index, pair_id in enumerate(batch["pair_id"]):
+        if pair_id not in pair_to_index:
+            pair_to_index[pair_id] = len(unique_pair_ids)
+            unique_pair_ids.append(pair_id)
+            unique_before.append(batch["before"][row_index])
+            unique_after.append(batch["after"][row_index])
+        caption_to_pair.append(pair_to_index[pair_id])
+    before = torch.stack(unique_before).to(device)
+    after = torch.stack(unique_after).to(device)
+    mapping = torch.tensor(caption_to_pair, dtype=torch.long, device=device)
+    return before, after, unique_pair_ids, mapping
+
+
 def compute_retrieval_metrics(
     embeddings: torch.Tensor,
     sample_ids: list[str],
@@ -427,8 +516,10 @@ def compute_retrieval_metrics(
     text_recalls = {1: 0, 5: 0, 10: 0}
     text_map_scores: list[float] = []
     text_ranks: list[int] = []
-    directionality_hits = 0
-    directionality_total = 0
+    reversed_pair_hits = 0
+    reversed_pair_total = 0
+    pair_to_text_recalls = {1: 0, 5: 0, 10: 0}
+    pair_to_text_ranks: list[int] = []
     if text_query_embeddings is not None and text_query_sample_ids:
         text_similarities = text_query_embeddings @ embeddings.transpose(0, 1)
         reversed_similarities = text_query_embeddings @ reversed_embeddings.transpose(0, 1) if reversed_embeddings is not None else None
@@ -440,7 +531,7 @@ def compute_retrieval_metrics(
             first_rank = next((rank for rank, relevant in enumerate(relevances, start=1) if relevant), len(ranking) + 1)
             text_ranks.append(first_rank)
             text_map_scores.append(_average_precision(relevances))
-            if reversed_similarities is not None and text_query_transition_labels is not None:
+            if reversed_similarities is not None:
                 original_score = max(
                     float(text_similarities[query_index, candidate].item())
                     for candidate, pair_id in enumerate(sample_ids)
@@ -451,15 +542,24 @@ def compute_retrieval_metrics(
                     for candidate, pair_id in enumerate(sample_ids)
                     if pair_id == query_sample_id
                 )
-                opposite_candidates = [
-                    float(text_similarities[query_index, candidate].item())
-                    for candidate, transition_label in enumerate(dominant_transitions)
-                    if transition_label is not None and transition_label != text_query_transition_labels[query_index]
-                ]
-                if opposite_candidates:
-                    directionality_total += 1
-                    if original_score > max(reversed_score, max(opposite_candidates)):
-                        directionality_hits += 1
+                reversed_pair_total += 1
+                if original_score > reversed_score:
+                    reversed_pair_hits += 1
+
+        pair_to_text_scores = embeddings @ text_query_embeddings.transpose(0, 1)
+        pair_to_caption_ids: dict[str, list[int]] = {}
+        for caption_index, pair_id in enumerate(text_query_sample_ids):
+            pair_to_caption_ids.setdefault(pair_id, []).append(caption_index)
+        for pair_index, pair_id in enumerate(sample_ids):
+            positive_caption_indices = pair_to_caption_ids.get(pair_id, [])
+            if not positive_caption_indices:
+                continue
+            ranking = torch.argsort(pair_to_text_scores[pair_index], descending=True).tolist()
+            relevances = [candidate in positive_caption_indices for candidate in ranking]
+            for k in pair_to_text_recalls:
+                pair_to_text_recalls[k] += 1 if any(relevances[:k]) else 0
+            first_rank = next((rank for rank, relevant in enumerate(relevances, start=1) if relevant), len(ranking) + 1)
+            pair_to_text_ranks.append(first_rank)
 
     pair_similarities = embeddings @ embeddings.transpose(0, 1)
     hist_sims: list[float] = []
@@ -517,7 +617,9 @@ def compute_retrieval_metrics(
 
     text_total = max(len(text_query_sample_ids), 1)
     pair_total = max(len(pair_query_indices), 1)
+    pair_to_text_total = max(len(pair_to_text_ranks), 1)
     text_mrr = sum(1.0 / rank for rank in text_ranks) / len(text_ranks) if text_ranks else 0.0
+    pair_to_text_mrr = sum(1.0 / rank for rank in pair_to_text_ranks) / len(pair_to_text_ranks) if pair_to_text_ranks else 0.0
     median_rank = float(np.median(text_ranks)) if text_ranks else 0.0
     return {
         "recall@1": text_recalls[1] / text_total if text_query_sample_ids else 0.0,
@@ -525,6 +627,10 @@ def compute_retrieval_metrics(
         "recall@10": text_recalls[10] / text_total if text_query_sample_ids else 0.0,
         "mAP": sum(text_map_scores) / max(len(text_map_scores), 1),
         "median_rank": median_rank,
+        "pair_to_text_recall@1": pair_to_text_recalls[1] / pair_to_text_total if pair_to_text_ranks else 0.0,
+        "pair_to_text_recall@5": pair_to_text_recalls[5] / pair_to_text_total if pair_to_text_ranks else 0.0,
+        "pair_to_text_recall@10": pair_to_text_recalls[10] / pair_to_text_total if pair_to_text_ranks else 0.0,
+        "pair_to_text_MRR": pair_to_text_mrr,
         "mean_transition_similarity_top5": sum(hist_sims) / max(len(hist_sims), 1) if hist_sims else 0.0,
         "MRR": text_mrr,
         "transition_recall@1": pair_recalls[1] / pair_total if pair_query_indices else 0.0,
@@ -533,7 +639,8 @@ def compute_retrieval_metrics(
         "transition_MRR": pair_mrr / pair_total if pair_query_indices else 0.0,
         "transition_top1_hit_rate": pair_top1_transition_hits / pair_total if pair_query_indices else 0.0,
         "transition_nDCG@10": sum(pair_ndcg_scores) / max(len(pair_ndcg_scores), 1),
-        "directionality_accuracy": directionality_hits / directionality_total if directionality_total else 0.0,
+        "reversed_pair_sanity_accuracy": reversed_pair_hits / reversed_pair_total if reversed_pair_total else 0.0,
+        "directionality_accuracy": reversed_pair_hits / reversed_pair_total if reversed_pair_total else 0.0,
         "pair_mAP": sum(pair_ap_scores) / max(len(pair_ap_scores), 1),
         "pair_sample_fraction": len(pair_only_indices) / max(len(sample_ids), 1),
     }
@@ -546,6 +653,7 @@ def run_epoch(
     args: argparse.Namespace,
     device: torch.device,
     scaler: torch.amp.GradScaler | None = None,
+    cached_features: CachedLevirFeatures | None = None,
 ) -> dict[str, float]:
     training = optimizer is not None
     model.train(training)
@@ -557,7 +665,6 @@ def run_epoch(
     all_sources: list[str] = []
     all_text_embeddings: list[torch.Tensor] = []
     all_text_query_ids: list[str] = []
-    all_text_query_transitions: list[str] = []
     all_reversed_embeddings: list[torch.Tensor] = []
     anchor_positive_ratios: list[float] = []
 
@@ -577,24 +684,43 @@ def run_epoch(
         grad_context = nullcontext() if training else torch.no_grad()
         with grad_context:
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp_enabled):
-                outputs = model(before, after, captions if has_text else None)
+                pair_before = before
+                pair_after = after
+                unique_pair_ids = list(batch["pair_id"])
+                if has_text:
+                    pair_before, pair_after, unique_pair_ids, caption_to_pair = unique_pair_batch(batch, device)
+                else:
+                    caption_to_pair = None
+                if has_text and cached_features is not None and cached_features.enabled:
+                    cached_before, cached_after = cached_features.pair_tokens(unique_pair_ids, device)
+                    cached_text = cached_features.text_features(batch["sample_id"], device)
+                    outputs = model.forward_from_visual_tokens(cached_before, cached_after, text_features=cached_text)
+                else:
+                    outputs = model(pair_before, pair_after, captions if has_text else None)
                 loss = outputs["change_embedding"].sum() * 0.0
                 metrics_row: dict[str, float] = {}
 
                 if has_text:
-                    text_mask = [index for index, caption in enumerate(captions) if caption.strip()]
-                    if text_mask:
-                        img_emb = outputs["change_embedding"][text_mask]
-                        txt_emb = outputs["text_embedding"][text_mask]
-                        text_group_ids = [batch["pair_id"][index] for index in text_mask]
-                        positive_mask = build_positive_mask(text_group_ids, device)
-                        anchor_positive_ratios.append(float((positive_mask.sum(dim=1) > 1).float().mean().item()))
-                        text_loss = symmetric_infonce_loss(img_emb, txt_emb, positive_mask=positive_mask)
-                        loss = loss + text_loss
-                        metrics_row["text_loss"] = float(text_loss.item())
-                        all_text_embeddings.append(txt_emb.detach().cpu())
-                        all_text_query_ids.extend(text_group_ids)
-                        all_text_query_transitions.extend([label_list[index] for index in text_mask])
+                    assert caption_to_pair is not None
+                    text_loss, text_stats = asymmetric_caption_pair_loss(
+                        outputs["change_embedding"],
+                        outputs["text_embedding"],
+                        caption_to_pair,
+                    )
+                    loss = loss + text_loss
+                    metrics_row.update(text_stats)
+                    metrics_row["temperature"] = 0.07
+                    captions_per_pair: dict[str, int] = {}
+                    for pair_id in batch["pair_id"]:
+                        captions_per_pair[pair_id] = captions_per_pair.get(pair_id, 0) + 1
+                    distribution = list(captions_per_pair.values())
+                    metrics_row["unique_pairs_in_batch"] = float(len(unique_pair_ids))
+                    metrics_row["caption_rows_in_batch"] = float(len(captions))
+                    metrics_row["captions_per_pair_mean"] = float(sum(distribution) / max(len(distribution), 1))
+                    metrics_row["captions_per_pair_max"] = float(max(distribution, default=0))
+                    anchor_positive_ratios.append(float(text_stats["anchors_with_positive_ratio"]))
+                    all_text_embeddings.append(outputs["text_embedding"].detach().cpu())
+                    all_text_query_ids.extend(batch["pair_id"])
 
                 hist_tensor, hist_indices = transition_histograms_to_tensor(batch["transition_histogram"], device)
                 if hist_tensor is not None:
@@ -610,7 +736,11 @@ def run_epoch(
                     metrics_row["pair_loss"] = float(pair_loss.item())
 
             with torch.no_grad():
-                reversed_outputs = model(after, before, None)
+                if has_text and cached_features is not None and cached_features.enabled:
+                    cached_before, cached_after = cached_features.pair_tokens(unique_pair_ids, device)
+                    reversed_outputs = model.forward_from_visual_tokens(cached_after, cached_before, None)
+                else:
+                    reversed_outputs = model(pair_after, pair_before, None) if has_text else model(after, before, None)
 
         if optimizer is not None:
             scaled_loss = loss / max(getattr(args, "grad_accum_steps", 1), 1)
@@ -631,15 +761,37 @@ def run_epoch(
         rows.append(metrics_row)
         all_embeddings.append(outputs["change_embedding"].detach().cpu())
         all_reversed_embeddings.append(reversed_outputs["change_embedding"].detach().cpu())
-        all_labels.extend(batch["pair_id"])
-        all_dominant_transitions.extend(batch["dominant_transition"])
-        all_histograms.extend(batch["transition_histogram"])
-        all_sources.extend(batch["source"])
+        if has_text:
+            pair_first_index: dict[str, int] = {}
+            for row_index, pair_id in enumerate(batch["pair_id"]):
+                pair_first_index.setdefault(pair_id, row_index)
+            for pair_id in unique_pair_ids:
+                row_index = pair_first_index[pair_id]
+                all_labels.append(pair_id)
+                all_dominant_transitions.append(batch["dominant_transition"][row_index])
+                all_histograms.append(batch["transition_histogram"][row_index])
+                all_sources.append(batch["source"][row_index])
+        else:
+            all_labels.extend(batch["pair_id"])
+            all_dominant_transitions.extend(batch["dominant_transition"])
+            all_histograms.extend(batch["transition_histogram"])
+            all_sources.extend(batch["source"])
 
     embeddings = torch.cat(all_embeddings, dim=0)
     reversed_embeddings = torch.cat(all_reversed_embeddings, dim=0)
     text_embeddings = torch.cat(all_text_embeddings, dim=0) if all_text_embeddings else None
-    mean_row = {key: sum(row.get(key, 0.0) for row in rows) / max(len(rows), 1) for key in {"loss", "text_loss", "pair_loss"}}
+    mean_keys = {
+        "loss",
+        "text_to_pair_loss",
+        "pair_to_text_loss",
+        "pair_loss",
+        "unique_pairs_in_batch",
+        "caption_rows_in_batch",
+        "captions_per_pair_mean",
+        "captions_per_pair_max",
+        "temperature",
+    }
+    mean_row = {key: sum(row.get(key, 0.0) for row in rows) / max(len(rows), 1) for key in mean_keys}
     mean_row.update(
         compute_retrieval_metrics(
             embeddings,
@@ -648,7 +800,7 @@ def run_epoch(
             all_histograms,
             text_embeddings,
             all_text_query_ids,
-            all_text_query_transitions,
+            None,
             reversed_embeddings,
         )
     )
@@ -697,6 +849,7 @@ def main() -> int:
     eval_args = argparse.Namespace(**vars(args))
     eval_args.max_train_samples = args.max_eval_samples
     eval_loader = build_dataloader(eval_samples, eval_args, shuffle=False)
+    cached_features = CachedLevirFeatures(args.levir_pair_cache_index, args.levir_text_cache_index)
     optimizer = torch.optim.AdamW([parameter for parameter in model.parameters() if parameter.requires_grad], lr=args.learning_rate)
     scaler = torch.amp.GradScaler("cuda", enabled=bool(args.mixed_precision and device.type == "cuda"))
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -711,6 +864,8 @@ def main() -> int:
             "dinov2_model_path": path_fingerprint(args.dinov2_model_path),
             "remoteclip_checkpoint": path_fingerprint(args.remoteclip_checkpoint),
             "hf_remoteclip_model_path": path_fingerprint(args.hf_remoteclip_model_path),
+            "levir_pair_cache_index": path_fingerprint(args.levir_pair_cache_index),
+            "levir_text_cache_index": path_fingerprint(args.levir_text_cache_index),
         },
         "dataset_versions": {
             "levir_manifest": jsonl_fingerprint(args.levir_manifest),
@@ -736,8 +891,8 @@ def main() -> int:
         },
     }
     for epoch in range(1, args.epochs + 1):
-        train_metrics = run_epoch(model, train_loader, optimizer, args, device, scaler=scaler)
-        eval_metrics = run_epoch(model, eval_loader, None, eval_args, device)
+        train_metrics = run_epoch(model, train_loader, optimizer, args, device, scaler=scaler, cached_features=cached_features)
+        eval_metrics = run_epoch(model, eval_loader, None, eval_args, device, cached_features=cached_features)
         row = {"epoch": epoch, "train": train_metrics, "eval": eval_metrics}
         history.append(row)
         score = float(eval_metrics.get("recall@5", 0.0) + eval_metrics.get("mAP", 0.0))

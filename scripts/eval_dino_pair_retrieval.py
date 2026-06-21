@@ -15,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.train_dino_pair_retrieval import (
     apply_preset,
     build_dataloader,
+    CachedLevirFeatures,
     choose_device,
     load_retrieval_samples,
     run_epoch,
@@ -44,6 +45,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hf-remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
     parser.add_argument("--openclip-pretrained", default=None)
+    parser.add_argument("--levir-pair-cache-index", type=Path, default=None)
+    parser.add_argument("--levir-text-cache-index", type=Path, default=None)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--pair-loss", choices=("supervised", "soft"), default="supervised")
     parser.add_argument("--lambda-pair", type=float, default=0.2)
@@ -79,13 +82,14 @@ def _metrics_for_subset(
     model: DINOChangeRetriever,
     args: argparse.Namespace,
     device: torch.device,
+    cached_features: CachedLevirFeatures | None,
 ) -> dict[str, float]:
     if not samples:
         return {}
     subset_args = argparse.Namespace(**vars(args))
     subset_args.max_train_samples = None
     loader = build_dataloader(samples, subset_args, shuffle=False)
-    return run_epoch(model, loader, None, subset_args, device)
+    return run_epoch(model, loader, None, subset_args, device, cached_features=cached_features)
 
 
 def main() -> int:
@@ -96,6 +100,7 @@ def main() -> int:
 
     validate_pair_id_split_integrity(samples)
     device = choose_device(args.device)
+    cached_features = CachedLevirFeatures(args.levir_pair_cache_index, args.levir_text_cache_index)
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
             visual_backbone=args.visual_backbone,
@@ -113,9 +118,9 @@ def main() -> int:
     ).to(device)
     checkpoint = torch.load(args.checkpoint, map_location=device, weights_only=False)
     model.load_state_dict(checkpoint["model_state"])
-    metrics = _metrics_for_subset(samples, model, args, device)
+    metrics = _metrics_for_subset(samples, model, args, device, cached_features)
     by_source = {
-        source: _metrics_for_subset([sample for sample in samples if sample.source == source], model, args, device)
+        source: _metrics_for_subset([sample for sample in samples if sample.source == source], model, args, device, cached_features)
         for source in sorted({sample.source for sample in samples})
     }
     pair_only_samples = [sample for sample in samples if sample.transition_histogram]
@@ -137,6 +142,8 @@ def main() -> int:
             "dinov2_model_path": path_fingerprint(args.dinov2_model_path),
             "remoteclip_checkpoint": path_fingerprint(args.remoteclip_checkpoint),
             "hf_remoteclip_model_path": path_fingerprint(args.hf_remoteclip_model_path),
+            "levir_pair_cache_index": path_fingerprint(args.levir_pair_cache_index),
+            "levir_text_cache_index": path_fingerprint(args.levir_text_cache_index),
         },
         "dataset_versions": {
             "levir_manifest": jsonl_fingerprint(args.levir_manifest),

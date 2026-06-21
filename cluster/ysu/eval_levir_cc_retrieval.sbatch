@@ -22,13 +22,20 @@ mkdir -p logs "$RUN_DIR"
 
 EVAL_ARGS=(
   --preset "$PRESET"
-  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_test.jsonl"
+  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_test.jsonl"
   --checkpoint "$RUN_DIR/best.pt"
   --output "$RUN_DIR/eval_metrics.json"
   --project-root "$RS_PROJECT_ROOT"
   --image-size "${IMAGE_SIZE:-224}"
   --device auto
 )
+
+if [ -n "${LEVIR_PAIR_CACHE_INDEX:-}" ] && [ -n "${LEVIR_TEXT_CACHE_INDEX:-}" ] && [ -f "$LEVIR_PAIR_CACHE_INDEX" ] && [ -f "$LEVIR_TEXT_CACHE_INDEX" ]; then
+  EVAL_ARGS+=(
+    --levir-pair-cache-index "$LEVIR_PAIR_CACHE_INDEX"
+    --levir-text-cache-index "$LEVIR_TEXT_CACHE_INDEX"
+  )
+fi
 
 if [ "$PRESET" != "simple_patch_smoke" ]; then
   EVAL_ARGS+=(

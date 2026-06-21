@@ -19,22 +19,36 @@ validate_job_id="$(sbatch --parsable cluster/ysu/validate_levir_cc_pair_manifest
 echo "validate_levir_cc_pair_manifest: $validate_job_id"
 
 if [ "$PRESET" = "simple_patch_smoke" ]; then
-  smoke_dependency="$validate_job_id"
+  stage_dependency="$validate_job_id"
 else
   smoke_job_id="$(
     sbatch --parsable \
       --dependency=afterok:$validate_job_id \
-      --export=ALL,PAIR_FEATURE_MODE="$PAIR_FEATURE_MODE",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
+      --export=ALL,PAIR_FEATURE_MODE="$PAIR_FEATURE_MODE",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
       cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
   )"
   echo "smoke_levir_cc_dino_remoteclip_batch: $smoke_job_id"
-  smoke_dependency="$smoke_job_id"
+  cache_dino_job_id="$(
+    sbatch --parsable \
+      --dependency=afterok:$smoke_job_id \
+      --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}" \
+      cluster/ysu/cache_levir_cc_dinov2_features.sbatch
+  )"
+  echo "cache_levir_cc_dinov2_features: $cache_dino_job_id"
+  cache_text_job_id="$(
+    sbatch --parsable \
+      --dependency=afterok:$cache_dino_job_id \
+      --export=ALL,REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
+      cluster/ysu/cache_levir_cc_remoteclip_text.sbatch
+  )"
+  echo "cache_levir_cc_remoteclip_text: $cache_text_job_id"
+  stage_dependency="$cache_text_job_id"
 fi
 
 overfit_job_id="$(
   sbatch --parsable \
-    --dependency=afterok:$smoke_dependency \
-    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
+    --dependency=afterok:$stage_dependency \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",LEVIR_PAIR_CACHE_INDEX="$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json",LEVIR_TEXT_CACHE_INDEX="$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/index.json",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
     cluster/ysu/overfit_levir_cc_retrieval_100.sbatch
 )"
 echo "overfit_levir_cc_retrieval_100: $overfit_job_id"
@@ -42,7 +56,7 @@ echo "overfit_levir_cc_retrieval_100: $overfit_job_id"
 eval_job_id="$(
   sbatch --parsable \
     --dependency=afterok:$overfit_job_id \
-    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",LEVIR_PAIR_CACHE_INDEX="$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json",LEVIR_TEXT_CACHE_INDEX="$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/index.json",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
     cluster/ysu/eval_levir_cc_retrieval.sbatch
 )"
 echo "eval_levir_cc_retrieval: $eval_job_id"
@@ -50,7 +64,7 @@ echo "eval_levir_cc_retrieval: $eval_job_id"
 grid_job_id="$(
   sbatch --parsable \
     --dependency=afterok:$eval_job_id \
-    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_MODEL_PATH="${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
     cluster/ysu/render_levir_cc_text_query_grid.sbatch
 )"
 echo "render_levir_cc_text_query_grid: $grid_job_id"

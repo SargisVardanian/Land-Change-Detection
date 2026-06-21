@@ -22,7 +22,7 @@ mkdir -p logs "$RUN_DIR"
 
 GRID_ARGS=(
   --preset "$PRESET"
-  --manifest "$RS_PROJECT_ROOT/indexes/levir_cc_test.jsonl"
+  --manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_test.jsonl"
   --project-root "$RS_PROJECT_ROOT"
   --checkpoint "$RUN_DIR/best.pt"
   --output "$RUN_DIR/text_query_top5_grid.png"

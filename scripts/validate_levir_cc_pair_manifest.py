@@ -27,9 +27,14 @@ def build_report(rows: list[dict[str, Any]], manifest: Path) -> dict[str, Any]:
         pair_id = str(row.get("pair_id") or row.get("sample_id") or "")
         split = str(row.get("split") or "unknown")
         pair_to_splits[pair_id].add(split)
-        pair_caption_counts[pair_id] += 1
-        if not str(row.get("caption") or "").strip():
-            missing_caption_rows += 1
+        captions = row.get("captions")
+        if isinstance(captions, list):
+            pair_caption_counts[pair_id] += len(captions)
+            missing_caption_rows += sum(1 for caption in captions if not str(caption or "").strip())
+        else:
+            pair_caption_counts[pair_id] += 1
+            if not str(row.get("caption") or "").strip():
+                missing_caption_rows += 1
         before_path = Path(str(row.get("before_path") or ""))
         after_path = Path(str(row.get("after_path") or ""))
         if not before_path.exists() or not after_path.exists():

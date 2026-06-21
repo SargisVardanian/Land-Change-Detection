@@ -56,12 +56,15 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     )
     assert build.returncode == 0, build.stderr
     rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
-    assert len(rows) == 4
+    assert len(rows) == 3
     assert rows[0]["dataset_name"] == "LEVIR-CC"
     assert rows[0]["before_path"].endswith("_before.png")
     assert rows[0]["pair_id"] == "pair_a"
     assert rows[0]["split"] == "train"
-    assert sum(1 for row in rows if row["pair_id"] == "pair_a") == 2
+    assert len(rows[0]["captions"]) == 2
+    caption_manifest = tmp_path / "levir_cc_caption_queries.jsonl"
+    caption_rows = [json.loads(line) for line in caption_manifest.read_text(encoding="utf-8").splitlines()]
+    assert len(caption_rows) == 4
 
     output_dir = tmp_path / "overfit_run"
     overfit = subprocess.run(
@@ -69,7 +72,7 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
             sys.executable,
             "scripts/overfit_levir_cc_retrieval_100.py",
             "--levir-manifest",
-            str(manifest),
+            str(caption_manifest),
             "--output-dir",
             str(output_dir),
             "--preset",
@@ -86,9 +89,13 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
             "cpu",
             "--min-loss-drop",
             "0.0",
+            "--min-recall-at-1",
+            "0.0",
             "--min-recall-at-5",
             "0.0",
             "--min-recall-at-10",
+            "0.0",
+            "--min-pair-to-text-recall-at-5",
             "0.0",
             "--min-anchor-positive-ratio",
             "0.0",

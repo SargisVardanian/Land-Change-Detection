@@ -7,9 +7,15 @@ from pathlib import Path
 
 import torch
 
-from scripts.train_dino_pair_retrieval import build_dataloader, choose_device, load_retrieval_samples, set_seed
+from scripts.train_dino_pair_retrieval import (
+    build_dataloader,
+    choose_device,
+    load_retrieval_samples,
+    set_seed,
+    unique_pair_batch,
+)
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
-from land_change_detection.losses.retrieval_losses import symmetric_infonce_loss
+from land_change_detection.losses.retrieval_losses import asymmetric_caption_pair_loss
 from land_change_detection.run_metadata import path_fingerprint
 
 
@@ -55,16 +61,10 @@ def main() -> int:
     ).to(device)
     trainable = [parameter for parameter in model.parameters() if parameter.requires_grad]
     optimizer = torch.optim.AdamW(trainable, lr=1e-4)
-    before = batch["before"].to(device)
-    after = batch["after"].to(device)
     captions = [caption if isinstance(caption, str) else "" for caption in batch["caption"]]
+    before, after, unique_pair_ids, caption_to_pair = unique_pair_batch(batch, device)
     outputs = model(before, after, captions)
-    positive_mask = torch.tensor(
-        [[left == right for right in batch["pair_id"]] for left in batch["pair_id"]],
-        dtype=torch.bool,
-        device=device,
-    )
-    loss = symmetric_infonce_loss(outputs["change_embedding"], outputs["text_embedding"], positive_mask=positive_mask)
+    loss, loss_stats = asymmetric_caption_pair_loss(outputs["change_embedding"], outputs["text_embedding"], caption_to_pair)
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
@@ -79,10 +79,12 @@ def main() -> int:
     peak_bytes = int(torch.cuda.max_memory_allocated(device)) if device.type == "cuda" else 0
     report = {
         "manifest": str(args.manifest),
-        "batch_size": int(before.shape[0]),
-        "unique_pair_ids_in_batch": len(set(batch["pair_id"])),
+        "unique_pairs_in_batch": len(unique_pair_ids),
         "caption_row_count_in_batch": len(captions),
+        "captions_per_pair_distribution": {pair_id: batch["pair_id"].count(pair_id) for pair_id in unique_pair_ids},
         "loss": float(loss.item()),
+        "text_to_pair_loss": loss_stats["text_to_pair_loss"],
+        "pair_to_text_loss": loss_stats["pair_to_text_loss"],
         "finite_loss": bool(torch.isfinite(loss).item()),
         "finite_gradients": finite_gradients,
         "change_embedding_shape": list(outputs["change_embedding"].shape),

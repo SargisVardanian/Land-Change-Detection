@@ -21,7 +21,7 @@ cd "$CODE_ROOT"
 mkdir -p logs "$RUN_DIR" "$RS_PROJECT_ROOT/reports"
 
 TRAIN_ARGS=(
-  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_overfit_100.jsonl"
+  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries_overfit_100.jsonl"
   --output-dir "$RUN_DIR"
   --project-root "$RS_PROJECT_ROOT"
   --preset "$PRESET"
@@ -32,6 +32,13 @@ TRAIN_ARGS=(
   --grad-accum-steps "${GRAD_ACCUM_STEPS:-1}"
   --device auto
 )
+
+if [ -n "${LEVIR_PAIR_CACHE_INDEX:-}" ] && [ -n "${LEVIR_TEXT_CACHE_INDEX:-}" ] && [ -f "$LEVIR_PAIR_CACHE_INDEX" ] && [ -f "$LEVIR_TEXT_CACHE_INDEX" ]; then
+  TRAIN_ARGS+=(
+    --levir-pair-cache-index "$LEVIR_PAIR_CACHE_INDEX"
+    --levir-text-cache-index "$LEVIR_TEXT_CACHE_INDEX"
+  )
+fi
 
 if [ "$PRESET" != "simple_patch_smoke" ]; then
   TRAIN_ARGS+=(

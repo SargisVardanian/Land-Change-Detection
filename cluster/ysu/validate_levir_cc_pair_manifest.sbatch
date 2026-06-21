@@ -19,5 +19,5 @@ cd "$PROJECT_DIR"
 mkdir -p logs "$RS_PROJECT_ROOT/runs" "$RS_PROJECT_ROOT/indexes"
 
 "$PYTHON" scripts/validate_levir_cc_pair_manifest.py \
-  --manifest "$RS_PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl" \
+  --manifest "$RS_PROJECT_ROOT/indexes/levir_cc_pairs.jsonl" \
   --output "$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json"

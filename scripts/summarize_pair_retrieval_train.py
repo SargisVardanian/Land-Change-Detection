@@ -18,9 +18,11 @@ def _score(row: dict[str, Any]) -> float:
     return float(
         eval_metrics.get("recall@5", 0.0)
         + eval_metrics.get("mAP", 0.0)
+        + eval_metrics.get("pair_to_text_recall@5", 0.0)
+        + eval_metrics.get("pair_to_text_MRR", 0.0)
         + eval_metrics.get("transition_recall@5", 0.0)
         + eval_metrics.get("transition_top1_hit_rate", 0.0)
-        + eval_metrics.get("directionality_accuracy", 0.0)
+        + eval_metrics.get("reversed_pair_sanity_accuracy", 0.0)
     )
 
 
@@ -32,12 +34,16 @@ def _highlights(metrics: dict[str, Any]) -> dict[str, Any]:
         "recall@10": metrics.get("recall@10"),
         "mAP": metrics.get("mAP"),
         "MRR": metrics.get("MRR"),
+        "pair_to_text_recall@1": metrics.get("pair_to_text_recall@1"),
+        "pair_to_text_recall@5": metrics.get("pair_to_text_recall@5"),
+        "pair_to_text_recall@10": metrics.get("pair_to_text_recall@10"),
+        "pair_to_text_MRR": metrics.get("pair_to_text_MRR"),
         "transition_recall@1": metrics.get("transition_recall@1"),
         "transition_recall@5": metrics.get("transition_recall@5"),
         "transition_recall@10": metrics.get("transition_recall@10"),
         "transition_MRR": metrics.get("transition_MRR"),
         "transition_top1_hit_rate": metrics.get("transition_top1_hit_rate"),
-        "directionality_accuracy": metrics.get("directionality_accuracy"),
+        "reversed_pair_sanity_accuracy": metrics.get("reversed_pair_sanity_accuracy"),
         "mean_transition_similarity_top5": metrics.get("mean_transition_similarity_top5"),
         "pair_sample_fraction": metrics.get("pair_sample_fraction"),
     }

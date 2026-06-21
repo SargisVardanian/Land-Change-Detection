@@ -275,12 +275,27 @@ class DINOChangeRetriever(nn.Module):
     def _encode_text(self, texts: list[str], device: torch.device) -> torch.Tensor:
         encoder = self._load_text_encoder()
         raw_features = encoder(texts, device)
+        return self.project_text_features(raw_features)
+
+    def project_text_features(self, raw_features: torch.Tensor) -> torch.Tensor:
         assert self.text_projection is not None
         return F.normalize(self.text_projection(F.normalize(raw_features, dim=-1)), dim=-1)
 
-    def forward(self, before: torch.Tensor, after: torch.Tensor, texts: list[str] | None = None) -> dict[str, torch.Tensor]:
-        patch_before, cls_before = self.visual_encoder(before)
-        patch_after, cls_after = self.visual_encoder(after)
+    def encode_text_features(self, texts: list[str], device: torch.device) -> torch.Tensor:
+        encoder = self._load_text_encoder()
+        return encoder(texts, device)
+
+    def encode_image_tokens(self, images: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return self.visual_encoder(images)
+
+    def _encode_change_from_tokens(
+        self,
+        patch_before: torch.Tensor,
+        cls_before: torch.Tensor,
+        patch_after: torch.Tensor,
+        cls_after: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        del cls_before, cls_after
         signed_delta = patch_after - patch_before
         if self.config.pair_feature_mode == "t2_only":
             fused = patch_after
@@ -298,15 +313,39 @@ class DINOChangeRetriever(nn.Module):
                 dim=-1,
             )
         tokens = self.input_projection(fused) + self.temporal_order_embedding
-        change_cls = self.change_cls.expand(before.shape[0], -1, -1)
+        change_cls = self.change_cls.expand(tokens.shape[0], -1, -1)
         encoded = self.transformer(torch.cat([change_cls, tokens], dim=1))
-        z_change = F.normalize(encoded[:, 0], dim=-1)
-        output = {
-            "change_embedding": z_change,
-            "before_cls": cls_before,
-            "after_cls": cls_after,
+        return {
+            "change_embedding": F.normalize(encoded[:, 0], dim=-1),
             "patch_tokens": encoded[:, 1:],
         }
+
+    def forward_from_visual_tokens(
+        self,
+        before_tokens: torch.Tensor,
+        after_tokens: torch.Tensor,
+        texts: list[str] | None = None,
+        text_features: torch.Tensor | None = None,
+    ) -> dict[str, torch.Tensor]:
+        cls_before = before_tokens[:, 0]
+        cls_after = after_tokens[:, 0]
+        patch_before = before_tokens[:, 1:]
+        patch_after = after_tokens[:, 1:]
+        output = self._encode_change_from_tokens(patch_before, cls_before, patch_after, cls_after)
+        output["before_cls"] = cls_before
+        output["after_cls"] = cls_after
+        if text_features is not None:
+            output["text_embedding"] = self.project_text_features(text_features)
+        elif texts is not None:
+            output["text_embedding"] = self._encode_text(texts, before_tokens.device)
+        return output
+
+    def forward(self, before: torch.Tensor, after: torch.Tensor, texts: list[str] | None = None) -> dict[str, torch.Tensor]:
+        patch_before, cls_before = self.visual_encoder(before)
+        patch_after, cls_after = self.visual_encoder(after)
+        output = self._encode_change_from_tokens(patch_before, cls_before, patch_after, cls_after)
+        output["before_cls"] = cls_before
+        output["after_cls"] = cls_after
         if texts is not None:
             output["text_embedding"] = self._encode_text(texts, before.device)
         return output
