@@ -1,54 +1,86 @@
 #!/bin/bash
 set -euo pipefail
-set -x
 
-if [ -d "/mnt/weka/$USER" ] && [ -w "/mnt/weka/$USER" ]; then
-  export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
-else
-  export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/data/$USER/rs_change_project}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$(dirname "$0")/common_env.sh"
+
+STAGE="${1:-}"
+SBATCH_BIN="${SBATCH_BIN:-sbatch}"
+PRESET="${PRESET:-dinov2_change_fusion}"
+RUN_NAME="${RUN_NAME:-$PRESET}"
+
+if [ -z "$STAGE" ]; then
+  echo "Usage: bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh {preprocess|validate-models|smoke|overfit|train|eval|all}" >&2
+  exit 1
 fi
 
-export PROJECT_ROOT="${PROJECT_ROOT:-$RS_PROJECT_ROOT}"
-export PROJECT_DIR="${PROJECT_DIR:-${PROJECT_ROOT}/code/project}"
-export PYTHON="/mnt/weka/shared-cache/miniforge3/bin/python"
-export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
-export HF_HOME="$RS_PROJECT_ROOT/.cache/huggingface"
-export TRANSFORMERS_CACHE="$HF_HOME/transformers"
-export HF_DATASETS_CACHE="$HF_HOME/datasets"
+submit_stage() {
+  local stage_name="$1"
+  local dependency="${2:-}"
+  shift 2
+  local script_path="$1"
+  shift
+  local sbatch_args=("$SBATCH_BIN" "--parsable")
+  if [ -n "$dependency" ]; then
+    sbatch_args+=("--dependency=afterok:$dependency")
+  fi
+  while [ "$#" -gt 0 ]; do
+    sbatch_args+=("$1")
+    shift
+  done
+  sbatch_args+=("$script_path")
+  local job_id
+  job_id="$("${sbatch_args[@]}")"
+  echo "$stage_name: $job_id"
+  LAST_JOB_ID="$job_id"
+}
 
-cd "$PROJECT_DIR"
-mkdir -p logs "$RS_PROJECT_ROOT/logs" "$RS_PROJECT_ROOT/runs" "$RS_PROJECT_ROOT/indexes" "$HF_HOME"
-
-bash cluster/ysu/setup_rschange_env.sh
-
-"$PYTHON" scripts/plan_change_retrieval_downloads.py \
-  --project-root "$PROJECT_ROOT" \
-  --phase baseline \
-  --reserve-gb "${RESERVE_GB:-120}" \
-  --max-download-gb "${MAX_DOWNLOAD_GB:-50}" \
-  --output-json "$PROJECT_ROOT/reports/download_plan.json"
-
-bash cluster/ysu/download_change_retrieval_datasets.sh
-bash cluster/ysu/bootstrap_change_retrieval_assets.sh
-bash cluster/ysu/verify_project_assets.sh
-
-"$PYTHON" scripts/build_levir_cc_pair_manifest.py \
-  --root "$PROJECT_ROOT/datasets/raw/LEVIR-CC" \
-  --output "$PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl"
-
-bash cluster/ysu/submit_levir_cc_baseline.sh
-
-cat <<EOF
-
-Started LEVIR-CC end-to-end baseline bootstrap.
-
-Next:
-  PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
-  PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
-
-Watch:
-  squeue -u $USER
-  tail -f logs/*.out
-  tail -f logs/*.err
-
-EOF
+case "$STAGE" in
+  preprocess)
+    submit_stage preprocess "" "$SCRIPT_DIR/preprocess_levir_cc.sbatch"
+    ;;
+  validate-models)
+    submit_stage validate-models "" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch"
+    ;;
+  smoke)
+    submit_stage smoke "" "$SCRIPT_DIR/smoke_levir_cc_dino_remoteclip_batch.sbatch" \
+      --export=ALL,PAIR_FEATURE_MODE="${PAIR_FEATURE_MODE:-signed_delta}",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    ;;
+  overfit)
+    submit_stage overfit "" "$SCRIPT_DIR/overfit_levir_cc_retrieval_100.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    ;;
+  train)
+    submit_stage train "" "$SCRIPT_DIR/train_levir_cc_retrieval.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    ;;
+  eval)
+    submit_stage eval "" "$SCRIPT_DIR/eval_levir_cc_retrieval.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train}",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    ;;
+  all)
+    submit_stage preprocess "" "$SCRIPT_DIR/preprocess_levir_cc.sbatch"
+    preprocess_id="$LAST_JOB_ID"
+    submit_stage validate-models "$preprocess_id" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch" \
+      --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    validate_id="$LAST_JOB_ID"
+    submit_stage smoke "$validate_id" "$SCRIPT_DIR/smoke_levir_cc_dino_remoteclip_batch.sbatch" \
+      --export=ALL,PAIR_FEATURE_MODE="${PAIR_FEATURE_MODE:-signed_delta}",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    smoke_id="$LAST_JOB_ID"
+    submit_stage overfit "$smoke_id" "$SCRIPT_DIR/overfit_levir_cc_retrieval_100.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    overfit_id="$LAST_JOB_ID"
+    submit_stage train "$overfit_id" "$SCRIPT_DIR/train_levir_cc_retrieval.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    train_id="$LAST_JOB_ID"
+    submit_stage eval "$train_id" "$SCRIPT_DIR/eval_levir_cc_retrieval.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",RUN_DIR="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    eval_id="$LAST_JOB_ID"
+    submit_stage render "$eval_id" "$SCRIPT_DIR/render_levir_cc_text_query_grid.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",RUN_DIR="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    ;;
+  *)
+    echo "Unknown stage: $STAGE" >&2
+    exit 1
+    ;;
+esac

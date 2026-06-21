@@ -114,7 +114,7 @@ PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submi
 If you want the explicit step-by-step variant instead, use:
 
 ```bash
-PYTHONPATH=src /mnt/weka/shared-cache/miniforge3/bin/python \
+PYTHONPATH=src $PYTHON \
   scripts/build_levir_cc_pair_manifest.py \
   --root "$RS_PROJECT_ROOT/datasets/raw/LEVIR-CC" \
   --output "$RS_PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl"

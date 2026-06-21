@@ -21,14 +21,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--project-root", type=Path, default=None)
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--num-queries", type=int, default=10)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
-    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
+    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "hf_remoteclip", "openclip"), default="remoteclip")
     parser.add_argument("--pair-feature-mode", choices=("t2_only", "signed_delta", "change_fusion"), default="change_fusion")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
-    parser.add_argument("--remoteclip-model-path", type=Path, default=None)
+    parser.add_argument("--remoteclip-arch", default="ViT-B-32")
+    parser.add_argument("--remoteclip-checkpoint", type=Path, default=None)
+    parser.add_argument("--hf-remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
     parser.add_argument("--openclip-pretrained", default=None)
     parser.add_argument("--local-files-only", action="store_true")
@@ -52,7 +55,7 @@ def _render_pair(before_path: str, after_path: str, size: tuple[int, int]) -> Im
 def main() -> int:
     args = parse_args()
     args, _preset_payload = apply_preset(args)
-    samples = load_retrieval_samples(args.manifest, [])
+    samples = load_retrieval_samples(args.manifest, [], args.project_root)
     caption_samples = [sample for sample in samples if sample.caption]
     if not caption_samples:
         raise SystemExit("Manifest contains no caption rows.")
@@ -63,7 +66,9 @@ def main() -> int:
             text_backbone=args.text_backbone,
             pair_feature_mode=args.pair_feature_mode,
             dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
-            remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
+            remoteclip_arch=args.remoteclip_arch,
+            remoteclip_checkpoint=str(args.remoteclip_checkpoint) if args.remoteclip_checkpoint else None,
+            hf_remoteclip_model_path=str(args.hf_remoteclip_model_path) if args.hf_remoteclip_model_path else None,
             openclip_model_name=args.openclip_model_name,
             openclip_pretrained=args.openclip_pretrained,
             local_files_only=args.local_files_only,

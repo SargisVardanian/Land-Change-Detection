@@ -26,7 +26,9 @@ class DINOChangeRetrieverConfig:
     text_backbone: str = "remoteclip"
     pair_feature_mode: str = "change_fusion"
     dinov2_model_path: str | None = None
-    remoteclip_model_path: str | None = None
+    remoteclip_arch: str = "ViT-B-32"
+    remoteclip_checkpoint: str | None = None
+    hf_remoteclip_model_path: str | None = None
     openclip_model_name: str = "ViT-B-32"
     openclip_pretrained: str | None = None
     local_files_only: bool = False
@@ -131,6 +133,50 @@ class FrozenHFRemoteTextEncoder(nn.Module):
         return F.normalize(features, dim=-1)
 
 
+def _extract_openclip_state_dict(payload: Any) -> dict[str, torch.Tensor]:
+    if isinstance(payload, dict):
+        for key in ("state_dict", "model", "model_state_dict"):
+            nested = payload.get(key)
+            if isinstance(nested, dict):
+                return nested
+        if payload and all(isinstance(key, str) for key in payload):
+            return payload
+    raise ValueError("Unsupported OpenCLIP checkpoint format.")
+
+
+class FrozenRemoteCLIPEncoder(nn.Module):
+    def __init__(self, arch: str, checkpoint_path: str | Path):
+        super().__init__()
+        checkpoint = Path(checkpoint_path)
+        if not checkpoint.exists():
+            raise FileNotFoundError(REMOTECLIP_PATH_ERROR)
+        try:
+            import open_clip
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(OPENCLIP_IMPORT_ERROR) from exc
+        self._open_clip = open_clip
+        self.model, _, self.image_transform = open_clip.create_model_and_transforms(arch, pretrained=None)
+        state = torch.load(checkpoint, map_location="cpu", weights_only=False)
+        state_dict = _extract_openclip_state_dict(state)
+        missing, unexpected = self.model.load_state_dict(state_dict, strict=False)
+        if unexpected:
+            raise ValueError(f"Unexpected OpenCLIP checkpoint keys: {unexpected[:5]}")
+        if missing and any(not key.startswith("logit_scale") for key in missing):
+            raise ValueError(f"Missing OpenCLIP checkpoint keys: {missing[:5]}")
+        self.tokenizer = open_clip.get_tokenizer(arch)
+        for parameter in self.model.parameters():
+            parameter.requires_grad = False
+        self.output_dim = int(getattr(self.model, "text_projection").shape[-1])
+
+    def forward(self, texts: list[str], device: torch.device) -> torch.Tensor:
+        tokens = self.tokenizer(texts).to(device)
+        features = self.model.encode_text(tokens)
+        return F.normalize(features, dim=-1)
+
+    def encode_image(self, images: torch.Tensor) -> torch.Tensor:
+        return F.normalize(self.model.encode_image(images), dim=-1)
+
+
 class FrozenOpenClipTextEncoder(nn.Module):
     def __init__(self, model_name: str, pretrained: str | None):
         super().__init__()
@@ -195,7 +241,9 @@ class DINOChangeRetriever(nn.Module):
         self.text_projection: nn.Linear | None = None
         if self.config.text_backbone == "simple_text":
             self._load_text_encoder()
-        elif self.config.text_backbone == "remoteclip" and self.config.remoteclip_model_path and Path(self.config.remoteclip_model_path).exists():
+        elif self.config.text_backbone == "remoteclip" and self.config.remoteclip_checkpoint and Path(self.config.remoteclip_checkpoint).exists():
+            self._load_text_encoder()
+        elif self.config.text_backbone == "hf_remoteclip" and self.config.hf_remoteclip_model_path and Path(self.config.hf_remoteclip_model_path).exists():
             self._load_text_encoder()
         elif self.config.text_backbone == "openclip" and self.config.openclip_pretrained:
             self._load_text_encoder()
@@ -206,7 +254,12 @@ class DINOChangeRetriever(nn.Module):
         if self.config.text_backbone == "simple_text":
             encoder = FrozenSimpleTextEncoder()
         elif self.config.text_backbone == "remoteclip":
-            model_path = self.config.remoteclip_model_path
+            checkpoint_path = self.config.remoteclip_checkpoint
+            if not checkpoint_path or not Path(checkpoint_path).exists():
+                raise FileNotFoundError(REMOTECLIP_PATH_ERROR)
+            encoder = FrozenRemoteCLIPEncoder(self.config.remoteclip_arch, checkpoint_path)
+        elif self.config.text_backbone == "hf_remoteclip":
+            model_path = self.config.hf_remoteclip_model_path
             if not model_path or not Path(model_path).exists():
                 raise FileNotFoundError(REMOTECLIP_PATH_ERROR)
             encoder = FrozenHFRemoteTextEncoder(model_path, local_files_only=self.config.local_files_only)

@@ -49,7 +49,7 @@ def test_remoteclip_missing_path_fails_with_clear_message():
         DINOChangeRetrieverConfig(
             visual_backbone="simple_patch",
             text_backbone="remoteclip",
-            remoteclip_model_path=None,
+            remoteclip_checkpoint=None,
             hidden_dim=96,
             transformer_heads=6,
         )
@@ -126,7 +126,7 @@ def test_pair_feature_modes_adjust_input_projection():
     assert model_delta.input_projection.in_features == 128
 
 
-def test_remoteclip_text_encoder_uses_local_hf_components(monkeypatch, tmp_path):
+def test_hf_remoteclip_text_encoder_uses_local_hf_components(monkeypatch, tmp_path):
     class FakeTokenizer:
         @classmethod
         def from_pretrained(cls, *_args, **_kwargs):
@@ -168,8 +168,8 @@ def test_remoteclip_text_encoder_uses_local_hf_components(monkeypatch, tmp_path)
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
             visual_backbone="simple_patch",
-            text_backbone="remoteclip",
-            remoteclip_model_path=str(model_dir),
+            text_backbone="hf_remoteclip",
+            hf_remoteclip_model_path=str(model_dir),
             hidden_dim=64,
             transformer_heads=4,
             local_files_only=True,
@@ -180,3 +180,58 @@ def test_remoteclip_text_encoder_uses_local_hf_components(monkeypatch, tmp_path)
     output = model(before, after, ["new building appears", "road gets wider"])
 
     assert output["text_embedding"].shape == (2, 64)
+
+
+def test_remoteclip_openclip_checkpoint_loader(monkeypatch, tmp_path):
+    class FakeOpenClipModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.text_projection = torch.nn.Parameter(torch.eye(16))
+
+        def load_state_dict(self, state_dict, strict=False):
+            assert "text_projection" in state_dict
+            return [], []
+
+        def encode_text(self, tokens: torch.Tensor):
+            features = torch.zeros(tokens.shape[0], 16, dtype=torch.float32, device=tokens.device)
+            features[:, 0] = tokens.sum(dim=1).float()
+            features[:, 1] = 1.0
+            return features
+
+        def encode_image(self, images: torch.Tensor):
+            pooled = images.mean(dim=(2, 3))
+            return torch.nn.functional.pad(pooled, (0, 13))
+
+    class FakeTokenizer:
+        def __call__(self, texts: list[str]):
+            width = max(1, max(len(text.split()) for text in texts))
+            tokens = torch.zeros(len(texts), width, dtype=torch.long)
+            for row_index, text in enumerate(texts):
+                count = len(text.split())
+                if count:
+                    tokens[row_index, :count] = torch.arange(1, count + 1)
+            return tokens
+
+    fake_open_clip = types.SimpleNamespace(
+        create_model_and_transforms=lambda *_args, **_kwargs: (FakeOpenClipModel(), None, "fake-preprocess"),
+        get_tokenizer=lambda _arch: FakeTokenizer(),
+    )
+    monkeypatch.setitem(sys.modules, "open_clip", fake_open_clip)
+    checkpoint = tmp_path / "RemoteCLIP-ViT-B-32.pt"
+    torch.save({"state_dict": {"text_projection": torch.eye(16)}}, checkpoint)
+
+    model = DINOChangeRetriever(
+        DINOChangeRetrieverConfig(
+            visual_backbone="simple_patch",
+            text_backbone="remoteclip",
+            remoteclip_arch="ViT-B-32",
+            remoteclip_checkpoint=str(checkpoint),
+            hidden_dim=32,
+            transformer_heads=4,
+        )
+    )
+    before = torch.randn(2, 3, 224, 224)
+    after = torch.randn(2, 3, 224, 224)
+    output = model(before, after, ["new building appears", "road gets wider"])
+
+    assert output["text_embedding"].shape == (2, 32)

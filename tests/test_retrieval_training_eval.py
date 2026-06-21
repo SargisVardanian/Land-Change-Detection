@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 from land_change_detection.training.metrics import mean_average_precision, recall_at_k, transition_consistency_score
@@ -64,7 +65,7 @@ def test_train_and_eval_scripts(tmp_path: Path):
     eval_out = tmp_path / "eval.json"
 
     train_cmd = [
-        str(Path(".venv/bin/python")),
+        sys.executable,
         "scripts/train_retrieval_head.py",
         "--manifest",
         str(manifest),
@@ -74,7 +75,7 @@ def test_train_and_eval_scripts(tmp_path: Path):
         "1",
     ]
     eval_cmd = [
-        str(Path(".venv/bin/python")),
+        sys.executable,
         "scripts/eval_retrieval.py",
         "--manifest",
         str(manifest),

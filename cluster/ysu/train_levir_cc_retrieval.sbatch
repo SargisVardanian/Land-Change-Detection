@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=overfit_levir_cc_retrieval_100
+#SBATCH --job-name=train_levir_cc_retrieval
 #SBATCH --partition=research
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=8
@@ -15,21 +15,21 @@ source "$(dirname "$0")/common_env.sh"
 
 PRESET="${PRESET:-simple_patch_smoke}"
 RUN_NAME="${RUN_NAME:-$PRESET}"
-RUN_DIR="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100"
+RUN_DIR="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train"
 
 cd "$CODE_ROOT"
 mkdir -p logs "$RUN_DIR" "$RS_PROJECT_ROOT/reports"
 
 TRAIN_ARGS=(
-  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_overfit_100.jsonl"
+  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_train.jsonl"
+  --eval-levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_val.jsonl"
   --output-dir "$RUN_DIR"
   --project-root "$RS_PROJECT_ROOT"
   --preset "$PRESET"
-  --epochs "${EPOCHS:-12}"
+  --epochs "${EPOCHS:-20}"
   --batch-size "${BATCH_SIZE:-8}"
   --image-size "${IMAGE_SIZE:-224}"
-  --max-train-samples "${MAX_TRAIN_SAMPLES:-100}"
-  --grad-accum-steps "${GRAD_ACCUM_STEPS:-1}"
+  --grad-accum-steps "${GRAD_ACCUM_STEPS:-2}"
   --device auto
 )
 
@@ -43,8 +43,17 @@ if [ "$PRESET" != "simple_patch_smoke" ]; then
   )
 fi
 
-"$PYTHON" scripts/overfit_levir_cc_retrieval_100.py "${TRAIN_ARGS[@]}"
+"$PYTHON" scripts/train_dino_pair_retrieval.py "${TRAIN_ARGS[@]}"
 
 "$PYTHON" scripts/summarize_pair_retrieval_train.py \
   --run-dir "$RUN_DIR" \
   --output "$RUN_DIR/train_summary.json"
+
+"$PYTHON" scripts/write_environment_fingerprint.py \
+  --project-root "$RS_PROJECT_ROOT" \
+  --dataset-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_train.jsonl" \
+  --dinov2-model-path "${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}" \
+  --remoteclip-checkpoint "${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
+  --config-json "$RUN_DIR/config.json" \
+  --output "$RS_PROJECT_ROOT/reports/environment_fingerprint.json" \
+  --cli "scripts/train_dino_pair_retrieval.py ${TRAIN_ARGS[*]}"

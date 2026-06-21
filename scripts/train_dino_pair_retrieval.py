@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 import json
 import random
 from dataclasses import dataclass
@@ -28,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train retrieval-first DINO/simple-patch change retriever.")
     parser.add_argument("--preset", choices=preset_names(), default=None)
     parser.add_argument("--levir-manifest", type=Path, default=None)
+    parser.add_argument("--eval-levir-manifest", type=Path, default=None)
     parser.add_argument("--pair-manifest", type=Path, action="append", default=[])
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=None)
@@ -37,17 +39,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--lambda-pair", type=float, default=0.2)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
-    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
+    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "hf_remoteclip", "openclip"), default="remoteclip")
     parser.add_argument("--pair-feature-mode", choices=("t2_only", "signed_delta", "change_fusion"), default="change_fusion")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
-    parser.add_argument("--remoteclip-model-path", type=Path, default=None)
+    parser.add_argument("--remoteclip-arch", default="ViT-B-32")
+    parser.add_argument("--remoteclip-checkpoint", type=Path, default=None)
+    parser.add_argument("--hf-remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
     parser.add_argument("--openclip-pretrained", default=None)
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--pair-loss", choices=("supervised", "soft"), default="supervised")
     parser.add_argument("--max-train-samples", type=int, default=None)
+    parser.add_argument("--max-eval-samples", type=int, default=None)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--mixed-precision", action="store_true")
     parser.add_argument("--seed", type=int, default=7)
     return parser.parse_args()
 
@@ -78,7 +85,14 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def load_retrieval_samples(levir_manifest: Path | None, pair_manifests: list[Path]) -> list[RetrievalSample]:
+def _resolve_asset_path(raw_path: str, project_root: Path | None) -> str:
+    path = Path(raw_path)
+    if path.is_absolute() or project_root is None:
+        return str(path)
+    return str((project_root / path).resolve())
+
+
+def load_retrieval_samples(levir_manifest: Path | None, pair_manifests: list[Path], project_root: Path | None = None) -> list[RetrievalSample]:
     samples: list[RetrievalSample] = []
     if levir_manifest is not None:
         for row in _read_jsonl(levir_manifest):
@@ -87,8 +101,8 @@ def load_retrieval_samples(levir_manifest: Path | None, pair_manifests: list[Pat
                     sample_id=str(row["sample_id"]),
                     pair_id=str(row.get("pair_id") or row["sample_id"]),
                     split=str(row.get("split") or "unknown"),
-                    before_path=str(row["before_path"]),
-                    after_path=str(row["after_path"]),
+                    before_path=_resolve_asset_path(str(row["before_path"]), project_root),
+                    after_path=_resolve_asset_path(str(row["after_path"]), project_root),
                     caption=str(row.get("caption") or ""),
                     transition_label=str(row.get("metadata", {}).get("transition_label") or row.get("sample_id")),
                     dominant_transition=str(row.get("metadata", {}).get("transition_label") or row.get("sample_id")),
@@ -103,8 +117,8 @@ def load_retrieval_samples(levir_manifest: Path | None, pair_manifests: list[Pat
                     sample_id=str(row["sample_id"]),
                     pair_id=str(row.get("pair_id") or row["sample_id"]),
                     split=str(row.get("split") or "unknown"),
-                    before_path=str(row["before_path"]),
-                    after_path=str(row["after_path"]),
+                    before_path=_resolve_asset_path(str(row["before_path"]), project_root),
+                    after_path=_resolve_asset_path(str(row["after_path"]), project_root),
                     caption=None,
                     transition_label=str(row.get("dominant_transition") or row.get("sample_id")),
                     dominant_transition=str(row.get("dominant_transition") or row.get("sample_id")),
@@ -391,6 +405,15 @@ def validate_pair_id_split_integrity(samples: list[RetrievalSample]) -> None:
         raise ValueError(f"Detected train/val/test pair_id leakage: {leaked_preview}")
 
 
+def validate_pair_id_disjoint_sets(train_samples: list[RetrievalSample], eval_samples: list[RetrievalSample]) -> None:
+    train_pair_ids = {sample.pair_id for sample in train_samples}
+    eval_pair_ids = {sample.pair_id for sample in eval_samples}
+    leaked = sorted(train_pair_ids.intersection(eval_pair_ids))
+    if leaked:
+        leaked_preview = ", ".join(leaked[:10])
+        raise ValueError(f"Detected pair_id overlap between train and eval manifests: {leaked_preview}")
+
+
 def compute_retrieval_metrics(
     embeddings: torch.Tensor,
     sample_ids: list[str],
@@ -522,6 +545,7 @@ def run_epoch(
     optimizer: torch.optim.Optimizer | None,
     args: argparse.Namespace,
     device: torch.device,
+    scaler: torch.amp.GradScaler | None = None,
 ) -> dict[str, float]:
     training = optimizer is not None
     model.train(training)
@@ -537,50 +561,71 @@ def run_epoch(
     all_reversed_embeddings: list[torch.Tensor] = []
     anchor_positive_ratios: list[float] = []
 
-    for batch in loader:
+    if training:
+        optimizer.zero_grad(set_to_none=True)
+
+    total_steps = len(loader)
+    amp_enabled = bool(getattr(args, "mixed_precision", False) and device.type == "cuda")
+
+    for step_index, batch in enumerate(loader, start=1):
         before = batch["before"].to(device)
         after = batch["after"].to(device)
         captions = [caption if isinstance(caption, str) and caption else "" for caption in batch["caption"]]
         label_list = [str(label) for label in batch["transition_label"]]
         has_text = any(caption.strip() for caption in captions)
-        outputs = model(before, after, captions if has_text else None)
-        with torch.no_grad():
-            reversed_outputs = model(after, before, None)
-        loss = outputs["change_embedding"].sum() * 0.0
-        metrics_row: dict[str, float] = {}
 
-        if has_text:
-            text_mask = [index for index, caption in enumerate(captions) if caption.strip()]
-            if text_mask:
-                img_emb = outputs["change_embedding"][text_mask]
-                txt_emb = outputs["text_embedding"][text_mask]
-                text_group_ids = [batch["pair_id"][index] for index in text_mask]
-                positive_mask = build_positive_mask(text_group_ids, device)
-                anchor_positive_ratios.append(float((positive_mask.sum(dim=1) > 1).float().mean().item()))
-                text_loss = symmetric_infonce_loss(img_emb, txt_emb, positive_mask=positive_mask)
-                loss = loss + text_loss
-                metrics_row["text_loss"] = float(text_loss.item())
-                all_text_embeddings.append(txt_emb.detach().cpu())
-                all_text_query_ids.extend(text_group_ids)
-                all_text_query_transitions.extend([label_list[index] for index in text_mask])
+        grad_context = nullcontext() if training else torch.no_grad()
+        with grad_context:
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=amp_enabled):
+                outputs = model(before, after, captions if has_text else None)
+                loss = outputs["change_embedding"].sum() * 0.0
+                metrics_row: dict[str, float] = {}
 
-        hist_tensor, hist_indices = transition_histograms_to_tensor(batch["transition_histogram"], device)
-        if hist_tensor is not None:
-            pair_embeddings = outputs["change_embedding"][hist_indices]
-            pair_labels = [label_list[index] for index in hist_indices]
-            pair_positive_mask = build_positive_mask(pair_labels, device)
-            anchor_positive_ratios.append(float((pair_positive_mask.sum(dim=1) > 1).float().mean().item()))
-            if args.pair_loss == "supervised":
-                pair_loss = supervised_contrastive_loss(pair_embeddings, pair_labels)
-            else:
-                pair_loss = soft_histogram_contrastive_loss(pair_embeddings, hist_tensor)
-            loss = loss + args.lambda_pair * pair_loss
-            metrics_row["pair_loss"] = float(pair_loss.item())
+                if has_text:
+                    text_mask = [index for index, caption in enumerate(captions) if caption.strip()]
+                    if text_mask:
+                        img_emb = outputs["change_embedding"][text_mask]
+                        txt_emb = outputs["text_embedding"][text_mask]
+                        text_group_ids = [batch["pair_id"][index] for index in text_mask]
+                        positive_mask = build_positive_mask(text_group_ids, device)
+                        anchor_positive_ratios.append(float((positive_mask.sum(dim=1) > 1).float().mean().item()))
+                        text_loss = symmetric_infonce_loss(img_emb, txt_emb, positive_mask=positive_mask)
+                        loss = loss + text_loss
+                        metrics_row["text_loss"] = float(text_loss.item())
+                        all_text_embeddings.append(txt_emb.detach().cpu())
+                        all_text_query_ids.extend(text_group_ids)
+                        all_text_query_transitions.extend([label_list[index] for index in text_mask])
+
+                hist_tensor, hist_indices = transition_histograms_to_tensor(batch["transition_histogram"], device)
+                if hist_tensor is not None:
+                    pair_embeddings = outputs["change_embedding"][hist_indices]
+                    pair_labels = [label_list[index] for index in hist_indices]
+                    pair_positive_mask = build_positive_mask(pair_labels, device)
+                    anchor_positive_ratios.append(float((pair_positive_mask.sum(dim=1) > 1).float().mean().item()))
+                    if args.pair_loss == "supervised":
+                        pair_loss = supervised_contrastive_loss(pair_embeddings, pair_labels)
+                    else:
+                        pair_loss = soft_histogram_contrastive_loss(pair_embeddings, hist_tensor)
+                    loss = loss + args.lambda_pair * pair_loss
+                    metrics_row["pair_loss"] = float(pair_loss.item())
+
+            with torch.no_grad():
+                reversed_outputs = model(after, before, None)
 
         if optimizer is not None:
-            optimizer.zero_grad(set_to_none=True)
-            loss.backward()
-            optimizer.step()
+            scaled_loss = loss / max(getattr(args, "grad_accum_steps", 1), 1)
+            if scaler is not None and amp_enabled:
+                scaler.scale(scaled_loss).backward()
+            else:
+                scaled_loss.backward()
+            should_step = step_index % max(getattr(args, "grad_accum_steps", 1), 1) == 0 or step_index == total_steps
+            if should_step:
+                if scaler is not None and amp_enabled:
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
 
         metrics_row["loss"] = float(loss.item())
         rows.append(metrics_row)
@@ -622,10 +667,16 @@ def main() -> int:
     args = parse_args()
     args, preset_payload = apply_preset(args)
     set_seed(args.seed)
-    samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
-    if not samples:
+    train_samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest), args.project_root)
+    if not train_samples:
         raise SystemExit("No retrieval samples were loaded.")
-    validate_pair_id_split_integrity(samples)
+    validate_pair_id_split_integrity(train_samples)
+    eval_samples = load_retrieval_samples(args.eval_levir_manifest, [], args.project_root) if args.eval_levir_manifest else list(train_samples)
+    if not eval_samples:
+        raise SystemExit("No evaluation samples were loaded.")
+    validate_pair_id_split_integrity(eval_samples)
+    if args.eval_levir_manifest is not None:
+        validate_pair_id_disjoint_sets(train_samples, eval_samples)
     device = choose_device(args.device)
     model = DINOChangeRetriever(
         DINOChangeRetrieverConfig(
@@ -633,15 +684,21 @@ def main() -> int:
                 text_backbone=args.text_backbone,
                 pair_feature_mode=args.pair_feature_mode,
                 dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
-                remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
+                remoteclip_arch=args.remoteclip_arch,
+                remoteclip_checkpoint=str(args.remoteclip_checkpoint) if args.remoteclip_checkpoint else None,
+                hf_remoteclip_model_path=str(args.hf_remoteclip_model_path) if args.hf_remoteclip_model_path else None,
                 openclip_model_name=args.openclip_model_name,
                 openclip_pretrained=args.openclip_pretrained,
                 local_files_only=args.local_files_only,
                 image_size=args.image_size,
             )
     ).to(device)
-    loader = build_dataloader(samples, args, shuffle=True)
+    train_loader = build_dataloader(train_samples, args, shuffle=True)
+    eval_args = argparse.Namespace(**vars(args))
+    eval_args.max_train_samples = args.max_eval_samples
+    eval_loader = build_dataloader(eval_samples, eval_args, shuffle=False)
     optimizer = torch.optim.AdamW([parameter for parameter in model.parameters() if parameter.requires_grad], lr=args.learning_rate)
+    scaler = torch.amp.GradScaler("cuda", enabled=bool(args.mixed_precision and device.type == "cuda"))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     history: list[dict[str, Any]] = []
     best_metric = -1.0
@@ -652,29 +709,35 @@ def main() -> int:
         "storage_inventory": locate_storage_inventory(args.project_root),
         "model_fingerprints": {
             "dinov2_model_path": path_fingerprint(args.dinov2_model_path),
-            "remoteclip_model_path": path_fingerprint(args.remoteclip_model_path),
+            "remoteclip_checkpoint": path_fingerprint(args.remoteclip_checkpoint),
+            "hf_remoteclip_model_path": path_fingerprint(args.hf_remoteclip_model_path),
         },
         "dataset_versions": {
             "levir_manifest": jsonl_fingerprint(args.levir_manifest),
+            "eval_levir_manifest": jsonl_fingerprint(args.eval_levir_manifest),
             "pair_manifests": [jsonl_fingerprint(path) for path in args.pair_manifest],
         },
         "exact_split": {
             "levir_manifest_path": str(args.levir_manifest) if args.levir_manifest else None,
+            "eval_levir_manifest_path": str(args.eval_levir_manifest) if args.eval_levir_manifest else None,
             "pair_manifest_paths": [str(path) for path in args.pair_manifest],
-            "num_samples": len(samples),
-            "num_unique_pairs": len({sample.pair_id for sample in samples}),
-            "num_caption_rows": sum(1 for sample in samples if sample.caption),
-            "num_caption_samples": sum(1 for sample in samples if sample.caption),
-            "num_transition_samples": sum(1 for sample in samples if sample.transition_histogram),
-            "split_pair_counts": {
-                split: len({sample.pair_id for sample in samples if sample.split == split})
-                for split in sorted({sample.split for sample in samples})
+            "train_num_samples": len(train_samples),
+            "train_num_unique_pairs": len({sample.pair_id for sample in train_samples}),
+            "eval_num_samples": len(eval_samples),
+            "eval_num_unique_pairs": len({sample.pair_id for sample in eval_samples}),
+            "train_split_pair_counts": {
+                split: len({sample.pair_id for sample in train_samples if sample.split == split})
+                for split in sorted({sample.split for sample in train_samples})
+            },
+            "eval_split_pair_counts": {
+                split: len({sample.pair_id for sample in eval_samples if sample.split == split})
+                for split in sorted({sample.split for sample in eval_samples})
             },
         },
     }
     for epoch in range(1, args.epochs + 1):
-        train_metrics = run_epoch(model, loader, optimizer, args, device)
-        eval_metrics = run_epoch(model, loader, None, args, device)
+        train_metrics = run_epoch(model, train_loader, optimizer, args, device, scaler=scaler)
+        eval_metrics = run_epoch(model, eval_loader, None, eval_args, device)
         row = {"epoch": epoch, "train": train_metrics, "eval": eval_metrics}
         history.append(row)
         score = float(eval_metrics.get("recall@5", 0.0) + eval_metrics.get("mAP", 0.0))

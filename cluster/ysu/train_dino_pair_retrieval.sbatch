@@ -13,7 +13,7 @@ set -x
 
 export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
 export PROJECT_DIR="$RS_PROJECT_ROOT/code/project"
-export PYTHON="/mnt/weka/shared-cache/miniforge3/bin/python"
+source "$(dirname "$0")/common_env.sh"
 export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
 export HF_HOME="$RS_PROJECT_ROOT/.cache/huggingface"
 cd "$PROJECT_DIR"

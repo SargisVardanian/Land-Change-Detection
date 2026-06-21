@@ -84,7 +84,13 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
             "4",
             "--device",
             "cpu",
-            "--min-r5-improvement",
+            "--min-loss-drop",
+            "0.0",
+            "--min-recall-at-5",
+            "0.0",
+            "--min-recall-at-10",
+            "0.0",
+            "--min-anchor-positive-ratio",
             "0.0",
         ],
         cwd=repo_root,
@@ -95,7 +101,7 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     )
     assert overfit.returncode == 0, overfit.stderr
     report = json.loads((output_dir / "overfit_report.json").read_text(encoding="utf-8"))
-    assert report["improved_recall@5"] is True
+    assert report["gate_passed"] is True
     assert (output_dir / "best.pt").exists()
 
 

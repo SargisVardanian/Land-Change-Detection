@@ -11,22 +11,18 @@
 set -euo pipefail
 set -x
 
-export RS_PROJECT_ROOT="${RS_PROJECT_ROOT:-/mnt/weka/$USER/rs_change_project}"
-export PROJECT_DIR="$RS_PROJECT_ROOT/code/project"
-export PYTHON="/mnt/weka/shared-cache/miniforge3/bin/python"
-export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
-export HF_HOME="$RS_PROJECT_ROOT/.cache/huggingface"
+source "$(dirname "$0")/common_env.sh"
 
 PRESET="${PRESET:-simple_patch_smoke}"
 RUN_NAME="${RUN_NAME:-$PRESET}"
-RUN_DIR="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100"
+RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train}"
 
-cd "$PROJECT_DIR"
-mkdir -p logs "$RS_PROJECT_ROOT/runs" "$RS_PROJECT_ROOT/indexes" "$HF_HOME" "$RUN_DIR"
+cd "$CODE_ROOT"
+mkdir -p logs "$RUN_DIR"
 
 EVAL_ARGS=(
   --preset "$PRESET"
-  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_pair_manifest.jsonl"
+  --levir-manifest "$RS_PROJECT_ROOT/indexes/levir_cc_test.jsonl"
   --checkpoint "$RUN_DIR/best.pt"
   --output "$RUN_DIR/eval_metrics.json"
   --project-root "$RS_PROJECT_ROOT"
@@ -35,9 +31,12 @@ EVAL_ARGS=(
 )
 
 if [ "$PRESET" != "simple_patch_smoke" ]; then
-  EVAL_ARGS+=(--dinov2-model-path "${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}")
-  EVAL_ARGS+=(--remoteclip-model-path "${REMOTECLIP_MODEL_PATH:-$RS_PROJECT_ROOT/models/remoteclip-rn50}")
-  EVAL_ARGS+=(--local-files-only)
+  EVAL_ARGS+=(
+    --dinov2-model-path "${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}"
+    --remoteclip-arch "${REMOTECLIP_ARCH:-ViT-B-32}"
+    --remoteclip-checkpoint "${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}"
+    --local-files-only
+  )
 fi
 
 "$PYTHON" scripts/eval_dino_pair_retrieval.py "${EVAL_ARGS[@]}"

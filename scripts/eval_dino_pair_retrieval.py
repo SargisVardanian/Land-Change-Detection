@@ -36,10 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--visual-backbone", choices=("simple_patch", "dinov2"), default="simple_patch")
-    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "openclip"), default="remoteclip")
+    parser.add_argument("--text-backbone", choices=("simple_text", "remoteclip", "hf_remoteclip", "openclip"), default="remoteclip")
     parser.add_argument("--pair-feature-mode", choices=("t2_only", "signed_delta", "change_fusion"), default="change_fusion")
     parser.add_argument("--dinov2-model-path", type=Path, default=None)
-    parser.add_argument("--remoteclip-model-path", type=Path, default=None)
+    parser.add_argument("--remoteclip-arch", default="ViT-B-32")
+    parser.add_argument("--remoteclip-checkpoint", type=Path, default=None)
+    parser.add_argument("--hf-remoteclip-model-path", type=Path, default=None)
     parser.add_argument("--openclip-model-name", default="ViT-B-32")
     parser.add_argument("--openclip-pretrained", default=None)
     parser.add_argument("--local-files-only", action="store_true")
@@ -89,7 +91,7 @@ def _metrics_for_subset(
 def main() -> int:
     args = parse_args()
     args, preset_payload = apply_preset(args)
-    samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest))
+    samples = load_retrieval_samples(args.levir_manifest, list(args.pair_manifest), args.project_root)
     from scripts.train_dino_pair_retrieval import validate_pair_id_split_integrity
 
     validate_pair_id_split_integrity(samples)
@@ -100,7 +102,9 @@ def main() -> int:
             text_backbone=args.text_backbone,
             pair_feature_mode=args.pair_feature_mode,
             dinov2_model_path=str(args.dinov2_model_path) if args.dinov2_model_path else None,
-            remoteclip_model_path=str(args.remoteclip_model_path) if args.remoteclip_model_path else None,
+            remoteclip_arch=args.remoteclip_arch,
+            remoteclip_checkpoint=str(args.remoteclip_checkpoint) if args.remoteclip_checkpoint else None,
+            hf_remoteclip_model_path=str(args.hf_remoteclip_model_path) if args.hf_remoteclip_model_path else None,
             openclip_model_name=args.openclip_model_name,
             openclip_pretrained=args.openclip_pretrained,
             local_files_only=args.local_files_only,
@@ -131,7 +135,8 @@ def main() -> int:
         "model_fingerprints": {
             "checkpoint": path_fingerprint(args.checkpoint),
             "dinov2_model_path": path_fingerprint(args.dinov2_model_path),
-            "remoteclip_model_path": path_fingerprint(args.remoteclip_model_path),
+            "remoteclip_checkpoint": path_fingerprint(args.remoteclip_checkpoint),
+            "hf_remoteclip_model_path": path_fingerprint(args.hf_remoteclip_model_path),
         },
         "dataset_versions": {
             "levir_manifest": jsonl_fingerprint(args.levir_manifest),

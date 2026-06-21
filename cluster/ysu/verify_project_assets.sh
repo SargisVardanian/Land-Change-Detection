@@ -11,7 +11,7 @@ fi
 export PROJECT_ROOT="${PROJECT_ROOT:-$RS_PROJECT_ROOT}"
 export PROJECT_DIR="${PROJECT_DIR:-${PROJECT_ROOT}/code/project}"
 export OUTPUT_PATH="${OUTPUT_PATH:-${PROJECT_ROOT}/rs_change_project_verification.json}"
-export PYTHON="/mnt/weka/shared-cache/miniforge3/bin/python"
+source "$(dirname "$0")/common_env.sh"
 export PYTHONPATH="$PROJECT_DIR/src:${PYTHONPATH:-}"
 
 cd "$PROJECT_DIR"

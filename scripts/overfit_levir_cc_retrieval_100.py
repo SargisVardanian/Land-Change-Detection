@@ -20,7 +20,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--image-size", type=int, default=224)
     parser.add_argument("--max-train-samples", type=int, default=100)
-    parser.add_argument("--min-r5-improvement", type=float, default=0.0)
+    parser.add_argument("--min-loss-drop", type=float, default=0.05)
+    parser.add_argument("--min-recall-at-5", type=float, default=0.90)
+    parser.add_argument("--min-recall-at-10", type=float, default=0.95)
+    parser.add_argument("--min-anchor-positive-ratio", type=float, default=0.95)
+    parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--remoteclip-arch", default="ViT-B-32")
+    parser.add_argument("--remoteclip-checkpoint", type=Path, default=None)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="cpu")
     return parser.parse_args()
 
@@ -43,9 +49,13 @@ def _run_train(args: argparse.Namespace) -> None:
         str(args.image_size),
         "--max-train-samples",
         str(args.max_train_samples),
+        "--grad-accum-steps",
+        str(args.grad_accum_steps),
         "--device",
         args.device,
     ]
+    if args.remoteclip_checkpoint is not None:
+        cmd.extend(["--remoteclip-arch", args.remoteclip_arch, "--remoteclip-checkpoint", str(args.remoteclip_checkpoint)])
     if args.project_root is not None:
         cmd.extend(["--project-root", str(args.project_root)])
     result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False, env={"PYTHONPATH": "src"})
@@ -67,14 +77,35 @@ def main() -> int:
     history = list(history_payload.get("history", []))
     if not history:
         raise SystemExit("Training produced no metrics history.")
-    start_r5 = float(history[0].get("eval", {}).get("recall@5", 0.0))
-    best_r5 = max(float(row.get("eval", {}).get("recall@5", 0.0)) for row in history)
-    improved = best_r5 >= start_r5 + args.min_r5_improvement
+    eval_rows = [row.get("eval", {}) for row in history]
+    start_loss = float(eval_rows[0].get("loss", 0.0))
+    best_row = max(eval_rows, key=lambda row: float(row.get("recall@5", 0.0)) + float(row.get("recall@10", 0.0)))
+    best_loss = float(best_row.get("loss", 0.0))
+    best_r5 = float(best_row.get("recall@5", 0.0))
+    best_r10 = float(best_row.get("recall@10", 0.0))
+    best_anchor_ratio = float(best_row.get("anchors_with_positive_ratio", 0.0))
+    finite_metrics = all(
+        all(isinstance(value, (int, float)) and abs(float(value)) != float("inf") and float(value) == float(value) for value in row.values())
+        for row in eval_rows
+    )
+    loss_decreased = best_loss <= start_loss * (1.0 - args.min_loss_drop)
+    improved = (
+        loss_decreased
+        and best_r5 >= args.min_recall_at_5
+        and best_r10 >= args.min_recall_at_10
+        and best_anchor_ratio >= args.min_anchor_positive_ratio
+        and finite_metrics
+    )
     report = {
         "preset": args.preset,
-        "start_recall@5": start_r5,
+        "start_loss": start_loss,
+        "best_loss": best_loss,
         "best_recall@5": best_r5,
-        "improved_recall@5": improved,
+        "best_recall@10": best_r10,
+        "best_anchors_with_positive_ratio": best_anchor_ratio,
+        "loss_decreased_materially": loss_decreased,
+        "finite_metrics": finite_metrics,
+        "gate_passed": improved,
         "epochs": len(history),
         "max_train_samples": args.max_train_samples,
         "caption_row_count": caption_row_count,
