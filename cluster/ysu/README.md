@@ -140,9 +140,10 @@ This submits, in order:
 
 For the DINO presets, the helper additionally inserts:
 
-1. real DINOv2 + RemoteCLIP one-batch smoke
-2. frozen DINOv2 pair-token cache
-3. frozen RemoteCLIP caption cache
+1. retrieval-model asset validation
+2. real DINOv2 + RemoteCLIP one-batch smoke
+3. frozen DINOv2 pair-token cache
+4. frozen RemoteCLIP caption cache
 
 The helper creates two run directories per preset:
 

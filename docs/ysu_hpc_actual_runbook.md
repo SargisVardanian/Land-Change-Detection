@@ -136,11 +136,12 @@ sbatch cluster/ysu/validate_levir_cc_pair_manifest.sbatch
 Optional real DINOv2 + RemoteCLIP one-batch smoke:
 
 ```bash
+sbatch cluster/ysu/validate_retrieval_model_assets.sbatch
 sbatch --export=ALL,PAIR_FEATURE_MODE=signed_delta,DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base",REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt" \
   cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
 ```
 
-After the raw-image GPU smoke passes, build frozen caches:
+After model-asset validation and the raw-image GPU smoke pass, build frozen caches:
 
 ```bash
 sbatch cluster/ysu/cache_levir_cc_dinov2_features.sbatch
@@ -162,6 +163,20 @@ For the DINOv2 presets, also export model paths if they differ from defaults:
 export DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base"
 export REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt"
 ```
+
+The DINO dependency chain is:
+
+1. preprocess
+2. validate manifests
+3. random retrieval baseline
+4. validate model assets
+5. raw real-batch GPU smoke
+6. frozen DINOv2 cache
+7. frozen RemoteCLIP text cache
+8. overfit-100
+9. full baseline training
+10. evaluation
+11. qualitative top-5 grid
 
 Each run writes:
 
