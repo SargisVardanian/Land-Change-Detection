@@ -20,6 +20,11 @@ OPTIONAL_PAIR_RETRIEVAL_RUN_FILES = (
     "dino_pair_retrieval_simple_patch/eval_metrics.json",
     "dino_pair_retrieval_simple_patch/eval_summary.json",
 )
+LEVIR_CC_REQUIRED_FILES = (
+    "levir_cc_manifest_validation.json",
+    "levir_cc_random_retrieval_eval.json",
+)
+LEVIR_CC_PRESETS = ("simple_patch_smoke", "dinov2_t2_only", "dinov2_signed_delta", "dinov2_change_fusion")
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,6 +73,24 @@ def _load_json(path: Path) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _levir_cc_run_report(runs_root: Path, preset: str) -> dict:
+    overfit_dir = runs_root / f"levir_cc_{preset}_overfit100"
+    train_dir = runs_root / f"levir_cc_{preset}_train"
+    return {
+        "overfit_dir": _summarize_dir(overfit_dir),
+        "train_dir": _summarize_dir(train_dir),
+        "overfit_report": _summarize_file(overfit_dir / "overfit_report.json"),
+        "overfit_train_summary": _summarize_file(overfit_dir / "train_summary.json"),
+        "overfit_eval_summary": _summarize_file(overfit_dir / "eval_summary.json"),
+        "overfit_grid": _summarize_file(overfit_dir / "text_query_top5_grid.png"),
+        "overfit_fingerprint": _summarize_file(overfit_dir / "environment_fingerprint.json"),
+        "train_train_summary": _summarize_file(train_dir / "train_summary.json"),
+        "train_eval_summary": _summarize_file(train_dir / "eval_summary.json"),
+        "train_grid": _summarize_file(train_dir / "text_query_top5_grid.png"),
+        "train_fingerprint": _summarize_file(train_dir / "environment_fingerprint.json"),
+    }
+
+
 def build_report(project_root: Path) -> dict:
     raw_root = project_root / "datasets" / "raw"
     indexes_root = project_root / "indexes"
@@ -91,6 +114,8 @@ def build_report(project_root: Path) -> dict:
     previews = {name: _summarize_file(runs_root / name) for name in REQUIRED_PREVIEWS}
     optional_pair_retrieval_runs = {name: _summarize_file(runs_root / name) for name in OPTIONAL_PAIR_RETRIEVAL_RUN_FILES}
     pair_run_dir = runs_root / "dino_pair_retrieval_simple_patch"
+    levir_cc_required = {name: _summarize_file(runs_root / name) for name in LEVIR_CC_REQUIRED_FILES}
+    levir_cc_runs = {preset: _levir_cc_run_report(runs_root, preset) for preset in LEVIR_CC_PRESETS}
 
     all_required_datasets = all(item["exists"] for item in datasets.values())
     all_required_indexes = all(item["exists"] for item in indexes.values())
@@ -114,6 +139,8 @@ def build_report(project_root: Path) -> dict:
         "optional_indexes": optional_indexes,
         "previews": previews,
         "optional_pair_retrieval_runs": optional_pair_retrieval_runs,
+        "levir_cc_required": levir_cc_required,
+        "levir_cc_runs": levir_cc_runs,
         "pair_retrieval_summary_highlights": {
             "train_summary": _load_json(pair_run_dir / "train_summary.json"),
             "eval_summary": _load_json(pair_run_dir / "eval_summary.json"),

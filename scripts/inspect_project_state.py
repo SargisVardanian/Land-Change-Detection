@@ -44,6 +44,9 @@ def main() -> int:
     indexes_root = args.project_root / "indexes"
     runs_root = args.project_root / "runs"
     pair_run_root = runs_root / "dino_pair_retrieval_simple_patch"
+    levir_cc_random_eval = runs_root / "levir_cc_random_retrieval_eval.json"
+    levir_cc_simple_overfit = runs_root / "levir_cc_simple_patch_smoke_overfit100"
+    levir_cc_simple_train = runs_root / "levir_cc_simple_patch_smoke_train"
     logs_root = args.project_root / "logs"
     models_root = args.project_root / "models"
     cache_root = args.project_root / ".cache"
@@ -68,6 +71,13 @@ def main() -> int:
         "pair_retrieval_run_dir": str(pair_run_root),
         "pair_retrieval_train_summary": _load_json(pair_run_root / "train_summary.json"),
         "pair_retrieval_eval_summary": _load_json(pair_run_root / "eval_summary.json"),
+        "levir_cc_random_eval": _load_json(levir_cc_random_eval),
+        "levir_cc_simple_overfit_dir": str(levir_cc_simple_overfit),
+        "levir_cc_simple_overfit_summary": _load_json(levir_cc_simple_overfit / "overfit_report.json"),
+        "levir_cc_simple_overfit_eval_summary": _load_json(levir_cc_simple_overfit / "eval_summary.json"),
+        "levir_cc_simple_train_dir": str(levir_cc_simple_train),
+        "levir_cc_simple_train_summary": _load_json(levir_cc_simple_train / "train_summary.json"),
+        "levir_cc_simple_train_eval_summary": _load_json(levir_cc_simple_train / "eval_summary.json"),
         "model_sizes": _run(["du", "-sh", str(models_root)], cwd=repo_root) if models_root.exists() else "missing",
         "cache_sizes": _run(["du", "-sh", str(cache_root)], cwd=repo_root) if cache_root.exists() else "missing",
         "dataset_curriculum": curriculum_summary(args.project_root),
