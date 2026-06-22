@@ -15,8 +15,22 @@ mkdir -p "$RS_PROJECT_ROOT/runs"
 
 echo "Submitting LEVIR-CC baseline for preset=$PRESET run_name=$RUN_NAME"
 
-validate_job_id="$(sbatch --parsable cluster/ysu/validate_levir_cc_pair_manifest.sbatch)"
+preprocess_job_id="$(sbatch --parsable cluster/ysu/preprocess_levir_cc.sbatch)"
+echo "preprocess_levir_cc: $preprocess_job_id"
+
+validate_job_id="$(
+  sbatch --parsable \
+    --dependency=afterok:$preprocess_job_id \
+    cluster/ysu/validate_levir_cc_pair_manifest.sbatch
+)"
 echo "validate_levir_cc_pair_manifest: $validate_job_id"
+
+random_job_id="$(
+  sbatch --parsable \
+    --dependency=afterok:$validate_job_id \
+    cluster/ysu/eval_levir_cc_random_retrieval.sbatch
+)"
+echo "eval_levir_cc_random_retrieval: $random_job_id"
 
 if [ "$PRESET" = "simple_patch_smoke" ]; then
   stage_dependency="$validate_job_id"
@@ -81,6 +95,7 @@ Watch jobs:
 
 Expected artifacts:
   $RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json
+  $RS_PROJECT_ROOT/runs/levir_cc_random_retrieval_eval.json
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/best.pt
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/metrics_history.json
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/train_summary.json

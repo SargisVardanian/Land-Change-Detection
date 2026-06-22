@@ -10,7 +10,7 @@ PRESET="${PRESET:-dinov2_change_fusion}"
 RUN_NAME="${RUN_NAME:-$PRESET}"
 
 if [ -z "$STAGE" ]; then
-  echo "Usage: bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh {preprocess|validate-models|smoke|cache|overfit|train|eval|all}" >&2
+  echo "Usage: bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh {preprocess|validate-manifests|validate-models|random|smoke|cache|overfit|train|eval|all}" >&2
   exit 1
 fi
 
@@ -39,8 +39,14 @@ case "$STAGE" in
   preprocess)
     submit_stage preprocess "" "$SCRIPT_DIR/preprocess_levir_cc.sbatch"
     ;;
+  validate-manifests)
+    submit_stage validate-manifests "" "$SCRIPT_DIR/validate_levir_cc_pair_manifest.sbatch"
+    ;;
   validate-models)
     submit_stage validate-models "" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch"
+    ;;
+  random)
+    submit_stage random "" "$SCRIPT_DIR/eval_levir_cc_random_retrieval.sbatch"
     ;;
   smoke)
     submit_stage smoke "" "$SCRIPT_DIR/smoke_levir_cc_dino_remoteclip_batch.sbatch" \
@@ -68,7 +74,11 @@ case "$STAGE" in
   all)
     submit_stage preprocess "" "$SCRIPT_DIR/preprocess_levir_cc.sbatch"
     preprocess_id="$LAST_JOB_ID"
-    submit_stage validate-models "$preprocess_id" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch" \
+    submit_stage validate-manifests "$preprocess_id" "$SCRIPT_DIR/validate_levir_cc_pair_manifest.sbatch"
+    validate_manifest_id="$LAST_JOB_ID"
+    submit_stage random "$validate_manifest_id" "$SCRIPT_DIR/eval_levir_cc_random_retrieval.sbatch"
+    random_id="$LAST_JOB_ID"
+    submit_stage validate-models "$validate_manifest_id" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch" \
       --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
     validate_id="$LAST_JOB_ID"
     submit_stage smoke "$validate_id" "$SCRIPT_DIR/smoke_levir_cc_dino_remoteclip_batch.sbatch" \

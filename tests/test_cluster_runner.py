@@ -73,12 +73,14 @@ def test_staged_runner_prints_dependency_chain(tmp_path: Path):
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     assert lines == [
         "preprocess: job-1",
-        "validate-models: job-2",
-        "smoke: job-3",
-        "cache-dino: job-4",
-        "cache-text: job-5",
-        "overfit: job-6",
-        "train: job-7",
-        "eval: job-8",
-        "render: job-9",
+        "validate-manifests: job-2",
+        "random: job-3",
+        "validate-models: job-4",
+        "smoke: job-5",
+        "cache-dino: job-6",
+        "cache-text: job-7",
+        "overfit: job-8",
+        "train: job-9",
+        "eval: job-10",
+        "render: job-11",
     ]

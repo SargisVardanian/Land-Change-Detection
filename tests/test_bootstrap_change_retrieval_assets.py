@@ -81,12 +81,16 @@ def test_bootstrap_change_retrieval_assets(tmp_path: Path):
     pair_rows = [json.loads(line) for line in pair_manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(pair_rows) == 3
     assert pair_rows[0]["pair_id"] == "a"
+    assert pair_rows[0]["width"] == 16
+    assert pair_rows[0]["height"] == 16
     assert pair_rows[0]["sample_ids"][0].startswith("a")
     assert len(pair_rows[0]["captions"]) == 2
     caption_manifest = project_root / "indexes" / "levir_cc_caption_queries.jsonl"
     caption_rows = [json.loads(line) for line in caption_manifest.read_text(encoding="utf-8").splitlines() if line.strip()]
     assert len(caption_rows) == 4
     assert caption_rows[0]["caption_index"] == 0
+    assert caption_rows[0]["width"] == 16
+    assert caption_rows[0]["height"] == 16
 
     preview = json.loads(preview_manifest.read_text(encoding="utf-8"))
     assert preview["LEVIR-MCI"]["sample_id"] == "sample1"

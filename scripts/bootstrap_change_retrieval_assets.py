@@ -160,6 +160,9 @@ def _build_pair_manifest(root: Path, output_path: Path) -> int:
     for sample in samples:
         pair_id = str(sample["sample_id"])
         split = str(sample.get("split") or "unknown")
+        from PIL import Image
+
+        width, height = Image.open(sample["before_path"]).convert("RGB").size
         split_to_pair_ids.setdefault(split, set()).add(pair_id)
         caption_entries = caption_map.get(pair_id.lower()) or [{"caption": "", "transition_label": pair_id}]
         sample_ids = [
@@ -173,6 +176,8 @@ def _build_pair_manifest(root: Path, output_path: Path) -> int:
                 "dataset_name": "LEVIR-CC",
                 "before_path": sample["before_path"],
                 "after_path": sample["after_path"],
+                "width": width,
+                "height": height,
                 "sample_ids": sample_ids,
                 "captions": [entry["caption"] for entry in caption_entries],
                 "transition_labels": [entry["transition_label"] for entry in caption_entries],
@@ -187,6 +192,8 @@ def _build_pair_manifest(root: Path, output_path: Path) -> int:
                     "dataset_name": "LEVIR-CC",
                     "before_path": sample["before_path"],
                     "after_path": sample["after_path"],
+                    "width": width,
+                    "height": height,
                     "caption": caption_entry["caption"],
                     "split": split,
                     "metadata": {
