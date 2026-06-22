@@ -132,14 +132,17 @@ This submits, in order:
 1. LEVIR-CC preprocess into coordinated pair and caption-query manifests
 2. pair-manifest validation
 3. deterministic random retrieval baseline
-4. optional real DINOv2 + RemoteCLIP one-batch smoke
-5. frozen DINOv2 pair-token cache
-6. frozen RemoteCLIP caption cache
-7. overfit on 100 unique pair IDs with all sibling captions
-8. full baseline training
-9. evaluation JSON + eval summary
-10. top-5 qualitative text-query grid for 10 queries
-11. per-run environment/model fingerprint artifact
+4. overfit on 100 unique pair IDs with all sibling captions
+5. full baseline training
+6. evaluation JSON + eval summary
+7. top-5 qualitative text-query grid for 10 queries
+8. per-run environment/model fingerprint artifact
+
+For the DINO presets, the helper additionally inserts:
+
+1. real DINOv2 + RemoteCLIP one-batch smoke
+2. frozen DINOv2 pair-token cache
+3. frozen RemoteCLIP caption cache
 
 The helper creates two run directories per preset:
 

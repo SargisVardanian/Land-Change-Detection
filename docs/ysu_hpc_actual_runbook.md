@@ -106,12 +106,16 @@ That will:
 1. preprocess the extracted LEVIR-CC data into coordinated pair and caption-query manifests
 2. validate `levir_cc_pairs.jsonl`
 3. run the deterministic random retrieval baseline
-4. validate model assets
-5. run the raw-image one-batch GPU smoke
-6. build frozen DINOv2 pair-token and RemoteCLIP text caches
-7. overfit on 100 unique pair IDs with all sibling captions
-8. train the full baseline
-9. evaluate retrieval metrics and render the qualitative top-5 text-query grid
+4. overfit on 100 unique pair IDs with all sibling captions
+5. train the full baseline
+6. evaluate retrieval metrics and render the qualitative top-5 text-query grid
+
+For the DINO presets, the dependent `submit_levir_cc_baseline.sh` runs add:
+
+1. model-asset validation
+2. one-batch raw-image GPU smoke
+3. frozen DINOv2 pair-token cache
+4. frozen RemoteCLIP text cache
 
 Build the coordinated manifests first if they are not already present:
 
