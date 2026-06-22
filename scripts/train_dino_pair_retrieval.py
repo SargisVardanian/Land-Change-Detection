@@ -621,7 +621,7 @@ def compute_retrieval_metrics(
     text_mrr = sum(1.0 / rank for rank in text_ranks) / len(text_ranks) if text_ranks else 0.0
     pair_to_text_mrr = sum(1.0 / rank for rank in pair_to_text_ranks) / len(pair_to_text_ranks) if pair_to_text_ranks else 0.0
     median_rank = float(np.median(text_ranks)) if text_ranks else 0.0
-    return {
+    metrics = {
         "recall@1": text_recalls[1] / text_total if text_query_sample_ids else 0.0,
         "recall@5": text_recalls[5] / text_total if text_query_sample_ids else 0.0,
         "recall@10": text_recalls[10] / text_total if text_query_sample_ids else 0.0,
@@ -631,19 +631,25 @@ def compute_retrieval_metrics(
         "pair_to_text_recall@5": pair_to_text_recalls[5] / pair_to_text_total if pair_to_text_ranks else 0.0,
         "pair_to_text_recall@10": pair_to_text_recalls[10] / pair_to_text_total if pair_to_text_ranks else 0.0,
         "pair_to_text_MRR": pair_to_text_mrr,
-        "mean_transition_similarity_top5": sum(hist_sims) / max(len(hist_sims), 1) if hist_sims else 0.0,
         "MRR": text_mrr,
-        "transition_recall@1": pair_recalls[1] / pair_total if pair_query_indices else 0.0,
-        "transition_recall@5": pair_recalls[5] / pair_total if pair_query_indices else 0.0,
-        "transition_recall@10": pair_recalls[10] / pair_total if pair_query_indices else 0.0,
-        "transition_MRR": pair_mrr / pair_total if pair_query_indices else 0.0,
-        "transition_top1_hit_rate": pair_top1_transition_hits / pair_total if pair_query_indices else 0.0,
-        "transition_nDCG@10": sum(pair_ndcg_scores) / max(len(pair_ndcg_scores), 1),
-        "reversed_pair_sanity_accuracy": reversed_pair_hits / reversed_pair_total if reversed_pair_total else 0.0,
-        "directionality_accuracy": reversed_pair_hits / reversed_pair_total if reversed_pair_total else 0.0,
-        "pair_mAP": sum(pair_ap_scores) / max(len(pair_ap_scores), 1),
-        "pair_sample_fraction": len(pair_only_indices) / max(len(sample_ids), 1),
     }
+    if reversed_pair_total:
+        metrics["reversed_pair_sanity_accuracy"] = reversed_pair_hits / reversed_pair_total
+    if pair_query_indices:
+        metrics.update(
+            {
+                "mean_transition_similarity_top5": sum(hist_sims) / max(len(hist_sims), 1) if hist_sims else 0.0,
+                "transition_recall@1": pair_recalls[1] / pair_total,
+                "transition_recall@5": pair_recalls[5] / pair_total,
+                "transition_recall@10": pair_recalls[10] / pair_total,
+                "transition_MRR": pair_mrr / pair_total,
+                "transition_top1_hit_rate": pair_top1_transition_hits / pair_total,
+                "transition_nDCG@10": sum(pair_ndcg_scores) / max(len(pair_ndcg_scores), 1),
+                "pair_mAP": sum(pair_ap_scores) / max(len(pair_ap_scores), 1),
+                "pair_sample_fraction": len(pair_only_indices) / max(len(sample_ids), 1),
+            }
+        )
+    return metrics
 
 
 def run_epoch(

@@ -19,6 +19,10 @@ def _top_transitions(summary: dict[str, Any], limit: int = 5) -> list[dict[str, 
     return [{"transition": key, "count": value} for key, value in ordered[:limit]]
 
 
+def _compact_metrics(metrics: dict[str, Any], keys: list[str]) -> dict[str, Any]:
+    return {key: metrics[key] for key in keys if key in metrics}
+
+
 def build_summary(payload: dict[str, Any], eval_json: Path) -> dict[str, Any]:
     overall = dict(payload.get("overall", payload))
     by_source = dict(payload.get("by_source", {}))
@@ -27,35 +31,42 @@ def build_summary(payload: dict[str, Any], eval_json: Path) -> dict[str, Any]:
 
     source_highlights = {}
     for source, metrics in by_source.items():
-        source_highlights[source] = {
-            "recall@5": metrics.get("recall@5"),
-            "mAP": metrics.get("mAP"),
-            "pair_to_text_recall@5": metrics.get("pair_to_text_recall@5"),
-            "transition_recall@5": metrics.get("transition_recall@5"),
-            "transition_top1_hit_rate": metrics.get("transition_top1_hit_rate"),
-        }
+        source_highlights[source] = _compact_metrics(
+            metrics,
+            [
+                "recall@5",
+                "mAP",
+                "pair_to_text_recall@5",
+                "transition_recall@5",
+                "transition_top1_hit_rate",
+            ],
+        )
 
     summary = {
         "eval_json": str(eval_json),
-        "overall_highlights": {
-            "recall@1": overall.get("recall@1"),
-            "recall@5": overall.get("recall@5"),
-            "recall@10": overall.get("recall@10"),
-            "mAP": overall.get("mAP"),
-            "MRR": overall.get("MRR"),
-            "pair_to_text_recall@1": overall.get("pair_to_text_recall@1"),
-            "pair_to_text_recall@5": overall.get("pair_to_text_recall@5"),
-            "pair_to_text_recall@10": overall.get("pair_to_text_recall@10"),
-            "pair_to_text_MRR": overall.get("pair_to_text_MRR"),
-            "transition_recall@1": overall.get("transition_recall@1"),
-            "transition_recall@5": overall.get("transition_recall@5"),
-            "transition_recall@10": overall.get("transition_recall@10"),
-            "transition_MRR": overall.get("transition_MRR"),
-            "transition_top1_hit_rate": overall.get("transition_top1_hit_rate"),
-            "reversed_pair_sanity_accuracy": overall.get("reversed_pair_sanity_accuracy"),
-            "mean_transition_similarity_top5": overall.get("mean_transition_similarity_top5"),
-            "pair_sample_fraction": overall.get("pair_sample_fraction"),
-        },
+        "overall_highlights": _compact_metrics(
+            overall,
+            [
+                "recall@1",
+                "recall@5",
+                "recall@10",
+                "mAP",
+                "MRR",
+                "median_rank",
+                "pair_to_text_recall@1",
+                "pair_to_text_recall@5",
+                "pair_to_text_recall@10",
+                "pair_to_text_MRR",
+                "reversed_pair_sanity_accuracy",
+                "transition_recall@1",
+                "transition_recall@5",
+                "transition_recall@10",
+                "transition_MRR",
+                "transition_top1_hit_rate",
+                "mean_transition_similarity_top5",
+                "pair_sample_fraction",
+            ],
+        ),
         "dataset_summary": {
             "num_samples": dataset_summary.get("num_samples"),
             "num_unique_pairs": dataset_summary.get("num_unique_pairs"),

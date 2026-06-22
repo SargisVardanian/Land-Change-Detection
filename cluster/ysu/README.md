@@ -105,8 +105,7 @@ The Slurm templates default to the `research` partition and keep logs under `/mn
 For the first real LEVIR-CC retrieval baseline, use:
 
 ```bash
-sbatch cluster/ysu/eval_levir_cc_random_retrieval.sbatch
-bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh
+bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh all
 
 PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
 PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
@@ -128,13 +127,16 @@ PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submi
 
 This submits, in order:
 
-1. pair-manifest validation
-2. optional real DINOv2 + RemoteCLIP one-batch smoke
-3. frozen DINOv2 pair-token cache
-4. frozen RemoteCLIP caption cache
-5. overfit on 100 unique pair IDs with all sibling captions
-6. evaluation JSON + eval summary
-7. top-5 qualitative text-query grid for 10 queries
+1. LEVIR-CC preprocess into coordinated pair and caption-query manifests
+2. pair-manifest validation
+3. deterministic random retrieval baseline
+4. optional real DINOv2 + RemoteCLIP one-batch smoke
+5. frozen DINOv2 pair-token cache
+6. frozen RemoteCLIP caption cache
+7. overfit on 100 unique pair IDs with all sibling captions
+8. full baseline training
+9. evaluation JSON + eval summary
+10. top-5 qualitative text-query grid for 10 queries
 
 ## MacBook One-Command Push
 

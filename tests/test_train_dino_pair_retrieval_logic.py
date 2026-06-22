@@ -154,7 +154,25 @@ def test_compute_retrieval_metrics_measures_directionality_against_reversed_and_
         reversed_embeddings,
     )
 
-    assert metrics["directionality_accuracy"] == 1.0
+    assert metrics["reversed_pair_sanity_accuracy"] == 1.0
+
+
+def test_compute_retrieval_metrics_omits_transition_fields_for_pure_levir_caption_eval():
+    change_embeddings = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+    text_embeddings = torch.tensor([[1.0, 0.0], [0.0, 1.0]], dtype=torch.float32)
+
+    metrics = compute_retrieval_metrics(
+        change_embeddings,
+        ["pair_a", "pair_b"],
+        ["urban_growth", "water_expansion"],
+        [None, None],
+        text_embeddings,
+        ["pair_a", "pair_b"],
+    )
+
+    assert "transition_recall@5" not in metrics
+    assert "transition_top1_hit_rate" not in metrics
+    assert "pair_sample_fraction" not in metrics
 
 
 def test_validate_pair_id_split_integrity_rejects_leakage():

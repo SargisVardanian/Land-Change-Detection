@@ -98,18 +98,20 @@ F. Only then train with `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJE
 Fastest end-to-end bootstrap for the first `simple_patch_smoke` run:
 
 ```bash
-bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh
+bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh all
 ```
 
 That will:
 
-1. set up the environment
-2. run the storage planner
-3. download the baseline bundle
-4. bootstrap indexes/assets
-5. verify project assets
-6. build `levir_cc_pairs.jsonl` and `levir_cc_caption_queries.jsonl`
-7. submit the full `simple_patch_smoke` LEVIR-CC chain
+1. preprocess the extracted LEVIR-CC data into coordinated pair and caption-query manifests
+2. validate `levir_cc_pairs.jsonl`
+3. run the deterministic random retrieval baseline
+4. validate model assets
+5. run the raw-image one-batch GPU smoke
+6. build frozen DINOv2 pair-token and RemoteCLIP text caches
+7. overfit on 100 unique pair IDs with all sibling captions
+8. train the full baseline
+9. evaluate retrieval metrics and render the qualitative top-5 text-query grid
 
 Build the coordinated manifests first if they are not already present:
 
@@ -144,7 +146,6 @@ sbatch cluster/ysu/cache_levir_cc_remoteclip_text.sbatch
 Submit the full LEVIR-CC baseline chain with Slurm dependencies:
 
 ```bash
-sbatch cluster/ysu/eval_levir_cc_random_retrieval.sbatch
 bash cluster/ysu/submit_levir_cc_baseline.sh
 PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
 PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
@@ -191,18 +192,19 @@ df -h /data
 
 ## Success Criteria
 
-1. LEVIR-MCI real files parse successfully.
-2. `runs/levir_mci_grid.png` is generated from real data.
-3. `runs/levir_mci_overfit/` exists and contains a checkpoint plus metrics history.
-4. Overfit-100 reaches train Dice above `0.90`.
-5. Full training reports Dice, IoU, Precision, Recall, Recall@1/5/10, and MRR.
-6. Retrieval `Recall@5` is clearly above random.
-7. Predicted masks visually match real ground-truth masks.
+1. `levir_cc_manifest_validation.json` finishes without pair leakage or missing-file errors.
+2. `levir_cc_random_retrieval_eval.json` exists as the baseline floor.
+3. The one-batch smoke finishes without tensor-shape or model-asset errors.
+4. Frozen cache indices exist under `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/` and `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/`.
+5. `levir_cc_<preset>_overfit100/` contains `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `eval_metrics.json`, `eval_summary.json`, and `text_query_top5_grid.png`.
+6. Overfit-100 materially reduces loss and drives text-to-pair `Recall@1/5/10` above the random baseline.
+7. Primary reported metrics are text-to-pair and pair-to-text retrieval metrics, with reversed-pair sanity checks only as auxiliary diagnostics.
 
 Do not call the project complete until these cluster artifacts exist:
 
-- `$RS_PROJECT_ROOT/runs/levir_mci_grid.png`
-- `$RS_PROJECT_ROOT/runs/levir_mci_overfit/`
+- `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_random_retrieval_eval.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/`
 - `$RS_PROJECT_ROOT/logs/`
 - `$RS_PROJECT_ROOT/indexes/`
 - `$RS_PROJECT_ROOT/datasets/dataset_manifest.md`
