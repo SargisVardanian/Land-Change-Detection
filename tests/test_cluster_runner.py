@@ -38,7 +38,7 @@ def test_cluster_shell_scripts_pass_bash_n():
         assert result.returncode == 0, f"{path}: {result.stderr}"
 
 
-def test_staged_runner_prints_dependency_chain(tmp_path: Path):
+def test_staged_runner_prints_simple_patch_dependency_chain(tmp_path: Path):
     counter_path = tmp_path / "counter.txt"
     sbatch_stub = tmp_path / "sbatch"
     sbatch_stub.write_text(
@@ -61,6 +61,51 @@ def test_staged_runner_prints_dependency_chain(tmp_path: Path):
     env = dict(os.environ)
     env["SBATCH_BIN"] = str(sbatch_stub)
     env["RS_PROJECT_ROOT"] = str(tmp_path / "rs_change_project")
+    result = subprocess.run(
+        ["bash", "cluster/ysu/run_levir_cc_baseline_end_to_end.sh", "all"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    assert lines == [
+        "preprocess: job-1",
+        "validate-manifests: job-2",
+        "random: job-3",
+        "overfit: job-4",
+        "train: job-5",
+        "eval: job-6",
+        "render: job-7",
+    ]
+
+
+def test_staged_runner_prints_dinov2_dependency_chain(tmp_path: Path):
+    counter_path = tmp_path / "counter.txt"
+    sbatch_stub = tmp_path / "sbatch"
+    sbatch_stub.write_text(
+        "\n".join(
+            [
+                "#!/bin/bash",
+                "set -euo pipefail",
+                f"counter_file='{counter_path}'",
+                "count=0",
+                "if [ -f \"$counter_file\" ]; then count=$(cat \"$counter_file\"); fi",
+                "count=$((count + 1))",
+                "echo \"$count\" > \"$counter_file\"",
+                "printf 'job-%s\\n' \"$count\"",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    sbatch_stub.chmod(0o755)
+    env = dict(os.environ)
+    env["SBATCH_BIN"] = str(sbatch_stub)
+    env["RS_PROJECT_ROOT"] = str(tmp_path / "rs_change_project")
+    env["PRESET"] = "dinov2_t2_only"
     result = subprocess.run(
         ["bash", "cluster/ysu/run_levir_cc_baseline_end_to_end.sh", "all"],
         cwd=REPO_ROOT,

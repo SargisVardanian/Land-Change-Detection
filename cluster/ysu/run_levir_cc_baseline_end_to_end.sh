@@ -6,7 +6,7 @@ source "$(dirname "$0")/common_env.sh"
 
 STAGE="${1:-}"
 SBATCH_BIN="${SBATCH_BIN:-sbatch}"
-PRESET="${PRESET:-dinov2_change_fusion}"
+PRESET="${PRESET:-simple_patch_smoke}"
 RUN_NAME="${RUN_NAME:-$PRESET}"
 
 if [ -z "$STAGE" ]; then
@@ -78,19 +78,22 @@ case "$STAGE" in
     validate_manifest_id="$LAST_JOB_ID"
     submit_stage random "$validate_manifest_id" "$SCRIPT_DIR/eval_levir_cc_random_retrieval.sbatch"
     random_id="$LAST_JOB_ID"
-    submit_stage validate-models "$validate_manifest_id" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch" \
-      --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
-    validate_id="$LAST_JOB_ID"
-    submit_stage smoke "$validate_id" "$SCRIPT_DIR/smoke_levir_cc_dino_remoteclip_batch.sbatch" \
-      --export=ALL,PAIR_FEATURE_MODE="${PAIR_FEATURE_MODE:-signed_delta}",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
-    smoke_id="$LAST_JOB_ID"
-    submit_stage cache-dino "$smoke_id" "$SCRIPT_DIR/cache_levir_cc_dinov2_features.sbatch" \
-      --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}"
-    cache_dino_id="$LAST_JOB_ID"
-    submit_stage cache-text "$cache_dino_id" "$SCRIPT_DIR/cache_levir_cc_remoteclip_text.sbatch" \
-      --export=ALL,REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
-    cache_text_id="$LAST_JOB_ID"
-    submit_stage overfit "$cache_text_id" "$SCRIPT_DIR/overfit_levir_cc_retrieval_100.sbatch" \
+    stage_dependency="$validate_manifest_id"
+    if [ "$PRESET" != "simple_patch_smoke" ]; then
+      submit_stage validate-models "$validate_manifest_id" "$SCRIPT_DIR/validate_retrieval_model_assets.sbatch" \
+        --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+      validate_id="$LAST_JOB_ID"
+      submit_stage smoke "$validate_id" "$SCRIPT_DIR/smoke_levir_cc_dino_remoteclip_batch.sbatch" \
+        --export=ALL,PAIR_FEATURE_MODE="${PAIR_FEATURE_MODE:-signed_delta}",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+      smoke_id="$LAST_JOB_ID"
+      submit_stage cache-dino "$smoke_id" "$SCRIPT_DIR/cache_levir_cc_dinov2_features.sbatch" \
+        --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}"
+      cache_dino_id="$LAST_JOB_ID"
+      submit_stage cache-text "$cache_dino_id" "$SCRIPT_DIR/cache_levir_cc_remoteclip_text.sbatch" \
+        --export=ALL,REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+      stage_dependency="$LAST_JOB_ID"
+    fi
+    submit_stage overfit "$stage_dependency" "$SCRIPT_DIR/overfit_levir_cc_retrieval_100.sbatch" \
       --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",LEVIR_PAIR_CACHE_INDEX="$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json",LEVIR_TEXT_CACHE_INDEX="$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/index.json",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
     overfit_id="$LAST_JOB_ID"
     submit_stage train "$overfit_id" "$SCRIPT_DIR/train_levir_cc_retrieval.sbatch" \

@@ -147,6 +147,7 @@ Submit the full LEVIR-CC baseline chain with Slurm dependencies:
 
 ```bash
 bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=dinov2_t2_only RUN_NAME=dinov2_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
 PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
 PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
 ```
