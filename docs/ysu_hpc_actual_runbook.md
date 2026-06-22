@@ -162,13 +162,24 @@ export REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-
 Each run writes:
 
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/best.pt`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/last.pt`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/metrics_history.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/train_summary.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/overfit_report.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/eval_metrics.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/eval_summary.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/text_query_top5_grid.png`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/text_query_top5_grid.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/environment_fingerprint.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/best.pt`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/last.pt`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/metrics_history.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/train_summary.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/eval_metrics.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/eval_summary.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/text_query_top5_grid.png`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/text_query_top5_grid.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/environment_fingerprint.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_dino_remoteclip_smoke_report.json` for the explicit smoke step
 - `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json`
@@ -198,15 +209,17 @@ df -h /data
 2. `levir_cc_random_retrieval_eval.json` exists as the baseline floor.
 3. The one-batch smoke finishes without tensor-shape or model-asset errors.
 4. Frozen cache indices exist under `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/` and `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/`.
-5. `levir_cc_<preset>_overfit100/` contains `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
-6. Overfit-100 materially reduces loss and drives text-to-pair `Recall@1/5/10` above the random baseline.
-7. Primary reported metrics are text-to-pair and pair-to-text retrieval metrics, with reversed-pair sanity checks only as auxiliary diagnostics.
+5. `levir_cc_<preset>_overfit100/` contains `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `overfit_report.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
+6. `levir_cc_<preset>_train/` contains the full-baseline `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
+7. Overfit-100 materially reduces loss and drives text-to-pair `Recall@1/5/10` above the random baseline.
+8. Primary reported metrics are text-to-pair and pair-to-text retrieval metrics, with reversed-pair sanity checks only as auxiliary diagnostics.
 
 Do not call the project complete until these cluster artifacts exist:
 
 - `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_random_retrieval_eval.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/`
 - `$RS_PROJECT_ROOT/logs/`
 - `$RS_PROJECT_ROOT/indexes/`
 - `$RS_PROJECT_ROOT/datasets/dataset_manifest.md`

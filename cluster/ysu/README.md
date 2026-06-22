@@ -141,6 +141,11 @@ This submits, in order:
 10. top-5 qualitative text-query grid for 10 queries
 11. per-run environment/model fingerprint artifact
 
+The helper creates two run directories per preset:
+
+1. `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100`
+2. `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train`
+
 ## MacBook One-Command Push
 
 If your laptop can resolve and reach the cluster directly, you can push the repo and start the first dataset/model bootstrap with:
