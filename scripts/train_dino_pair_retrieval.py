@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--preset", choices=preset_names(), default=None)
     parser.add_argument("--levir-manifest", type=Path, default=None)
     parser.add_argument("--eval-levir-manifest", type=Path, default=None)
+    parser.add_argument("--allow-eval-pair-overlap", action="store_true")
     parser.add_argument("--pair-manifest", type=Path, action="append", default=[])
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=None)
@@ -833,7 +834,7 @@ def main() -> int:
     if not eval_samples:
         raise SystemExit("No evaluation samples were loaded.")
     validate_pair_id_split_integrity(eval_samples)
-    if args.eval_levir_manifest is not None:
+    if args.eval_levir_manifest is not None and not args.allow_eval_pair_overlap:
         validate_pair_id_disjoint_sets(train_samples, eval_samples)
     device = choose_device(args.device)
     model = DINOChangeRetriever(

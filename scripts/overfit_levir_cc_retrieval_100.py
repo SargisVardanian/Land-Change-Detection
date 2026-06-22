@@ -22,15 +22,43 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-train-samples", type=int, default=100)
     parser.add_argument("--min-loss-drop", type=float, default=0.05)
     parser.add_argument("--min-recall-at-1", type=float, default=0.80)
-    parser.add_argument("--min-recall-at-5", type=float, default=0.90)
+    parser.add_argument("--min-recall-at-5", type=float, default=0.95)
     parser.add_argument("--min-recall-at-10", type=float, default=0.99)
     parser.add_argument("--min-pair-to-text-recall-at-5", type=float, default=0.50)
+    parser.add_argument("--min-pair-to-text-gain", type=float, default=0.05)
     parser.add_argument("--min-anchor-positive-ratio", type=float, default=0.95)
     parser.add_argument("--grad-accum-steps", type=int, default=1)
+    parser.add_argument("--dinov2-model-path", type=Path, default=None)
+    parser.add_argument("--levir-pair-cache-index", type=Path, default=None)
+    parser.add_argument("--levir-text-cache-index", type=Path, default=None)
     parser.add_argument("--remoteclip-arch", default="ViT-B-32")
     parser.add_argument("--remoteclip-checkpoint", type=Path, default=None)
+    parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="cpu")
     return parser.parse_args()
+
+
+def _run_subprocess(cmd: list[str]) -> None:
+    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False, env={"PYTHONPATH": "src"})
+    if result.returncode != 0:
+        raise SystemExit(result.stderr or result.stdout)
+
+
+def _common_model_args(args: argparse.Namespace) -> list[str]:
+    extra: list[str] = []
+    if args.project_root is not None:
+        extra.extend(["--project-root", str(args.project_root)])
+    if args.dinov2_model_path is not None:
+        extra.extend(["--dinov2-model-path", str(args.dinov2_model_path)])
+    if args.remoteclip_checkpoint is not None:
+        extra.extend(["--remoteclip-arch", args.remoteclip_arch, "--remoteclip-checkpoint", str(args.remoteclip_checkpoint)])
+    if args.levir_pair_cache_index is not None:
+        extra.extend(["--levir-pair-cache-index", str(args.levir_pair_cache_index)])
+    if args.levir_text_cache_index is not None:
+        extra.extend(["--levir-text-cache-index", str(args.levir_text_cache_index)])
+    if args.local_files_only:
+        extra.append("--local-files-only")
+    return extra
 
 
 def _run_train(args: argparse.Namespace) -> None:
@@ -41,6 +69,9 @@ def _run_train(args: argparse.Namespace) -> None:
         args.preset,
         "--levir-manifest",
         str(args.levir_manifest),
+        "--eval-levir-manifest",
+        str(args.levir_manifest),
+        "--allow-eval-pair-overlap",
         "--output-dir",
         str(args.output_dir),
         "--epochs",
@@ -56,13 +87,66 @@ def _run_train(args: argparse.Namespace) -> None:
         "--device",
         args.device,
     ]
-    if args.remoteclip_checkpoint is not None:
-        cmd.extend(["--remoteclip-arch", args.remoteclip_arch, "--remoteclip-checkpoint", str(args.remoteclip_checkpoint)])
-    if args.project_root is not None:
-        cmd.extend(["--project-root", str(args.project_root)])
-    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, check=False, env={"PYTHONPATH": "src"})
-    if result.returncode != 0:
-        raise SystemExit(result.stderr or result.stdout)
+    cmd.extend(_common_model_args(args))
+    _run_subprocess(cmd)
+
+
+def _run_eval(args: argparse.Namespace) -> None:
+    cmd = [
+        sys.executable,
+        "scripts/eval_dino_pair_retrieval.py",
+        "--preset",
+        args.preset,
+        "--levir-manifest",
+        str(args.levir_manifest),
+        "--checkpoint",
+        str(args.output_dir / "best.pt"),
+        "--output",
+        str(args.output_dir / "eval_metrics.json"),
+        "--image-size",
+        str(args.image_size),
+        "--device",
+        args.device,
+    ]
+    cmd.extend(_common_model_args(args))
+    _run_subprocess(cmd)
+    _run_subprocess(
+        [
+            sys.executable,
+            "scripts/summarize_pair_retrieval_eval.py",
+            "--eval-json",
+            str(args.output_dir / "eval_metrics.json"),
+            "--output",
+            str(args.output_dir / "eval_summary.json"),
+        ]
+    )
+
+
+def _run_render(args: argparse.Namespace) -> None:
+    cmd = [
+        sys.executable,
+        "scripts/render_levir_cc_text_query_grid.py",
+        "--preset",
+        args.preset,
+        "--manifest",
+        str(args.levir_manifest),
+        "--checkpoint",
+        str(args.output_dir / "best.pt"),
+        "--output",
+        str(args.output_dir / "text_query_top5_grid.png"),
+        "--report-json",
+        str(args.output_dir / "text_query_top5_grid.json"),
+        "--top-k",
+        "5",
+        "--num-queries",
+        "10",
+        "--image-size",
+        str(args.image_size),
+        "--device",
+        args.device,
+    ]
+    cmd.extend(_common_model_args(args))
+    _run_subprocess(cmd)
 
 
 def _manifest_counts(path: Path) -> tuple[int, int]:
@@ -75,12 +159,26 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     caption_row_count, unique_pair_count = _manifest_counts(args.levir_manifest)
     _run_train(args)
+    _run_eval(args)
+    _run_render(args)
+    _run_subprocess(
+        [
+            sys.executable,
+            "scripts/summarize_pair_retrieval_train.py",
+            "--run-dir",
+            str(args.output_dir),
+            "--output",
+            str(args.output_dir / "train_summary.json"),
+        ]
+    )
     history_payload = json.loads((args.output_dir / "metrics_history.json").read_text(encoding="utf-8"))
     history = list(history_payload.get("history", []))
     if not history:
         raise SystemExit("Training produced no metrics history.")
     eval_rows = [row.get("eval", {}) for row in history]
+    train_rows = [row.get("train", {}) for row in history]
     start_loss = float(eval_rows[0].get("loss", 0.0))
+    start_pair_r5 = float(eval_rows[0].get("pair_to_text_recall@5", 0.0))
     best_row = max(eval_rows, key=lambda row: float(row.get("recall@5", 0.0)) + float(row.get("recall@10", 0.0)))
     best_loss = float(best_row.get("loss", 0.0))
     best_r1 = float(best_row.get("recall@1", 0.0))
@@ -92,15 +190,34 @@ def main() -> int:
         all(isinstance(value, (int, float)) and abs(float(value)) != float("inf") and float(value) == float(value) for value in row.values())
         for row in eval_rows
     )
+    finite_train_metrics = all(
+        all(isinstance(value, (int, float)) and abs(float(value)) != float("inf") and float(value) == float(value) for value in row.values())
+        for row in train_rows
+    )
     loss_decreased = best_loss <= start_loss * (1.0 - args.min_loss_drop)
+    pair_to_text_improved = best_pair_r5 >= start_pair_r5 + args.min_pair_to_text_gain
+    best_checkpoint = args.output_dir / "best.pt"
+    last_checkpoint = args.output_dir / "last.pt"
+    qualitative_grid = args.output_dir / "text_query_top5_grid.png"
+    qualitative_report = args.output_dir / "text_query_top5_grid.json"
+    eval_metrics = args.output_dir / "eval_metrics.json"
+    eval_summary = args.output_dir / "eval_summary.json"
     improved = (
         loss_decreased
         and best_r1 >= args.min_recall_at_1
         and best_r5 >= args.min_recall_at_5
         and best_r10 >= args.min_recall_at_10
         and best_pair_r5 >= args.min_pair_to_text_recall_at_5
+        and pair_to_text_improved
         and best_anchor_ratio >= args.min_anchor_positive_ratio
         and finite_metrics
+        and finite_train_metrics
+        and best_checkpoint.exists()
+        and last_checkpoint.exists()
+        and qualitative_grid.exists()
+        and qualitative_report.exists()
+        and eval_metrics.exists()
+        and eval_summary.exists()
     )
     report = {
         "preset": args.preset,
@@ -109,16 +226,24 @@ def main() -> int:
         "best_recall@1": best_r1,
         "best_recall@5": best_r5,
         "best_recall@10": best_r10,
+        "start_pair_to_text_recall@5": start_pair_r5,
         "best_pair_to_text_recall@5": best_pair_r5,
+        "pair_to_text_improved_materially": pair_to_text_improved,
         "best_anchors_with_positive_ratio": best_anchor_ratio,
         "loss_decreased_materially": loss_decreased,
         "finite_metrics": finite_metrics,
+        "finite_train_metrics": finite_train_metrics,
         "gate_passed": improved,
         "epochs": len(history),
         "max_train_samples": args.max_train_samples,
         "caption_row_count": caption_row_count,
         "unique_pair_count": unique_pair_count,
-        "best_checkpoint": str(args.output_dir / "best.pt") if (args.output_dir / "best.pt").exists() else None,
+        "best_checkpoint": str(best_checkpoint) if best_checkpoint.exists() else None,
+        "last_checkpoint": str(last_checkpoint) if last_checkpoint.exists() else None,
+        "eval_metrics_json": str(eval_metrics) if eval_metrics.exists() else None,
+        "eval_summary_json": str(eval_summary) if eval_summary.exists() else None,
+        "qualitative_grid_png": str(qualitative_grid) if qualitative_grid.exists() else None,
+        "qualitative_grid_json": str(qualitative_report) if qualitative_report.exists() else None,
     }
     (args.output_dir / "overfit_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if not improved:

@@ -98,6 +98,8 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
             "0.0",
             "--min-pair-to-text-recall-at-5",
             "0.0",
+            "--min-pair-to-text-gain",
+            "0.0",
             "--min-anchor-positive-ratio",
             "0.0",
         ],
@@ -111,6 +113,12 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     report = json.loads((output_dir / "overfit_report.json").read_text(encoding="utf-8"))
     assert report["gate_passed"] is True
     assert (output_dir / "best.pt").exists()
+    assert (output_dir / "last.pt").exists()
+    assert (output_dir / "eval_metrics.json").exists()
+    assert (output_dir / "eval_summary.json").exists()
+    assert (output_dir / "train_summary.json").exists()
+    assert (output_dir / "text_query_top5_grid.png").exists()
+    assert (output_dir / "text_query_top5_grid.json").exists()
 
 
 def test_validate_levir_cc_pair_manifest_rejects_pair_leakage(tmp_path: Path):
