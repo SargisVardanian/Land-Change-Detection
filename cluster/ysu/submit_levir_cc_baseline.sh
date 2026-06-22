@@ -103,5 +103,6 @@ Expected artifacts:
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/eval_summary.json
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/text_query_top5_grid.png
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/text_query_top5_grid.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_overfit100/environment_fingerprint.json
 
 EOF

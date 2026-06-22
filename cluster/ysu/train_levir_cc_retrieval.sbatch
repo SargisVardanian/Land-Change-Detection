@@ -62,5 +62,5 @@ fi
   --dinov2-model-path "${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}" \
   --remoteclip-checkpoint "${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
   --config-json "$RUN_DIR/config.json" \
-  --output "$RS_PROJECT_ROOT/reports/environment_fingerprint.json" \
+  --output "$RUN_DIR/environment_fingerprint.json" \
   --cli "scripts/train_dino_pair_retrieval.py ${TRAIN_ARGS[*]}"

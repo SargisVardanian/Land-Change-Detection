@@ -119,6 +119,7 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     assert (output_dir / "train_summary.json").exists()
     assert (output_dir / "text_query_top5_grid.png").exists()
     assert (output_dir / "text_query_top5_grid.json").exists()
+    assert (output_dir / "environment_fingerprint.json").exists()
 
 
 def test_validate_levir_cc_pair_manifest_rejects_pair_leakage(tmp_path: Path):

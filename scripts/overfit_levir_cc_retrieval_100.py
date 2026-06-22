@@ -149,6 +149,61 @@ def _run_render(args: argparse.Namespace) -> None:
     _run_subprocess(cmd)
 
 
+def _write_fingerprint(args: argparse.Namespace) -> None:
+    cli_parts = [
+        "scripts/overfit_levir_cc_retrieval_100.py",
+        "--levir-manifest",
+        str(args.levir_manifest),
+        "--output-dir",
+        str(args.output_dir),
+        "--preset",
+        args.preset,
+        "--epochs",
+        str(args.epochs),
+        "--batch-size",
+        str(args.batch_size),
+        "--image-size",
+        str(args.image_size),
+        "--max-train-samples",
+        str(args.max_train_samples),
+        "--grad-accum-steps",
+        str(args.grad_accum_steps),
+        "--device",
+        args.device,
+    ]
+    if args.project_root is not None:
+        cli_parts.extend(["--project-root", str(args.project_root)])
+    if args.dinov2_model_path is not None:
+        cli_parts.extend(["--dinov2-model-path", str(args.dinov2_model_path)])
+    if args.levir_pair_cache_index is not None:
+        cli_parts.extend(["--levir-pair-cache-index", str(args.levir_pair_cache_index)])
+    if args.levir_text_cache_index is not None:
+        cli_parts.extend(["--levir-text-cache-index", str(args.levir_text_cache_index)])
+    if args.remoteclip_checkpoint is not None:
+        cli_parts.extend(["--remoteclip-arch", args.remoteclip_arch, "--remoteclip-checkpoint", str(args.remoteclip_checkpoint)])
+    if args.local_files_only:
+        cli_parts.append("--local-files-only")
+    cmd = [
+        sys.executable,
+        "scripts/write_environment_fingerprint.py",
+        "--project-root",
+        str(args.project_root or REPO_ROOT),
+        "--dataset-manifest",
+        str(args.levir_manifest),
+        "--config-json",
+        str(args.output_dir / "config.json"),
+        "--output",
+        str(args.output_dir / "environment_fingerprint.json"),
+        "--cli",
+        " ".join(cli_parts),
+    ]
+    if args.dinov2_model_path is not None:
+        cmd.extend(["--dinov2-model-path", str(args.dinov2_model_path)])
+    if args.remoteclip_checkpoint is not None:
+        cmd.extend(["--remoteclip-checkpoint", str(args.remoteclip_checkpoint)])
+    _run_subprocess(cmd)
+
+
 def _manifest_counts(path: Path) -> tuple[int, int]:
     rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
     return len(rows), len({str(row.get("pair_id") or row["sample_id"]) for row in rows})
@@ -161,6 +216,7 @@ def main() -> int:
     _run_train(args)
     _run_eval(args)
     _run_render(args)
+    _write_fingerprint(args)
     _run_subprocess(
         [
             sys.executable,
@@ -202,6 +258,7 @@ def main() -> int:
     qualitative_report = args.output_dir / "text_query_top5_grid.json"
     eval_metrics = args.output_dir / "eval_metrics.json"
     eval_summary = args.output_dir / "eval_summary.json"
+    environment_fingerprint = args.output_dir / "environment_fingerprint.json"
     improved = (
         loss_decreased
         and best_r1 >= args.min_recall_at_1
@@ -218,6 +275,7 @@ def main() -> int:
         and qualitative_report.exists()
         and eval_metrics.exists()
         and eval_summary.exists()
+        and environment_fingerprint.exists()
     )
     report = {
         "preset": args.preset,
@@ -244,6 +302,7 @@ def main() -> int:
         "eval_summary_json": str(eval_summary) if eval_summary.exists() else None,
         "qualitative_grid_png": str(qualitative_grid) if qualitative_grid.exists() else None,
         "qualitative_grid_json": str(qualitative_report) if qualitative_report.exists() else None,
+        "environment_fingerprint_json": str(environment_fingerprint) if environment_fingerprint.exists() else None,
     }
     (args.output_dir / "overfit_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if not improved:

@@ -139,6 +139,7 @@ This submits, in order:
 8. full baseline training
 9. evaluation JSON + eval summary
 10. top-5 qualitative text-query grid for 10 queries
+11. per-run environment/model fingerprint artifact
 
 ## MacBook One-Command Push
 
