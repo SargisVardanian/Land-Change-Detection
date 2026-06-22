@@ -35,9 +35,16 @@ echo "eval_levir_cc_random_retrieval: $random_job_id"
 if [ "$PRESET" = "simple_patch_smoke" ]; then
   stage_dependency="$validate_job_id"
 else
-  smoke_job_id="$(
+  validate_models_job_id="$(
     sbatch --parsable \
       --dependency=afterok:$validate_job_id \
+      --export=ALL,DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}" \
+      cluster/ysu/validate_retrieval_model_assets.sbatch
+  )"
+  echo "validate_retrieval_model_assets: $validate_models_job_id"
+  smoke_job_id="$(
+    sbatch --parsable \
+      --dependency=afterok:$validate_models_job_id \
       --export=ALL,PAIR_FEATURE_MODE="$PAIR_FEATURE_MODE",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}" \
       cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
   )"
