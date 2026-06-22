@@ -154,19 +154,36 @@ def _build_pair_manifest(root: Path, output_path: Path) -> int:
                 "transition_label": str(row.get("transition_label") or row.get("class") or row.get("change_type") or key),
             }
         )
-    rows = []
+    pair_rows = []
+    caption_rows = []
     split_to_pair_ids: dict[str, set[str]] = {}
     for sample in samples:
         pair_id = str(sample["sample_id"])
         split = str(sample.get("split") or "unknown")
         split_to_pair_ids.setdefault(split, set()).add(pair_id)
         caption_entries = caption_map.get(pair_id.lower()) or [{"caption": "", "transition_label": pair_id}]
+        sample_ids = [
+            pair_id if len(caption_entries) == 1 else f"{pair_id}#cap{caption_index:03d}"
+            for caption_index in range(len(caption_entries))
+        ]
+        pair_rows.append(
+            {
+                "pair_id": pair_id,
+                "split": split,
+                "dataset_name": "LEVIR-CC",
+                "before_path": sample["before_path"],
+                "after_path": sample["after_path"],
+                "sample_ids": sample_ids,
+                "captions": [entry["caption"] for entry in caption_entries],
+                "transition_labels": [entry["transition_label"] for entry in caption_entries],
+            }
+        )
         for caption_index, caption_entry in enumerate(caption_entries):
-            row_sample_id = pair_id if len(caption_entries) == 1 else f"{pair_id}#cap{caption_index:03d}"
-            rows.append(
+            caption_rows.append(
                 {
-                    "sample_id": row_sample_id,
+                    "sample_id": sample_ids[caption_index],
                     "pair_id": pair_id,
+                    "caption_index": caption_index,
                     "dataset_name": "LEVIR-CC",
                     "before_path": sample["before_path"],
                     "after_path": sample["after_path"],
@@ -185,8 +202,10 @@ def _build_pair_manifest(root: Path, output_path: Path) -> int:
     pair_id_count = sum(len(pair_ids_for_split) for pair_ids_for_split in non_unknown.values())
     if pair_id_count != len(pair_ids):
         raise SystemExit("Detected LEVIR-CC pair_id leakage across train/val/test splits.")
-    _write_jsonl(output_path, rows)
-    return len(rows)
+    _write_jsonl(output_path, pair_rows)
+    caption_output_path = output_path.with_name("levir_cc_caption_queries.jsonl")
+    _write_jsonl(caption_output_path, caption_rows)
+    return len(pair_rows)
 
 
 def _write_preview_manifest(project_root: Path, levir_samples: list[dict], second_samples: list[dict]) -> Path:

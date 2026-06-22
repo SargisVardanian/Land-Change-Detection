@@ -105,6 +105,7 @@ The Slurm templates default to the `research` partition and keep logs under `/mn
 For the first real LEVIR-CC retrieval baseline, use:
 
 ```bash
+sbatch cluster/ysu/eval_levir_cc_random_retrieval.sbatch
 bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh
 
 PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh

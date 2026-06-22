@@ -97,6 +97,8 @@ def test_preprocess_levir_cc_valid_zip_layout_and_idempotent_hashes(tmp_path: Pa
     assert len(train_rows) == 2
     assert train_rows[0]["caption"] == "new building appears"
     assert train_rows[1]["caption"] == "new building appears"
+    assert train_rows[0]["caption_index"] == 0
+    assert train_rows[1]["caption_index"] == 1
 
 
 def test_preprocess_levir_cc_valid_tar_layout(tmp_path: Path):

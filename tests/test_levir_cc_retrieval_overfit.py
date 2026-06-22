@@ -65,6 +65,7 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     caption_manifest = tmp_path / "levir_cc_caption_queries.jsonl"
     caption_rows = [json.loads(line) for line in caption_manifest.read_text(encoding="utf-8").splitlines()]
     assert len(caption_rows) == 4
+    assert caption_rows[0]["caption_index"] == 0
 
     output_dir = tmp_path / "overfit_run"
     overfit = subprocess.run(

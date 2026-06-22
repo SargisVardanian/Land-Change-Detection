@@ -519,6 +519,7 @@ def _records_to_rows(records: list[PairRecord], project_root: Path) -> tuple[lis
                 {
                     "sample_id": sample_ids[index],
                     "pair_id": record.pair_id,
+                    "caption_index": index,
                     "dataset_name": "LEVIR-CC",
                     "before_path": before_rel,
                     "after_path": after_rel,

@@ -9,7 +9,7 @@ import torch
 
 from scripts.train_dino_pair_retrieval import choose_device, set_seed
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
-from land_change_detection.retrieval_cache import save_tensor_shard, write_index
+from land_change_detection.retrieval_cache import IndexedShardReader, read_index, save_tensor_shard, write_index
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,6 +23,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pairs-per-shard", type=int, default=256)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
 
@@ -50,6 +51,35 @@ def _shard_hash(entries: dict[str, dict[str, str]]) -> str:
     return hashlib.sha256(json.dumps(entries, sort_keys=True).encode("utf-8")).hexdigest()
 
 
+def _validate_against_raw_forward(
+    model: DINOChangeRetriever,
+    pair_row: dict,
+    payload: dict[str, str],
+    index_path: Path,
+    project_root: Path | None,
+    image_size: int,
+    device: torch.device,
+) -> dict[str, float | str | bool]:
+    reader = IndexedShardReader(index_path)
+    cached_before = reader.get(payload["shard"], payload["before_key"]).to(dtype=torch.float32)
+    cached_after = reader.get(payload["shard"], payload["after_key"]).to(dtype=torch.float32)
+    before = _load_image(_resolve(str(pair_row["before_path"]), project_root), image_size).unsqueeze(0).to(device)
+    after = _load_image(_resolve(str(pair_row["after_path"]), project_root), image_size).unsqueeze(0).to(device)
+    with torch.no_grad():
+        before_patch, before_cls = model.encode_image_tokens(before)
+        after_patch, after_cls = model.encode_image_tokens(after)
+    direct_before = torch.cat([before_cls.unsqueeze(1), before_patch], dim=1).squeeze(0).detach().cpu()
+    direct_after = torch.cat([after_cls.unsqueeze(1), after_patch], dim=1).squeeze(0).detach().cpu()
+    before_delta = float((direct_before - cached_before).abs().max().item())
+    after_delta = float((direct_after - cached_after).abs().max().item())
+    return {
+        "pair_id": str(pair_row["pair_id"]),
+        "before_max_abs_diff": before_delta,
+        "after_max_abs_diff": after_delta,
+        "validated": bool(before_delta < 1e-3 and after_delta < 1e-3),
+    }
+
+
 def main() -> int:
     args = parse_args()
     set_seed(args.seed)
@@ -70,11 +100,15 @@ def main() -> int:
 
     output_dir = args.output_dir.resolve()
     shard_dir = output_dir / "shards"
-    index_entries: dict[str, dict[str, str]] = {}
-    shard_rows: list[dict] = []
+    index_path = output_dir / "index.json"
+    existing_index = read_index(index_path) if index_path.exists() and not args.force else None
+    index_entries: dict[str, dict[str, str]] = dict((existing_index or {}).get("pairs", {}))
+    shard_rows: list[dict] = list((existing_index or {}).get("shards", []))
+    done_pairs = set(index_entries)
+    pending_rows = [row for row in rows if str(row["pair_id"]) not in done_pairs]
 
-    for start in range(0, len(rows), args.pairs_per_shard):
-        shard_rows_batch = rows[start : start + args.pairs_per_shard]
+    for start in range(0, len(pending_rows), args.pairs_per_shard):
+        shard_rows_batch = pending_rows[start : start + args.pairs_per_shard]
         tensors: dict[str, torch.Tensor] = {}
         shard_pairs: dict[str, dict[str, str]] = {}
         for batch_start in range(0, len(shard_rows_batch), args.batch_size):
@@ -102,7 +136,7 @@ def main() -> int:
                     "shape": list(before_tokens[offset].shape),
                 }
 
-        shard_name = f"dinov2_pairs_{start:05d}.safetensors"
+        shard_name = f"dinov2_pairs_{len(shard_rows):05d}.safetensors"
         save_tensor_shard(shard_dir / shard_name, tensors, metadata={"dtype": "float16"})
         for pair_id, payload in shard_pairs.items():
             index_entries[pair_id] = {"shard": f"shards/{shard_name}", **payload}
@@ -119,9 +153,32 @@ def main() -> int:
         "expected_token_shape": [257, 768],
         "storage_dtype": "float16",
         "validated_pair_id": sample_id,
+        "resumed_pair_count": len(done_pairs),
     }
     write_index(output_dir / "index.json", index_payload)
-    print(json.dumps({"output_dir": str(output_dir), "pair_count": len(index_entries), "validated_pair_id": sample_id}, indent=2))
+    validation = _validate_against_raw_forward(
+        model,
+        sample_pair,
+        index_entries[sample_id],
+        index_path,
+        project_root,
+        args.image_size,
+        device,
+    )
+    index_payload["validation"] = validation
+    write_index(output_dir / "index.json", index_payload)
+    print(
+        json.dumps(
+            {
+                "output_dir": str(output_dir),
+                "pair_count": len(index_entries),
+                "validated_pair_id": sample_id,
+                "validation": validation,
+                "resumed_pair_count": len(done_pairs),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 

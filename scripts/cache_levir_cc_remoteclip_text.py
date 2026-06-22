@@ -9,7 +9,7 @@ import torch
 
 from scripts.train_dino_pair_retrieval import choose_device, set_seed
 from land_change_detection.models.dino_change_retriever import DINOChangeRetriever, DINOChangeRetrieverConfig
-from land_change_detection.retrieval_cache import save_tensor_shard, write_index
+from land_change_detection.retrieval_cache import IndexedShardReader, read_index, save_tensor_shard, write_index
 
 
 def parse_args() -> argparse.Namespace:
@@ -22,6 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--captions-per-shard", type=int, default=4096)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
 
@@ -48,11 +49,15 @@ def main() -> int:
 
     output_dir = args.output_dir.resolve()
     shard_dir = output_dir / "shards"
-    index_entries: dict[str, dict[str, str]] = {}
-    shard_rows: list[dict] = []
+    index_path = output_dir / "index.json"
+    existing_index = read_index(index_path) if index_path.exists() and not args.force else None
+    index_entries: dict[str, dict[str, str]] = dict((existing_index or {}).get("captions", {}))
+    shard_rows: list[dict] = list((existing_index or {}).get("shards", []))
+    done_samples = set(index_entries)
+    pending_rows = [row for row in rows if str(row["sample_id"]) not in done_samples]
 
-    for start in range(0, len(rows), args.captions_per_shard):
-        shard_batch = rows[start : start + args.captions_per_shard]
+    for start in range(0, len(pending_rows), args.captions_per_shard):
+        shard_batch = pending_rows[start : start + args.captions_per_shard]
         tensors: dict[str, torch.Tensor] = {}
         shard_index: dict[str, dict[str, str]] = {}
         for batch_start in range(0, len(shard_batch), args.batch_size):
@@ -70,7 +75,7 @@ def main() -> int:
                     "pair_id": str(row["pair_id"]),
                     "feature_dim": int(features.shape[-1]),
                 }
-        shard_name = f"remoteclip_text_{start:05d}.safetensors"
+        shard_name = f"remoteclip_text_{len(shard_rows):05d}.safetensors"
         save_tensor_shard(shard_dir / shard_name, tensors, metadata={"dtype": "float16"})
         for sample_id, payload in shard_index.items():
             index_entries[sample_id] = {**payload, "shard": f"shards/{shard_name}"}
@@ -90,9 +95,34 @@ def main() -> int:
         "shards": shard_rows,
         "storage_dtype": "float16",
         "feature_dim": 512,
+        "resumed_caption_count": len(done_samples),
     }
     write_index(output_dir / "index.json", index_payload)
-    print(json.dumps({"output_dir": str(output_dir), "caption_count": len(index_entries), "feature_dim": 512}, indent=2))
+    reader = IndexedShardReader(index_path)
+    first_sample_id = str(rows[0]["sample_id"])
+    first_payload = index_entries[first_sample_id]
+    cached = reader.get(first_payload["shard"], first_payload["key"]).to(dtype=torch.float32)
+    normalized = torch.nn.functional.normalize(cached.unsqueeze(0), dim=-1).squeeze(0)
+    validation = {
+        "sample_id": first_sample_id,
+        "finite": bool(torch.isfinite(cached).all().item()),
+        "norm": float(normalized.norm().item()),
+        "pair_id": str(rows[0]["pair_id"]),
+    }
+    index_payload["validation"] = validation
+    write_index(output_dir / "index.json", index_payload)
+    print(
+        json.dumps(
+            {
+                "output_dir": str(output_dir),
+                "caption_count": len(index_entries),
+                "feature_dim": 512,
+                "validation": validation,
+                "resumed_caption_count": len(done_samples),
+            },
+            indent=2,
+        )
+    )
     return 0
 
 
