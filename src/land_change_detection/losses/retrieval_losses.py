@@ -15,6 +15,18 @@ def _masked_contrastive_loss(logits: torch.Tensor, positive_mask: torch.Tensor) 
     return per_row[valid_rows].mean()
 
 
+def _multi_positive_logsumexp_loss(logits: torch.Tensor, positive_mask: torch.Tensor) -> torch.Tensor:
+    row_positive_counts = positive_mask.sum(dim=1)
+    valid_rows = row_positive_counts > 0
+    if not torch.any(valid_rows):
+        return logits.sum() * 0.0
+    masked_positive_logits = logits.masked_fill(~positive_mask, float("-inf"))
+    numerator = torch.logsumexp(masked_positive_logits, dim=1)
+    denominator = torch.logsumexp(logits, dim=1)
+    per_row = -(numerator - denominator)
+    return per_row[valid_rows].mean()
+
+
 def symmetric_infonce_loss(
     image_embeddings: torch.Tensor,
     text_embeddings: torch.Tensor,
@@ -58,7 +70,7 @@ def asymmetric_caption_pair_loss(
     text_to_pair_loss = _masked_contrastive_loss(logits, positive_text_to_pair)
 
     pair_to_text_positive = positive_text_to_pair.transpose(0, 1)
-    pair_to_text_loss = _masked_contrastive_loss(logits.transpose(0, 1), pair_to_text_positive)
+    pair_to_text_loss = _multi_positive_logsumexp_loss(logits.transpose(0, 1), pair_to_text_positive)
     loss = 0.5 * (text_to_pair_loss + pair_to_text_loss)
     anchors_with_positive_ratio = float((pair_to_text_positive.sum(dim=1) > 0).float().mean().item())
     return loss, {
