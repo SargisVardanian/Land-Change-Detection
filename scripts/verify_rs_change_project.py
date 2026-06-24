@@ -73,10 +73,18 @@ def _load_json(path: Path) -> dict | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _artifact_exists(summary: dict) -> bool:
+    return bool(summary.get("exists"))
+
+
+def _all_exist(items: dict[str, dict]) -> bool:
+    return all(_artifact_exists(summary) for summary in items.values())
+
+
 def _levir_cc_run_report(runs_root: Path, preset: str) -> dict:
     overfit_dir = runs_root / f"levir_cc_{preset}_overfit100"
     train_dir = runs_root / f"levir_cc_{preset}_train"
-    return {
+    report = {
         "overfit_dir": _summarize_dir(overfit_dir),
         "train_dir": _summarize_dir(train_dir),
         "overfit_report": _summarize_file(overfit_dir / "overfit_report.json"),
@@ -89,7 +97,39 @@ def _levir_cc_run_report(runs_root: Path, preset: str) -> dict:
         "train_grid": _summarize_file(train_dir / "text_query_top5_grid.png"),
         "train_fingerprint": _summarize_file(train_dir / "environment_fingerprint.json"),
     }
-
+    overfit_report_json = _load_json(overfit_dir / "overfit_report.json") or {}
+    train_summary_json = _load_json(train_dir / "train_summary.json") or {}
+    overfit_required = {
+        "overfit_report": report["overfit_report"],
+        "train_summary": report["overfit_train_summary"],
+        "eval_summary": report["overfit_eval_summary"],
+        "grid": report["overfit_grid"],
+        "fingerprint": report["overfit_fingerprint"],
+        "best_checkpoint": _summarize_file(overfit_dir / "best.pt"),
+        "last_checkpoint": _summarize_file(overfit_dir / "last.pt"),
+        "metrics_history": _summarize_file(overfit_dir / "metrics_history.json"),
+        "eval_metrics": _summarize_file(overfit_dir / "eval_metrics.json"),
+    }
+    train_required = {
+        "train_summary": report["train_train_summary"],
+        "eval_summary": report["train_eval_summary"],
+        "grid": report["train_grid"],
+        "fingerprint": report["train_fingerprint"],
+        "best_checkpoint": _summarize_file(train_dir / "best.pt"),
+        "last_checkpoint": _summarize_file(train_dir / "last.pt"),
+        "metrics_history": _summarize_file(train_dir / "metrics_history.json"),
+        "eval_metrics": _summarize_file(train_dir / "eval_metrics.json"),
+    }
+    report["overfit_required"] = overfit_required
+    report["train_required"] = train_required
+    report["overfit_gate_passed"] = bool(overfit_report_json.get("gate_passed", False))
+    report["overfit_artifacts_complete"] = _all_exist(overfit_required)
+    report["train_artifacts_complete"] = _all_exist(train_required)
+    report["train_best_epoch"] = train_summary_json.get("best_epoch")
+    report["milestone_ready"] = (
+        report["overfit_gate_passed"] and report["overfit_artifacts_complete"] and report["train_artifacts_complete"]
+    )
+    return report
 
 def build_report(project_root: Path) -> dict:
     raw_root = project_root / "datasets" / "raw"
@@ -116,6 +156,8 @@ def build_report(project_root: Path) -> dict:
     pair_run_dir = runs_root / "dino_pair_retrieval_simple_patch"
     levir_cc_required = {name: _summarize_file(runs_root / name) for name in LEVIR_CC_REQUIRED_FILES}
     levir_cc_runs = {preset: _levir_cc_run_report(runs_root, preset) for preset in LEVIR_CC_PRESETS}
+    levir_cc_required_complete = _all_exist(levir_cc_required)
+    any_levir_cc_milestone_ready = any(run["milestone_ready"] for run in levir_cc_runs.values())
 
     all_required_datasets = all(item["exists"] for item in datasets.values())
     all_required_indexes = all(item["exists"] for item in indexes.values())
@@ -141,6 +183,8 @@ def build_report(project_root: Path) -> dict:
         "optional_pair_retrieval_runs": optional_pair_retrieval_runs,
         "levir_cc_required": levir_cc_required,
         "levir_cc_runs": levir_cc_runs,
+        "levir_cc_required_complete": levir_cc_required_complete,
+        "levir_cc_any_milestone_ready": any_levir_cc_milestone_ready,
         "pair_retrieval_summary_highlights": {
             "train_summary": _load_json(pair_run_dir / "train_summary.json"),
             "eval_summary": _load_json(pair_run_dir / "eval_summary.json"),
