@@ -62,22 +62,17 @@ sbatch cluster/ysu/overfit_levir_mci_100.sbatch
 
 B. Keep DINO retrieval on `--visual-backbone simple_patch` first.
 
-C. Build and verify the simple pair-retrieval path before touching DINOv2.
+C. Build and verify the LEVIR-CC `simple_patch_smoke` retrieval path before touching DINOv2.
 
 ```bash
-sbatch cluster/ysu/train_dino_pair_retrieval.sbatch
-sbatch cluster/ysu/eval_dino_pair_retrieval.sbatch
-sbatch cluster/ysu/query_pair_to_pair_retrieval.sbatch
+sbatch cluster/ysu/validate_levir_cc_pair_manifest.sbatch
+bash cluster/ysu/submit_levir_cc_baseline.sh
 ```
 
-The eval job now writes both:
+This path writes the first LEVIR-CC retrieval artifacts under:
 
-- `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_metrics.json`
-- `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/eval_summary.json`
-
-The train job now also writes:
-
-- `$RS_PROJECT_ROOT/runs/dino_pair_retrieval_simple_patch/train_summary.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_simple_patch_smoke_overfit100/`
+- `$RS_PROJECT_ROOT/runs/levir_cc_simple_patch_smoke_train/`
 
 D. Download `dinov2-small` only after the `simple_patch` checks pass.
 
