@@ -104,6 +104,7 @@ That will:
 4. overfit on 100 unique pair IDs with all sibling captions
 5. train the full baseline
 6. evaluate retrieval metrics and render the qualitative top-5 text-query grid
+7. run one final milestone audit that fails if the required cluster artifacts are incomplete
 
 For the DINO presets, the dependent `submit_levir_cc_baseline.sh` runs add:
 
@@ -172,6 +173,7 @@ The DINO dependency chain is:
 9. full baseline training
 10. evaluation
 11. qualitative top-5 grid
+12. milestone artifact audit
 
 Each run writes:
 
@@ -194,10 +196,18 @@ Each run writes:
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/text_query_top5_grid.png`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/text_query_top5_grid.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/environment_fingerprint.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_milestone_audit.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_dino_remoteclip_smoke_report.json` for the explicit smoke step
 - `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json`
 - `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/index.json`
+
+The final audit can also be run directly if you want to re-check an existing preset:
+
+```bash
+sbatch --export=ALL,PRESET=simple_patch_smoke,RUN_NAME=simple_patch_smoke \
+  cluster/ysu/audit_levir_cc_milestone.sbatch
+```
 
 ## Baseline Jobs
 
@@ -225,8 +235,9 @@ df -h /data
 4. Frozen cache indices exist under `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/` and `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/`.
 5. `levir_cc_<preset>_overfit100/` contains `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `overfit_report.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
 6. `levir_cc_<preset>_train/` contains the full-baseline `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
-7. Overfit-100 materially reduces loss and drives text-to-pair `Recall@1/5/10` above the random baseline.
-8. Primary reported metrics are text-to-pair and pair-to-text retrieval metrics, with reversed-pair sanity checks only as auxiliary diagnostics.
+7. `levir_cc_<preset>_milestone_audit.json` exists and reports `"milestone_ready": true`.
+8. Overfit-100 materially reduces loss and drives text-to-pair `Recall@1/5/10` above the random baseline.
+9. Primary reported metrics are text-to-pair and pair-to-text retrieval metrics, with reversed-pair sanity checks only as auxiliary diagnostics.
 
 Do not call the project complete until these cluster artifacts exist:
 
@@ -234,6 +245,7 @@ Do not call the project complete until these cluster artifacts exist:
 - `$RS_PROJECT_ROOT/runs/levir_cc_random_retrieval_eval.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100/`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/`
+- `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_milestone_audit.json`
 - `$RS_PROJECT_ROOT/logs/`
 - `$RS_PROJECT_ROOT/indexes/`
 - `$RS_PROJECT_ROOT/datasets/dataset_manifest.md`

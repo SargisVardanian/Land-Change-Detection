@@ -79,6 +79,7 @@ def test_staged_runner_prints_simple_patch_dependency_chain(tmp_path: Path):
         "train: job-5",
         "eval: job-6",
         "render: job-7",
+        "audit: job-8",
     ]
 
 
@@ -128,6 +129,7 @@ def test_staged_runner_prints_dinov2_dependency_chain(tmp_path: Path):
         "train: job-9",
         "eval: job-10",
         "render: job-11",
+        "audit: job-12",
     ]
 
 
@@ -174,6 +176,7 @@ def test_submit_runner_prints_simple_patch_chain(tmp_path: Path):
         "eval_levir_cc_retrieval: job-6",
     ]
     assert "render_levir_cc_text_query_grid: job-7" in lines
+    assert "audit_levir_cc_milestone: job-8" in lines
 
 
 def test_submit_runner_prints_dinov2_chain_with_model_validation(tmp_path: Path):
@@ -224,3 +227,4 @@ def test_submit_runner_prints_dinov2_chain_with_model_validation(tmp_path: Path)
     ]
     assert "eval_levir_cc_retrieval: job-10" in lines
     assert "render_levir_cc_text_query_grid: job-11" in lines
+    assert "audit_levir_cc_milestone: job-12" in lines

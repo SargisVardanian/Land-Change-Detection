@@ -4,9 +4,15 @@ import argparse
 import json
 import platform
 import socket
+import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from land_change_detection.dataset_curriculum import curriculum_summary
+from scripts.levir_cc_audit import LEVIR_CC_PRESETS, all_exist, summarize_required_files, summarize_runs
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build a unified smoke-test report for the YSU-HPC change project.")
@@ -74,17 +80,20 @@ def _summarize_file(path: Path) -> dict:
     return payload
 
 
-def _load_json(path: Path) -> dict | None:
-    if not path.exists() or not path.is_file():
-        return None
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
 def _build_project_assets_report(project_root: Path) -> dict:
     required_datasets = ("LEVIR-MCI",)
     optional_datasets = ("LEVIR-CC", "SECOND-CC", "Hi-UCD")
     required_indexes = ("levir_mci_samples.jsonl", "levir_mci_validation.json", "preview_samples.json")
-    optional_indexes = ("second_cc_samples.jsonl", "levir_cc_text_manifest.jsonl", "levir_mci_train_manifest.jsonl")
+    optional_indexes = (
+        "levir_cc_pairs.jsonl",
+        "levir_cc_caption_queries.jsonl",
+        "levir_cc_caption_queries_train.jsonl",
+        "levir_cc_caption_queries_val.jsonl",
+        "levir_cc_caption_queries_test.jsonl",
+        "levir_cc_caption_queries_overfit_100.jsonl",
+        "second_cc_samples.jsonl",
+        "levir_mci_train_manifest.jsonl",
+    )
     required_previews = ("levir_mci_preview.png", "levir_mci_grid.png")
     optional_pair_retrieval_runs = (
         "dino_pair_retrieval_simple_patch/train_summary.json",
@@ -113,12 +122,25 @@ def _build_project_assets_report(project_root: Path) -> dict:
     previews = {name: _summarize_file(runs_root / name) for name in required_previews}
     optional_pair_retrieval_payload = {name: _summarize_file(runs_root / name) for name in optional_pair_retrieval_runs}
     pair_run_dir = runs_root / "dino_pair_retrieval_simple_patch"
-    train_summary = _load_json(pair_run_dir / "train_summary.json")
-    eval_summary = _load_json(pair_run_dir / "eval_summary.json")
+    levir_cc_required = summarize_required_files(runs_root)
+    levir_cc_runs = summarize_runs(runs_root, LEVIR_CC_PRESETS)
+    levir_cc_required_complete = all_exist(levir_cc_required)
+    levir_cc_any_milestone_ready = any(run["milestone_ready"] for run in levir_cc_runs.values())
+    train_summary = json.loads((pair_run_dir / "train_summary.json").read_text(encoding="utf-8")) if (pair_run_dir / "train_summary.json").exists() else None
+    eval_summary = json.loads((pair_run_dir / "eval_summary.json").read_text(encoding="utf-8")) if (pair_run_dir / "eval_summary.json").exists() else None
     benchmark_curriculum = {
         "stage_1_text_to_pair": {
             "dataset": "LEVIR-CC",
-            "ready": optional_dataset_payload["LEVIR-CC"]["exists"] and optional_index_payload["levir_cc_text_manifest.jsonl"]["exists"],
+            "pair_manifest_ready": optional_index_payload["levir_cc_pairs.jsonl"]["exists"],
+            "caption_query_manifest_ready": optional_index_payload["levir_cc_caption_queries.jsonl"]["exists"],
+            "required_files_complete": levir_cc_required_complete,
+            "any_milestone_ready": levir_cc_any_milestone_ready,
+            "ready": (
+                optional_dataset_payload["LEVIR-CC"]["exists"]
+                and optional_index_payload["levir_cc_pairs.jsonl"]["exists"]
+                and optional_index_payload["levir_cc_caption_queries.jsonl"]["exists"]
+                and levir_cc_required_complete
+            ),
         },
         "stage_2_grounded": {
             "dataset": "LEVIR-MCI",
@@ -139,6 +161,8 @@ def _build_project_assets_report(project_root: Path) -> dict:
         "optional_indexes": optional_index_payload,
         "previews": previews,
         "optional_pair_retrieval_runs": optional_pair_retrieval_payload,
+        "levir_cc_required": levir_cc_required,
+        "levir_cc_runs": levir_cc_runs,
         "pair_retrieval_summary_highlights": {
             "train_summary": train_summary,
             "eval_summary": eval_summary,

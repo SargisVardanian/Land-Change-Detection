@@ -3,9 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from land_change_detection.dataset_curriculum import curriculum_summary
+from scripts.levir_cc_audit import summarize_required_files, summarize_run
 
 
 def parse_args() -> argparse.Namespace:
@@ -44,9 +50,8 @@ def main() -> int:
     indexes_root = args.project_root / "indexes"
     runs_root = args.project_root / "runs"
     pair_run_root = runs_root / "dino_pair_retrieval_simple_patch"
-    levir_cc_random_eval = runs_root / "levir_cc_random_retrieval_eval.json"
-    levir_cc_simple_overfit = runs_root / "levir_cc_simple_patch_smoke_overfit100"
-    levir_cc_simple_train = runs_root / "levir_cc_simple_patch_smoke_train"
+    levir_cc_required = summarize_required_files(runs_root)
+    levir_cc_simple_run = summarize_run(runs_root, "simple_patch_smoke")
     logs_root = args.project_root / "logs"
     models_root = args.project_root / "models"
     cache_root = args.project_root / ".cache"
@@ -71,17 +76,23 @@ def main() -> int:
         "pair_retrieval_run_dir": str(pair_run_root),
         "pair_retrieval_train_summary": _load_json(pair_run_root / "train_summary.json"),
         "pair_retrieval_eval_summary": _load_json(pair_run_root / "eval_summary.json"),
-        "levir_cc_random_eval": _load_json(levir_cc_random_eval),
-        "levir_cc_simple_overfit_dir": str(levir_cc_simple_overfit),
-        "levir_cc_simple_overfit_summary": _load_json(levir_cc_simple_overfit / "overfit_report.json"),
-        "levir_cc_simple_overfit_eval_summary": _load_json(levir_cc_simple_overfit / "eval_summary.json"),
-        "levir_cc_simple_train_dir": str(levir_cc_simple_train),
-        "levir_cc_simple_train_summary": _load_json(levir_cc_simple_train / "train_summary.json"),
-        "levir_cc_simple_train_eval_summary": _load_json(levir_cc_simple_train / "eval_summary.json"),
+        "levir_cc_manifest_validation": _load_json(runs_root / "levir_cc_manifest_validation.json"),
+        "levir_cc_random_eval": _load_json(runs_root / "levir_cc_random_retrieval_eval.json"),
+        "levir_cc_simple_overfit_dir": levir_cc_simple_run["overfit_dir"],
+        "levir_cc_simple_overfit_summary": levir_cc_simple_run["overfit_report_json"],
+        "levir_cc_simple_overfit_eval_summary": _load_json(Path(levir_cc_simple_run["overfit_dir"]) / "eval_summary.json"),
+        "levir_cc_simple_train_dir": levir_cc_simple_run["train_dir"],
+        "levir_cc_simple_train_summary": levir_cc_simple_run["train_summary_json"],
+        "levir_cc_simple_train_eval_summary": _load_json(Path(levir_cc_simple_run["train_dir"]) / "eval_summary.json"),
+        "levir_cc_required_complete": all(summary.get("exists") for summary in levir_cc_required.values()),
+        "levir_cc_simple_overfit_gate_passed": levir_cc_simple_run["overfit_gate_passed"],
+        "levir_cc_simple_overfit_artifacts_complete": levir_cc_simple_run["overfit_artifacts_complete"],
+        "levir_cc_simple_train_artifacts_complete": levir_cc_simple_run["train_artifacts_complete"],
         "model_sizes": _run(["du", "-sh", str(models_root)], cwd=repo_root) if models_root.exists() else "missing",
         "cache_sizes": _run(["du", "-sh", str(cache_root)], cwd=repo_root) if cache_root.exists() else "missing",
         "dataset_curriculum": curriculum_summary(args.project_root),
     }
+    payload["levir_cc_simple_milestone_ready"] = levir_cc_simple_run["milestone_ready"] and payload["levir_cc_required_complete"]
     rendered = json.dumps(payload, indent=2)
     if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -98,6 +98,14 @@ grid_job_id="$(
 )"
 echo "render_levir_cc_text_query_grid: $grid_job_id"
 
+audit_job_id="$(
+  sbatch --parsable \
+    --dependency=afterok:$grid_job_id \
+    --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",OUTPUT_PATH="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_milestone_audit.json" \
+    cluster/ysu/audit_levir_cc_milestone.sbatch
+)"
+echo "audit_levir_cc_milestone: $audit_job_id"
+
 cat <<EOF
 
 Overfit directory:
@@ -132,5 +140,6 @@ Expected artifacts:
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train/text_query_top5_grid.png
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train/text_query_top5_grid.json
   $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train/environment_fingerprint.json
+  $RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_milestone_audit.json
 
 EOF

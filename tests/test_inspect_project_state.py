@@ -30,13 +30,27 @@ def test_inspect_project_state_includes_pair_retrieval_summaries(tmp_path: Path)
     run_root.mkdir(parents=True, exist_ok=True)
     (run_root / "train_summary.json").write_text(json.dumps({"best_epoch": 2}), encoding="utf-8")
     (run_root / "eval_summary.json").write_text(json.dumps({"overall_highlights": {"transition_recall@5": 0.9}}), encoding="utf-8")
+    (project_root / "runs" / "levir_cc_manifest_validation.json").write_text(json.dumps({"valid": True}), encoding="utf-8")
     (project_root / "runs" / "levir_cc_random_retrieval_eval.json").write_text(json.dumps({"recall@5": 0.2}), encoding="utf-8")
     levir_cc_overfit.mkdir(parents=True, exist_ok=True)
     levir_cc_train.mkdir(parents=True, exist_ok=True)
     (levir_cc_overfit / "overfit_report.json").write_text(json.dumps({"gate_passed": True}), encoding="utf-8")
+    (levir_cc_overfit / "train_summary.json").write_text(json.dumps({"best_epoch": 3}), encoding="utf-8")
     (levir_cc_overfit / "eval_summary.json").write_text(json.dumps({"overall_highlights": {"recall@5": 1.0}}), encoding="utf-8")
+    (levir_cc_overfit / "eval_metrics.json").write_text(json.dumps({"recall@5": 1.0}), encoding="utf-8")
+    (levir_cc_overfit / "metrics_history.json").write_text(json.dumps({"history": []}), encoding="utf-8")
+    (levir_cc_overfit / "best.pt").write_text("x", encoding="utf-8")
+    (levir_cc_overfit / "last.pt").write_text("x", encoding="utf-8")
+    (levir_cc_overfit / "text_query_top5_grid.png").write_text("x", encoding="utf-8")
+    (levir_cc_overfit / "environment_fingerprint.json").write_text(json.dumps({"python": "3.12"}), encoding="utf-8")
     (levir_cc_train / "train_summary.json").write_text(json.dumps({"best_epoch": 5}), encoding="utf-8")
     (levir_cc_train / "eval_summary.json").write_text(json.dumps({"overall_highlights": {"recall@5": 0.8}}), encoding="utf-8")
+    (levir_cc_train / "eval_metrics.json").write_text(json.dumps({"recall@5": 0.8}), encoding="utf-8")
+    (levir_cc_train / "metrics_history.json").write_text(json.dumps({"history": []}), encoding="utf-8")
+    (levir_cc_train / "best.pt").write_text("x", encoding="utf-8")
+    (levir_cc_train / "last.pt").write_text("x", encoding="utf-8")
+    (levir_cc_train / "text_query_top5_grid.png").write_text("x", encoding="utf-8")
+    (levir_cc_train / "environment_fingerprint.json").write_text(json.dumps({"python": "3.12"}), encoding="utf-8")
 
     output = tmp_path / "inspect.json"
     result = subprocess.run(
@@ -58,6 +72,12 @@ def test_inspect_project_state_includes_pair_retrieval_summaries(tmp_path: Path)
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["pair_retrieval_train_summary"]["best_epoch"] == 2
     assert payload["pair_retrieval_eval_summary"]["overall_highlights"]["transition_recall@5"] == 0.9
+    assert payload["levir_cc_manifest_validation"]["valid"] is True
     assert payload["levir_cc_random_eval"]["recall@5"] == 0.2
+    assert payload["levir_cc_required_complete"] is True
     assert payload["levir_cc_simple_overfit_summary"]["gate_passed"] is True
+    assert payload["levir_cc_simple_overfit_gate_passed"] is True
+    assert payload["levir_cc_simple_overfit_artifacts_complete"] is True
     assert payload["levir_cc_simple_train_summary"]["best_epoch"] == 5
+    assert payload["levir_cc_simple_train_artifacts_complete"] is True
+    assert payload["levir_cc_simple_milestone_ready"] is True

@@ -137,6 +137,7 @@ This submits, in order:
 6. evaluation JSON + eval summary
 7. top-5 qualitative text-query grid for 10 queries
 8. per-run environment/model fingerprint artifact
+9. final milestone audit JSON that fails if required evidence is incomplete
 
 For the DINO presets, the helper additionally inserts:
 
@@ -149,6 +150,17 @@ The helper creates two run directories per preset:
 
 1. `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_overfit100`
 2. `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train`
+
+It also writes:
+
+1. `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_milestone_audit.json`
+
+You can rerun just the final audit for an existing preset with:
+
+```bash
+sbatch --export=ALL,PRESET=simple_patch_smoke,RUN_NAME=simple_patch_smoke \
+  cluster/ysu/audit_levir_cc_milestone.sbatch
+```
 
 ## MacBook One-Command Push
 

@@ -10,7 +10,7 @@ PRESET="${PRESET:-simple_patch_smoke}"
 RUN_NAME="${RUN_NAME:-$PRESET}"
 
 if [ -z "$STAGE" ]; then
-  echo "Usage: bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh {preprocess|validate-manifests|validate-models|random|smoke|cache|overfit|train|eval|render|all}" >&2
+  echo "Usage: bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh {preprocess|validate-manifests|validate-models|random|smoke|cache|overfit|train|eval|render|audit|all}" >&2
   exit 1
 fi
 
@@ -75,6 +75,10 @@ case "$STAGE" in
     submit_stage render "" "$SCRIPT_DIR/render_levir_cc_text_query_grid.sbatch" \
       --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train}",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
     ;;
+  audit)
+    submit_stage audit "" "$SCRIPT_DIR/audit_levir_cc_milestone.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",OUTPUT_PATH="${OUTPUT_PATH:-$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_milestone_audit.json}"
+    ;;
   all)
     submit_stage preprocess "" "$SCRIPT_DIR/preprocess_levir_cc.sbatch"
     preprocess_id="$LAST_JOB_ID"
@@ -108,6 +112,9 @@ case "$STAGE" in
     eval_id="$LAST_JOB_ID"
     submit_stage render "$eval_id" "$SCRIPT_DIR/render_levir_cc_text_query_grid.sbatch" \
       --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",RUN_DIR="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_train",DINOV2_MODEL_PATH="${DINOV2_MODEL_PATH:-$RS_PROJECT_ROOT/models/dinov2-base}",REMOTECLIP_CHECKPOINT="${REMOTECLIP_CHECKPOINT:-$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt}",REMOTECLIP_ARCH="${REMOTECLIP_ARCH:-ViT-B-32}"
+    render_id="$LAST_JOB_ID"
+    submit_stage audit "$render_id" "$SCRIPT_DIR/audit_levir_cc_milestone.sbatch" \
+      --export=ALL,PRESET="$PRESET",RUN_NAME="$RUN_NAME",OUTPUT_PATH="$RS_PROJECT_ROOT/runs/levir_cc_${RUN_NAME}_milestone_audit.json"
     ;;
   *)
     echo "Unknown stage: $STAGE" >&2
