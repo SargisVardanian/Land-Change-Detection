@@ -99,6 +99,12 @@ def test_preprocess_levir_cc_valid_zip_layout_and_idempotent_hashes(tmp_path: Pa
     assert train_rows[1]["caption"] == "new building appears"
     assert train_rows[0]["caption_index"] == 0
     assert train_rows[1]["caption_index"] == 1
+    assert train_rows[0]["split_source"] == "official_layout"
+    assert train_rows[0]["metadata"]["split_source"] == "official_layout"
+    pairs = _read_jsonl(project_root / "indexes" / "levir_cc_pairs.jsonl")
+    assert pairs[0]["split_source"] == "official_layout"
+    assert report_a["split_source_counts"]["official_layout"] == 3
+    assert report_a["fallback_pair_count"] == 0
 
 
 def test_preprocess_levir_cc_valid_tar_layout(tmp_path: Path):
@@ -110,6 +116,37 @@ def test_preprocess_levir_cc_valid_tar_layout(tmp_path: Path):
     assert result.returncode == 0, result.stdout + result.stderr
     pairs = _read_jsonl(project_root / "indexes" / "levir_cc_pairs.jsonl")
     assert len(pairs) == 3
+
+
+def test_preprocess_levir_cc_marks_fallback_splits_as_non_official(tmp_path: Path):
+    project_root = tmp_path / "rs_change_project"
+    raw_root = project_root / "datasets" / "raw" / "LEVIR-CC"
+    payload = {
+        "hf_snapshot/A/pair_x.png": _png_bytes((255, 0, 0)),
+        "hf_snapshot/B/pair_x.png": _png_bytes((0, 255, 0)),
+        "hf_snapshot/A/pair_y.png": _png_bytes((0, 0, 255)),
+        "hf_snapshot/B/pair_y.png": _png_bytes((255, 255, 0)),
+        "hf_snapshot/LevirCCcaptions.json": json.dumps(
+            [
+                {"id": "pair_x", "caption": "caption x"},
+                {"id": "pair_y", "caption": "caption y"},
+            ]
+        ),
+    }
+    _make_zip(raw_root / "fallback_layout.zip", payload)
+
+    result = _run_preprocess(raw_root, project_root)
+    assert result.returncode == 0, result.stdout + result.stderr
+    report = json.loads((project_root / "reports" / "levir_cc_preprocess_report.json").read_text(encoding="utf-8"))
+    pairs = _read_jsonl(project_root / "indexes" / "levir_cc_pairs.jsonl")
+    captions = _read_jsonl(project_root / "indexes" / "levir_cc_caption_queries.jsonl")
+
+    assert all(row["split_source"] == "fallback_deterministic_non_official" for row in pairs)
+    assert all(row["split_source"] == "fallback_deterministic_non_official" for row in captions)
+    assert all(row["metadata"]["split_source"] == "fallback_deterministic_non_official" for row in captions)
+    assert report["split_source_counts"]["fallback_deterministic_non_official"] == 2
+    assert report["fallback_pair_count"] == 2
+    assert sorted(report["fallback_pair_ids_preview"]) == ["pair_x", "pair_y"]
 
 
 def test_preprocess_levir_cc_rejects_archive_path_traversal(tmp_path: Path):

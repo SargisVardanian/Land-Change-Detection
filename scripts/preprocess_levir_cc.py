@@ -28,6 +28,7 @@ EXTRACTION_SENTINEL_NAME = ".extraction_complete.json"
 class PairRecord:
     pair_id: str
     split: str
+    split_source: str
     before_path: Path
     after_path: Path
     width: int
@@ -108,6 +109,14 @@ def _deterministic_split(pair_id: str) -> str:
     if bucket < 85:
         return "val"
     return "test"
+
+
+def _choose_split_and_source(inferred_splits: set[str], caption_splits: set[str], pair_id: str) -> tuple[str, str]:
+    if caption_splits:
+        return next(iter(sorted(caption_splits))), "official_annotation"
+    if inferred_splits:
+        return next(iter(sorted(inferred_splits))), "official_layout"
+    return _deterministic_split(pair_id), "fallback_deterministic_non_official"
 
 
 def _load_caption_rows(path: Path) -> list[dict[str, Any]]:
@@ -410,6 +419,8 @@ def _write_text_report(path: Path, report: dict[str, Any]) -> None:
         f"caption_row_count: {report['caption_row_count']}",
         f"pairs_by_split: {json.dumps(report['pairs_by_split'], sort_keys=True)}",
         f"captions_by_split: {json.dumps(report['captions_by_split'], sort_keys=True)}",
+        f"split_source_counts: {json.dumps(report['split_source_counts'], sort_keys=True)}",
+        f"fallback_pair_count: {report['fallback_pair_count']}",
         f"captions_per_pair_histogram: {json.dumps(report['captions_per_pair_histogram'], sort_keys=True)}",
         f"raw_archive_sha256: {json.dumps(report['raw_archive_sha256'], sort_keys=True)}",
         f"extracted_file_count: {report['extracted_file_count']}",
@@ -440,6 +451,8 @@ def _build_records(data_root: Path, max_pairs: int | None) -> tuple[list[PairRec
     dimension_mismatches: list[str] = []
     split_assignments: dict[str, set[str]] = defaultdict(set)
     caption_histogram: Counter[int] = Counter()
+    split_source_counts: Counter[str] = Counter()
+    fallback_pair_ids: list[str] = []
 
     for pair_id in pair_ids:
         row = discovered[pair_id]
@@ -463,16 +476,20 @@ def _build_records(data_root: Path, max_pairs: int | None) -> tuple[list[PairRec
         split_assignments[pair_id].update(inferred_splits | caption_splits)
         if len(split_assignments[pair_id]) > 1:
             continue
-        split = next(iter(split_assignments[pair_id]), _deterministic_split(pair_id))
+        split, split_source = _choose_split_and_source(inferred_splits, caption_splits, pair_id)
         normalized_captions = tuple(
             {"caption": entry["caption"], "transition_label": entry["transition_label"] or pair_id}
             for entry in caption_entries
         ) or ({"caption": "", "transition_label": pair_id},)
         caption_histogram[len(normalized_captions)] += 1
+        split_source_counts[split_source] += 1
+        if split_source == "fallback_deterministic_non_official":
+            fallback_pair_ids.append(pair_id)
         pair_records.append(
             PairRecord(
                 pair_id=pair_id,
                 split=split,
+                split_source=split_source,
                 before_path=before_path.resolve(),
                 after_path=after_path.resolve(),
                 width=before_size[0],
@@ -488,6 +505,9 @@ def _build_records(data_root: Path, max_pairs: int | None) -> tuple[list[PairRec
         "corrupt_files": corrupt_files,
         "dimension_mismatches": dimension_mismatches,
         "split_leakage": split_leakage,
+        "split_source_counts": dict(split_source_counts),
+        "fallback_pair_count": len(fallback_pair_ids),
+        "fallback_pair_ids_preview": fallback_pair_ids[:20],
         "captions_per_pair_histogram": {str(key): value for key, value in sorted(caption_histogram.items())},
     }
     return pair_records, report
@@ -504,6 +524,7 @@ def _records_to_rows(records: list[PairRecord], project_root: Path) -> tuple[lis
             {
                 "pair_id": record.pair_id,
                 "split": record.split,
+                "split_source": record.split_source,
                 "before_path": before_rel,
                 "after_path": after_rel,
                 "width": record.width,
@@ -525,12 +546,14 @@ def _records_to_rows(records: list[PairRecord], project_root: Path) -> tuple[lis
                     "after_path": after_rel,
                     "caption": entry["caption"],
                     "split": record.split,
+                    "split_source": record.split_source,
                     "width": record.width,
                     "height": record.height,
                     "metadata": {
                         "transition_label": entry["transition_label"],
                         "retrieval_role": "text_to_pair_retrieval",
                         "curriculum_stage": "stage_1_text_to_pair",
+                        "split_source": record.split_source,
                     },
                 }
             )

@@ -65,6 +65,11 @@ def main() -> int:
         "caption_query_manifest": str(caption_output),
         "unique_pair_count": len(pair_rows),
         "caption_row_count": len(caption_rows),
+        "split_source_counts": {
+            source: sum(1 for row in pair_rows if row.get("split_source") == source)
+            for source in sorted({str(row.get("split_source") or "unknown") for row in pair_rows})
+        },
+        "fallback_pair_count": sum(1 for row in pair_rows if row.get("split_source") == "fallback_deterministic_non_official"),
         "split_pair_counts": {
             split: len({row["pair_id"] for row in caption_rows if row["split"] == split})
             for split in sorted({row["split"] for row in caption_rows})

@@ -61,11 +61,16 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     assert rows[0]["before_path"].endswith("_before.png")
     assert rows[0]["pair_id"] == "pair_a"
     assert rows[0]["split"] == "train"
+    assert rows[0]["split_source"] == "official_layout"
     assert len(rows[0]["captions"]) == 2
     caption_manifest = tmp_path / "levir_cc_caption_queries.jsonl"
     caption_rows = [json.loads(line) for line in caption_manifest.read_text(encoding="utf-8").splitlines()]
     assert len(caption_rows) == 4
     assert caption_rows[0]["caption_index"] == 0
+    assert caption_rows[0]["split_source"] == "official_layout"
+    build_payload = json.loads(build.stdout)
+    assert build_payload["split_source_counts"]["official_layout"] == 3
+    assert build_payload["fallback_pair_count"] == 0
 
     output_dir = tmp_path / "overfit_run"
     overfit = subprocess.run(
