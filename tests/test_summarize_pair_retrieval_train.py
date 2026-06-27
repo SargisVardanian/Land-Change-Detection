@@ -65,7 +65,9 @@ def test_summarize_pair_retrieval_train_script(tmp_path: Path):
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["best_epoch"] == 2
-    assert payload["best_eval_highlights"]["transition_recall@5"] == 0.9
+    assert payload["best_eval_highlights"]["recall@5"] == 0.7
+    assert "transition_recall@5" not in payload["best_eval_highlights"]
+    assert payload["best_eval_auxiliary_diagnostics"]["transition_recall@5"] == 0.9
     assert payload["best_checkpoint"].endswith("best.pt")
 
 
@@ -117,3 +119,4 @@ def test_summarize_pair_retrieval_train_omits_missing_transition_fields(tmp_path
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert "transition_recall@5" not in payload["best_eval_highlights"]
+    assert payload["best_eval_auxiliary_diagnostics"] == {}

@@ -62,7 +62,8 @@ def test_build_project_assets_report_ready(tmp_path: Path):
         '{"best_epoch": 2}\n', encoding="utf-8"
     )
     (project_root / "runs" / "dino_pair_retrieval_simple_patch" / "eval_summary.json").write_text(
-        '{"overall_highlights": {"transition_recall@5": 0.9}}\n', encoding="utf-8"
+        '{"overall_highlights": {"recall@5": 0.9}, "overall_auxiliary_diagnostics": {"transition_recall@5": 0.9}}\n',
+        encoding="utf-8",
     )
     overfit_dir = project_root / "runs" / "levir_cc_simple_patch_smoke_overfit100"
     train_dir = project_root / "runs" / "levir_cc_simple_patch_smoke_train"
@@ -101,7 +102,7 @@ def test_build_project_assets_report_ready(tmp_path: Path):
     assert report["levir_cc_runs"]["simple_patch_smoke"]["milestone_ready"] is True
     assert report["optional_pair_retrieval_runs"]["dino_pair_retrieval_simple_patch/eval_summary.json"]["exists"] is True
     assert report["pair_retrieval_summary_highlights"]["train_summary"]["best_epoch"] == 2
-    assert report["pair_retrieval_summary_highlights"]["eval_summary"]["overall_highlights"]["transition_recall@5"] == 0.9
+    assert report["pair_retrieval_summary_highlights"]["eval_summary"]["overall_highlights"]["recall@5"] == 0.9
 
 
 def test_main_report_includes_dataset_curriculum(tmp_path: Path):

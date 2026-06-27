@@ -29,7 +29,10 @@ def test_inspect_project_state_includes_pair_retrieval_summaries(tmp_path: Path)
 
     run_root.mkdir(parents=True, exist_ok=True)
     (run_root / "train_summary.json").write_text(json.dumps({"best_epoch": 2}), encoding="utf-8")
-    (run_root / "eval_summary.json").write_text(json.dumps({"overall_highlights": {"transition_recall@5": 0.9}}), encoding="utf-8")
+    (run_root / "eval_summary.json").write_text(
+        json.dumps({"overall_highlights": {"recall@5": 0.9}, "overall_auxiliary_diagnostics": {"transition_recall@5": 0.9}}),
+        encoding="utf-8",
+    )
     (project_root / "runs" / "levir_cc_manifest_validation.json").write_text(json.dumps({"valid": True}), encoding="utf-8")
     (project_root / "runs" / "levir_cc_random_retrieval_eval.json").write_text(json.dumps({"recall@5": 0.2}), encoding="utf-8")
     levir_cc_overfit.mkdir(parents=True, exist_ok=True)
@@ -71,7 +74,7 @@ def test_inspect_project_state_includes_pair_retrieval_summaries(tmp_path: Path)
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload["pair_retrieval_train_summary"]["best_epoch"] == 2
-    assert payload["pair_retrieval_eval_summary"]["overall_highlights"]["transition_recall@5"] == 0.9
+    assert payload["pair_retrieval_eval_summary"]["overall_highlights"]["recall@5"] == 0.9
     assert payload["levir_cc_manifest_validation"]["valid"] is True
     assert payload["levir_cc_random_eval"]["recall@5"] == 0.2
     assert payload["levir_cc_required_complete"] is True

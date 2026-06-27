@@ -73,8 +73,12 @@ def test_summarize_pair_retrieval_eval_script(tmp_path: Path):
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
-    assert payload["overall_highlights"]["transition_recall@5"] == 1.0
+    assert payload["overall_highlights"]["recall@5"] == 0.7
+    assert "transition_recall@5" not in payload["overall_highlights"]
+    assert payload["overall_auxiliary_diagnostics"]["transition_recall@5"] == 1.0
     assert payload["source_highlights"]["SECOND-CC"]["mAP"] == 0.7
+    assert "transition_recall@5" not in payload["source_highlights"]["SECOND-CC"]
+    assert payload["source_auxiliary_diagnostics"]["SECOND-CC"]["transition_recall@5"] == 1.0
     assert payload["dataset_summary"]["top_dominant_transitions"][0]["transition"] == "1->2"
 
 
@@ -133,4 +137,6 @@ def test_summarize_pair_retrieval_eval_omits_missing_transition_fields(tmp_path:
     assert result.returncode == 0, result.stderr
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert "transition_recall@5" not in payload["overall_highlights"]
+    assert payload["overall_auxiliary_diagnostics"] == {}
     assert "transition_top1_hit_rate" not in payload["source_highlights"]["levir"]
+    assert payload["source_auxiliary_diagnostics"]["levir"] == {}

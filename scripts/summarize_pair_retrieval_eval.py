@@ -23,6 +23,40 @@ def _compact_metrics(metrics: dict[str, Any], keys: list[str]) -> dict[str, Any]
     return {key: metrics[key] for key in keys if key in metrics}
 
 
+def _primary_highlights(metrics: dict[str, Any]) -> dict[str, Any]:
+    return _compact_metrics(
+        metrics,
+        [
+            "recall@1",
+            "recall@5",
+            "recall@10",
+            "mAP",
+            "MRR",
+            "median_rank",
+            "pair_to_text_recall@1",
+            "pair_to_text_recall@5",
+            "pair_to_text_recall@10",
+            "pair_to_text_MRR",
+        ],
+    )
+
+
+def _auxiliary_diagnostics(metrics: dict[str, Any]) -> dict[str, Any]:
+    return _compact_metrics(
+        metrics,
+        [
+            "reversed_pair_sanity_accuracy",
+            "transition_recall@1",
+            "transition_recall@5",
+            "transition_recall@10",
+            "transition_MRR",
+            "transition_top1_hit_rate",
+            "mean_transition_similarity_top5",
+            "pair_sample_fraction",
+        ],
+    )
+
+
 def build_summary(payload: dict[str, Any], eval_json: Path) -> dict[str, Any]:
     overall = dict(payload.get("overall", payload))
     by_source = dict(payload.get("by_source", {}))
@@ -30,43 +64,15 @@ def build_summary(payload: dict[str, Any], eval_json: Path) -> dict[str, Any]:
     transition_summary = dict(payload.get("transition_summary", {}))
 
     source_highlights = {}
+    source_auxiliary_diagnostics = {}
     for source, metrics in by_source.items():
-        source_highlights[source] = _compact_metrics(
-            metrics,
-            [
-                "recall@5",
-                "mAP",
-                "pair_to_text_recall@5",
-                "transition_recall@5",
-                "transition_top1_hit_rate",
-            ],
-        )
+        source_highlights[source] = _primary_highlights(metrics)
+        source_auxiliary_diagnostics[source] = _auxiliary_diagnostics(metrics)
 
     summary = {
         "eval_json": str(eval_json),
-        "overall_highlights": _compact_metrics(
-            overall,
-            [
-                "recall@1",
-                "recall@5",
-                "recall@10",
-                "mAP",
-                "MRR",
-                "median_rank",
-                "pair_to_text_recall@1",
-                "pair_to_text_recall@5",
-                "pair_to_text_recall@10",
-                "pair_to_text_MRR",
-                "reversed_pair_sanity_accuracy",
-                "transition_recall@1",
-                "transition_recall@5",
-                "transition_recall@10",
-                "transition_MRR",
-                "transition_top1_hit_rate",
-                "mean_transition_similarity_top5",
-                "pair_sample_fraction",
-            ],
-        ),
+        "overall_highlights": _primary_highlights(overall),
+        "overall_auxiliary_diagnostics": _auxiliary_diagnostics(overall),
         "dataset_summary": {
             "num_samples": dataset_summary.get("num_samples"),
             "num_unique_pairs": dataset_summary.get("num_unique_pairs"),
@@ -78,6 +84,7 @@ def build_summary(payload: dict[str, Any], eval_json: Path) -> dict[str, Any]:
             "top_dominant_transitions": _top_transitions(dataset_summary),
         },
         "source_highlights": source_highlights,
+        "source_auxiliary_diagnostics": source_auxiliary_diagnostics,
         "transition_summary": {
             "pair_only_top_transitions": _top_transitions(transition_summary.get("pair_only", {})),
             "caption_or_grounded_text_top_transitions": _top_transitions(transition_summary.get("caption_or_grounded_text", {})),

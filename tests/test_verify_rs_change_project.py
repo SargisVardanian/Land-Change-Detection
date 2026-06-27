@@ -54,7 +54,8 @@ def test_build_report_ready(tmp_path: Path):
         '{"best_epoch": 3}\n', encoding="utf-8"
     )
     (project_root / "runs" / "dino_pair_retrieval_simple_patch" / "eval_summary.json").write_text(
-        '{"overall_highlights": {"transition_recall@5": 1.0}}\n', encoding="utf-8"
+        '{"overall_highlights": {"recall@5": 1.0}, "overall_auxiliary_diagnostics": {"transition_recall@5": 1.0}}\n',
+        encoding="utf-8",
     )
     (project_root / "runs" / "levir_cc_simple_patch_smoke_overfit100").mkdir(parents=True, exist_ok=True)
     (project_root / "runs" / "levir_cc_simple_patch_smoke_train").mkdir(parents=True, exist_ok=True)
@@ -82,7 +83,7 @@ def test_build_report_ready(tmp_path: Path):
     assert report["levir_cc_runs"]["simple_patch_smoke"]["milestone_ready"] is False
     assert report["levir_cc_any_milestone_ready"] is False
     assert report["pair_retrieval_summary_highlights"]["train_summary"]["best_epoch"] == 3
-    assert report["pair_retrieval_summary_highlights"]["eval_summary"]["overall_highlights"]["transition_recall@5"] == 1.0
+    assert report["pair_retrieval_summary_highlights"]["eval_summary"]["overall_highlights"]["recall@5"] == 1.0
 
 
 def test_build_report_marks_levir_cc_milestone_ready_when_artifacts_and_gate_exist(tmp_path: Path):
