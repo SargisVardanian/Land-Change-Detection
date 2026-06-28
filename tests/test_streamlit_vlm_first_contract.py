@@ -33,14 +33,14 @@ def test_normal_vlm_selector_is_gemma_only_until_debug_enabled():
     assert "reasoning_options = [\"full_local\", \"efficient\"] if explanation_backend == \"Ollama vision\" else [\"efficient\"]" in app_source
 
 
-def test_normal_app_hides_dino_segmentation_and_feature_encoder_controls():
+def test_normal_app_hides_retired_visual_baseline_segmentation_and_feature_encoder_controls():
     app_source = Path("app.py").read_text()
 
-    assert "land_change_detection.dinov3_features" not in app_source
-    assert "DINOv3 feature-change diagnostics" not in app_source
-    assert "Running DINOv3 SAT feature diagnostics" not in app_source
-    assert "DINOv3 feature encoder" not in app_source
-    assert "DINOv3 device" not in app_source
-    assert "dinov3_feature_regions" not in app_source
-    assert "timm/vit_base_patch16_dinov3.lvd1689m" not in app_source
-    assert "timm/vit_small_patch16_dinov3.lvd1689m" not in app_source
+    assert "land_change_detection.retired_visual_feature_extractor_features" not in app_source
+    assert "retired visual feature extractor feature-change diagnostics" not in app_source
+    assert "Running retired visual feature extractor SAT feature diagnostics" not in app_source
+    assert "retired visual feature extractor feature encoder" not in app_source
+    assert "retired visual feature extractor device" not in app_source
+    assert "retired_visual_feature_extractor_feature_regions" not in app_source
+    assert "timm/vit_base_patch16_retired_visual_feature_extractor.lvd1689m" not in app_source
+    assert "timm/vit_small_patch16_retired_visual_feature_extractor.lvd1689m" not in app_source

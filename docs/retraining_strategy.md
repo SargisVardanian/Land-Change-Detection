@@ -32,7 +32,7 @@ So the correct split is:
 - `mfaytin/mask2former-satellite`: current RGB-only prototype and fallback
 - `Prithvi-EO-2.0-300M-TL`: preferred first EO backbone for practical TerraTorch iteration
 - `Prithvi-EO-2.0-600M-TL`: heavier benchmark follow-up after the 300M path is stable
-- `RemoteCLIP` or similar text encoder: retrieval alignment candidate
+- `retired cross-modal baseline` or similar text encoder: retrieval alignment candidate
 - `CDMamba`: binary changed/unchanged baseline only, not the semantic transition backbone
 - Qwen / Gemma / EarthDial class VLMs: optional explanation layer after deterministic evidence exists
 

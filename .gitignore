@@ -1,11 +1,17 @@
 runs_remote/
+reports/
 .DS_Store
 .agent/
 .agent-capability-report.md
 .idea/
 .venv/
 artifacts/
+.cache/
+external/UniverSat/
+models/
 data/
+datasets/
+indexes/
 cluster/ysu/private/
 pages/__pycache__/
 scripts/__pycache__/

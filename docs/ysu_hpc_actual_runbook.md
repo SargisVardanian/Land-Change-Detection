@@ -60,9 +60,9 @@ sbatch cluster/ysu/render_levir_mci_samples.sbatch
 sbatch cluster/ysu/overfit_levir_mci_100.sbatch
 ```
 
-B. Keep DINO retrieval on `--visual-backbone simple_patch` first.
+B. Keep retired visual baseline retrieval on `--visual-backbone simple_patch` first.
 
-C. Build and verify the LEVIR-CC `simple_patch_smoke` retrieval path before touching DINOv2.
+C. Build and verify the LEVIR-CC `simple_patch_smoke` retrieval path before touching retired visual baseline.
 
 ```bash
 sbatch cluster/ysu/validate_levir_cc_pair_manifest.sbatch
@@ -74,19 +74,19 @@ This path writes the first LEVIR-CC retrieval artifacts under:
 - `$RS_PROJECT_ROOT/runs/levir_cc_simple_patch_smoke_overfit100/`
 - `$RS_PROJECT_ROOT/runs/levir_cc_simple_patch_smoke_train/`
 
-D. Download `dinov2-small` only after the `simple_patch` checks pass.
+D. Download `retired_visual_baseline-small` only after the `simple_patch` checks pass.
 
 ```bash
-sbatch cluster/ysu/download_dinov2_small.sbatch
+sbatch cluster/ysu/download_retired_visual_baseline_small.sbatch
 ```
 
-E. Run the local-only DINO smoke test.
+E. Run the local-only retired visual baseline smoke test.
 
 ```bash
-sbatch cluster/ysu/smoke_dinov2_local.sbatch
+sbatch cluster/ysu/smoke_retired_visual_baseline_local.sbatch
 ```
 
-F. Only then train with `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only`.
+F. Only then train with `--visual-backbone retired_visual_baseline --retired_visual_baseline-model-path "$RS_PROJECT_ROOT/models/retired_visual_baseline-small" --local-files-only`.
 
 ## LEVIR-CC Baseline Order
 
@@ -106,12 +106,12 @@ That will:
 6. evaluate retrieval metrics and render the qualitative top-5 text-query grid
 7. run one final milestone audit that fails if the required cluster artifacts are incomplete
 
-For the DINO presets, the dependent `submit_levir_cc_baseline.sh` runs add:
+For the retired visual baseline presets, the dependent `submit_levir_cc_baseline.sh` runs add:
 
 1. model-asset validation
 2. one-batch raw-image GPU smoke
-3. frozen DINOv2 pair-token cache
-4. frozen RemoteCLIP text cache
+3. frozen retired visual baseline pair-token cache
+4. frozen retired cross-modal baseline text cache
 
 Build the coordinated manifests first if they are not already present:
 
@@ -129,46 +129,46 @@ Validate the manifest:
 sbatch cluster/ysu/validate_levir_cc_pair_manifest.sbatch
 ```
 
-Optional real DINOv2 + RemoteCLIP one-batch smoke:
+Optional real retired visual baseline + retired cross-modal baseline one-batch smoke:
 
 ```bash
 sbatch cluster/ysu/validate_retrieval_model_assets.sbatch
-sbatch --export=ALL,PAIR_FEATURE_MODE=signed_delta,DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base",REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt" \
-  cluster/ysu/smoke_levir_cc_dino_remoteclip_batch.sbatch
+sbatch --export=ALL,PAIR_FEATURE_MODE=signed_delta,RETIRED_VISUAL_MODEL_PATH="$RS_PROJECT_ROOT/models/retired_visual_baseline-base",RETIRED_TEXT_CHECKPOINT="$RS_PROJECT_ROOT/models/retired_cross_modal_baseline/retired cross-modal baseline-ViT-B-32.pt" \
+  cluster/ysu/smoke_levir_cc_retired_visual_baseline_retired_cross_modal_baseline_batch.sbatch
 ```
 
 After model-asset validation and the raw-image GPU smoke pass, build frozen caches:
 
 ```bash
-sbatch cluster/ysu/cache_levir_cc_dinov2_features.sbatch
-sbatch cluster/ysu/cache_levir_cc_remoteclip_text.sbatch
+sbatch cluster/ysu/cache_levir_cc_retired_visual_baseline_features.sbatch
+sbatch cluster/ysu/cache_levir_cc_retired_cross_modal_baseline_text.sbatch
 ```
 
 Submit the full LEVIR-CC baseline chain with Slurm dependencies:
 
 ```bash
 bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_t2_only RUN_NAME=dinov2_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_t2_only RUN_NAME=retired_visual_baseline_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_signed_delta RUN_NAME=retired_visual_baseline_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_change_fusion RUN_NAME=retired_visual_baseline_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
 ```
 
-For the DINOv2 presets, also export model paths if they differ from defaults:
+For the retired visual baseline presets, also export model paths if they differ from defaults:
 
 ```bash
-export DINOV2_MODEL_PATH="$RS_PROJECT_ROOT/models/dinov2-base"
-export REMOTECLIP_CHECKPOINT="$RS_PROJECT_ROOT/models/remoteclip/RemoteCLIP-ViT-B-32.pt"
+export RETIRED_VISUAL_MODEL_PATH="$RS_PROJECT_ROOT/models/retired_visual_baseline-base"
+export RETIRED_TEXT_CHECKPOINT="$RS_PROJECT_ROOT/models/retired_cross_modal_baseline/retired cross-modal baseline-ViT-B-32.pt"
 ```
 
-The DINO dependency chain is:
+The retired visual baseline dependency chain is:
 
 1. preprocess
 2. validate manifests
 3. random retrieval baseline
 4. validate model assets
 5. raw real-batch GPU smoke
-6. frozen DINOv2 cache
-7. frozen RemoteCLIP text cache
+6. frozen retired visual baseline cache
+7. frozen retired cross-modal baseline text cache
 8. overfit-100
 9. full baseline training
 10. evaluation
@@ -198,9 +198,9 @@ Each run writes:
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_train/environment_fingerprint.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_<preset>_milestone_audit.json`
 - `$RS_PROJECT_ROOT/runs/levir_cc_manifest_validation.json`
-- `$RS_PROJECT_ROOT/runs/levir_cc_dino_remoteclip_smoke_report.json` for the explicit smoke step
-- `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/index.json`
-- `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/index.json`
+- `$RS_PROJECT_ROOT/runs/levir_cc_retired_visual_baseline_retired_cross_modal_baseline_smoke_report.json` for the explicit smoke step
+- `$RS_PROJECT_ROOT/cache/levir_cc_retired_visual_baseline/index.json`
+- `$RS_PROJECT_ROOT/cache/levir_cc_retired_cross_modal_baseline/index.json`
 
 The final audit can also be run directly if you want to re-check an existing preset:
 
@@ -232,7 +232,7 @@ df -h /data
 1. `levir_cc_manifest_validation.json` finishes without pair leakage or missing-file errors.
 2. `levir_cc_random_retrieval_eval.json` exists as the baseline floor.
 3. The one-batch smoke finishes without tensor-shape or model-asset errors.
-4. Frozen cache indices exist under `$RS_PROJECT_ROOT/cache/levir_cc_dinov2/` and `$RS_PROJECT_ROOT/cache/levir_cc_remoteclip/`.
+4. Frozen cache indices exist under `$RS_PROJECT_ROOT/cache/levir_cc_retired_visual_baseline/` and `$RS_PROJECT_ROOT/cache/levir_cc_retired_cross_modal_baseline/`.
 5. `levir_cc_<preset>_overfit100/` contains `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `overfit_report.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
 6. `levir_cc_<preset>_train/` contains the full-baseline `best.pt`, `last.pt`, `metrics_history.json`, `train_summary.json`, `eval_metrics.json`, `eval_summary.json`, `text_query_top5_grid.png`, and `environment_fingerprint.json`.
 7. `levir_cc_<preset>_milestone_audit.json` exists and reports `"milestone_ready": true`.

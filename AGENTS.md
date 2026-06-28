@@ -34,7 +34,7 @@ The same file may also exist in `~/Downloads`; the repo-root copy is the canonic
 
 Core proposal requirements:
 
-- use foundation vision models such as SAM, DINOv2, Vision Transformers, and remote-sensing foundation models;
+- use foundation vision models such as SAM, retired visual baseline, Vision Transformers, and remote-sensing foundation models;
 - support multi-temporal and multi-resolution imagery including Sentinel-2, UAV feeds, aerial orthophotos, and possibly Sentinel-1/SAR or DEMs;
 - address Armenia-specific needs: cultivated vs non-cultivated zones, irrigated vs non-irrigated fields, dry vs wet regions, deforestation, urban expansion, water-body shrinkage, and agricultural dynamics;
 - prefer label-efficient, few-shot, self-supervised, transfer-learning, and parameter-efficient fine-tuning approaches;

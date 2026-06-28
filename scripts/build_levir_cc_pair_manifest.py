@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.preprocess_levir_cc import _build_records, _records_to_rows
+from scripts.preprocess_levir_cc import _build_records, _overfit_rows, _records_to_rows, _split_rows
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,6 +21,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Optional explicit output path for the flattened caption-query manifest.",
+    )
+    parser.add_argument(
+        "--split-output-dir",
+        type=Path,
+        default=None,
+        help="Optional explicit directory for split-specific caption-query views.",
     )
     parser.add_argument("--project-root", type=Path, default=None)
     return parser.parse_args()
@@ -58,11 +64,30 @@ def main() -> int:
         if args.caption_output is not None
         else pair_output.with_name("levir_cc_caption_queries.jsonl")
     )
+    split_output_dir = args.split_output_dir.resolve() if args.split_output_dir is not None else caption_output.parent
+    train_output = split_output_dir / "levir_cc_caption_queries_train.jsonl"
+    val_output = split_output_dir / "levir_cc_caption_queries_val.jsonl"
+    test_output = split_output_dir / "levir_cc_caption_queries_test.jsonl"
+    overfit_output = split_output_dir / "levir_cc_caption_queries_overfit_100.jsonl"
+
+    train_rows = _split_rows(caption_rows, "train")
+    val_rows = _split_rows(caption_rows, "val")
+    test_rows = _split_rows(caption_rows, "test")
+    overfit_rows = _overfit_rows(caption_rows)
+
     _write_jsonl(pair_output, pair_rows)
     _write_jsonl(caption_output, caption_rows)
+    _write_jsonl(train_output, train_rows)
+    _write_jsonl(val_output, val_rows)
+    _write_jsonl(test_output, test_rows)
+    _write_jsonl(overfit_output, overfit_rows)
     rendered = {
         "pair_manifest": str(pair_output),
         "caption_query_manifest": str(caption_output),
+        "train_caption_query_manifest": str(train_output),
+        "val_caption_query_manifest": str(val_output),
+        "test_caption_query_manifest": str(test_output),
+        "overfit_caption_query_manifest": str(overfit_output),
         "unique_pair_count": len(pair_rows),
         "caption_row_count": len(caption_rows),
         "split_source_counts": {
@@ -73,6 +98,12 @@ def main() -> int:
         "split_pair_counts": {
             split: len({row["pair_id"] for row in caption_rows if row["split"] == split})
             for split in sorted({row["split"] for row in caption_rows})
+        },
+        "split_caption_row_counts": {
+            "train": len(train_rows),
+            "val": len(val_rows),
+            "test": len(test_rows),
+            "overfit_100": len(overfit_rows),
         },
     }
     print(json.dumps(rendered, indent=2))

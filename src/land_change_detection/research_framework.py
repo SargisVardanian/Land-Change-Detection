@@ -128,7 +128,7 @@ DEFAULT_RESEARCH_PROTOCOL = ResearchProtocol(
         "visual RGB before/after inspection",
         "cell-level pixel-difference prioritization",
         "binary changed/unchanged baseline for localization only",
-        "simple_patch retrieval before optional DINOv2 replacement",
+        "simple_patch retrieval before optional retired visual baseline replacement",
     ),
     quality_checks=(
         "T1 and T2 crop dimensions must match",
@@ -141,7 +141,7 @@ DEFAULT_RESEARCH_PROTOCOL = ResearchProtocol(
         "what changed from T1 to T2, not only by the final appearance of the scene."
     ),
     novelty_guardrails=(
-        "Do not position DINOv2 plus pair fusion plus contrastive retrieval as sufficient novelty by itself.",
+        "Do not position retired visual baseline plus pair fusion plus contrastive retrieval as sufficient novelty by itself.",
         "Use LEVIR-CC and LEVIR-MCI as engineering and grounding benchmarks before claiming semantic retrieval novelty.",
         "Treat DynamicEarthNet, SpaceNet 7, and JEPA-style ideas as later-stage temporal representation work.",
     ),

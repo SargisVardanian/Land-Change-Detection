@@ -8,7 +8,7 @@ The current runnable app uses:
 - `gemma4:e4b` through Ollama for the final natural-language visual interpretation.
 - OSCD sample imagery by default, with optional user-uploaded image pairs.
 
-The normal user-facing report is VLM-first: Gemma receives only the before crop, the after crop, and a labeled `A1..D4` before/after contact sheet. It does not receive Mask2Former maps, class labels, transition tables, DINO features, or heatmaps.
+The normal user-facing report is VLM-first: Gemma receives only the before crop, the after crop, and a labeled `A1..D4` before/after contact sheet. It does not receive Mask2Former maps, class labels, transition tables, retired visual baseline features, or heatmaps.
 
 ## What Works Now
 
@@ -41,7 +41,7 @@ Research or debug only:
 | `ibm-nasa-geospatial/Prithvi-EO-2.0-600M-TL` | Heavier future benchmark. Not required for the current app. |
 | `akshaydudhane/EarthDial_4B_RGB` | Relevant remote-sensing VLM candidate, but the local HF custom-code path is unstable with the current Transformers stack. Hidden behind experimental/debug UI. |
 | AdaptLLM remote-sensing Qwen models | Research candidates. Hidden behind experimental/debug UI because they are heavy or unreliable on this MacBook runtime. |
-| DINOv3 SAT models | Feature extractors only, not semantic segmenters. They are not used by the Streamlit app. |
+| retired visual feature extractor SAT models | Feature extractors only, not semantic segmenters. They are not used by the Streamlit app. |
 
 ## Requirements
 
@@ -271,25 +271,25 @@ A. Existing LEVIR-MCI baseline:
 B. Pair retrieval simple baseline:
 
 - build SECOND/Hi-UCD manifests with `scripts/build_secondcc_pair_retrieval_manifest.py` and `scripts/build_hiucd_pair_retrieval_manifest.py`
-- train `simple_patch` first with `scripts/train_dino_pair_retrieval.py --visual-backbone simple_patch`
+- train `simple_patch` first with `scripts/train_retired_visual_baseline_pair_retrieval.py --visual-backbone simple_patch`
 - summarize training output with `scripts/summarize_pair_retrieval_train.py`
-- evaluate with `scripts/eval_dino_pair_retrieval.py`
+- evaluate with `scripts/eval_retired_visual_baseline_pair_retrieval.py`
 - summarize eval output with `scripts/summarize_pair_retrieval_eval.py`
 - query top-k neighbors with `scripts/query_pair_to_pair_retrieval.py`
 
-C. Optional DINOv2 download:
+C. Optional retired visual baseline download:
 
-- download `dinov2-small` into `$RS_PROJECT_ROOT/models/dinov2-small` with `scripts/download_dinov2_small.py`
+- download `retired_visual_baseline-small` into `$RS_PROJECT_ROOT/models/retired_visual_baseline-small` with `scripts/download_retired_visual_baseline_small.py`
 
-D. Optional local-only DINO smoke:
+D. Optional local-only retired visual baseline smoke:
 
-- run `scripts/smoke_dinov2_local.py`
+- run `scripts/smoke_retired_visual_baseline_local.py`
 
-E. Optional DINO pair retrieval:
+E. Optional retired visual baseline pair retrieval:
 
-- switch to `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only` only after the `simple_patch` path is stable
+- switch to `--visual-backbone retired_visual_baseline --retired_visual_baseline-model-path "$RS_PROJECT_ROOT/models/retired_visual_baseline-small" --local-files-only` only after the `simple_patch` path is stable
 
-`DINOv2` is optional. It is not required for default tests, pair-retrieval manifest building, or `simple_patch` training.
+`retired visual baseline` is optional. It is not required for default tests, pair-retrieval manifest building, or `simple_patch` training.
 - [scripts/build_prithvi_semantic_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_prithvi_semantic_manifest.py): converts semantic manifests into a Prithvi-style 6-band EO contract when multispectral paths are available
 - [scripts/run_prithvi_semantic_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_semantic_train_eval.py): runs the current semantic baseline in Prithvi-style 6-band mode
 - [scripts/run_prithvi_terratorch_experimental.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_terratorch_experimental.py): explicit Prithvi/TerraTorch experimental runner with honest fallback diagnostics
@@ -341,11 +341,11 @@ sbatch cluster/ysu/load_prithvi_backend_runtime.sbatch
 sbatch cluster/ysu/slurm_test_gpu.sbatch
 ```
 
-## Why DINOv3 Is Not Used As Segmentation
+## Why retired visual feature extractor Is Not Used As Segmentation
 
-DINOv3 SAT models such as `facebook/dinov3-vitl16-pretrain-sat493m` and `timm/vit_large_patch16_dinov3.sat493m` are feature-extraction backbones. They do not include a trained land-cover segmentation decoder/head in this project, so they cannot directly output classes such as road, building, water, or bare land.
+retired visual feature extractor SAT models such as `facebook/retired_visual_feature_extractor-vitl16-pretrain-sat493m` and `timm/vit_large_patch16_retired_visual_feature_extractor.sat493m` are feature-extraction backbones. They do not include a trained land-cover segmentation decoder/head in this project, so they cannot directly output classes such as road, building, water, or bare land.
 
-For that reason, DINOv3 is not part of the Streamlit runtime.
+For that reason, retired visual feature extractor is not part of the Streamlit runtime.
 
 ## Architecture Direction
 

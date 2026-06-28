@@ -17,8 +17,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--dataset-manifest", type=Path, default=None)
-    parser.add_argument("--dinov2-model-path", type=Path, default=None)
-    parser.add_argument("--remoteclip-checkpoint", type=Path, default=None)
+    parser.add_argument("--jina-model-path", type=Path, default=None)
+    parser.add_argument("--universat-source-dir", type=Path, default=None)
+    parser.add_argument("--universat-checkpoint-dir", type=Path, default=None)
     parser.add_argument("--config-json", type=Path, default=None)
     parser.add_argument("--cli", default=None)
     return parser.parse_args()
@@ -62,9 +63,10 @@ def main() -> int:
         "cuda_build": torch.version.cuda,
         "nvidia_driver": _nvidia_driver(),
         "transformers": _safe_module_version("transformers"),
-        "open_clip": _safe_module_version("open_clip"),
-        "dinov2_checkpoint": path_fingerprint(args.dinov2_model_path),
-        "remoteclip_checkpoint": path_fingerprint(args.remoteclip_checkpoint),
+        "peft": _safe_module_version("peft"),
+        "jina_model": path_fingerprint(args.jina_model_path),
+        "universat_source": path_fingerprint(args.universat_source_dir),
+        "universat_checkpoint": path_fingerprint(args.universat_checkpoint_dir),
         "dataset_manifest": jsonl_fingerprint(args.dataset_manifest),
         "exact_cli": args.cli,
         "config": config_payload,

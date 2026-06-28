@@ -165,7 +165,7 @@ For Phase 1 and Phase 2 iteration, run targeted subsets first and then the regre
 ## Non-Goals For Phase 1 And Phase 2
 
 - no real Prithvi inference
-- no RemoteCLIP dependency requirement
+- no retired cross-modal baseline dependency requirement
 - no FAISS requirement
 - no Sentinel credential flow
 - no dataset downloads

@@ -92,13 +92,13 @@ The Slurm templates default to the `research` partition and keep logs under `/mn
 ## Retrieval-First Order
 
 1. Run LEVIR-MCI validation, render, and `overfit_100` with the current simple baseline.
-2. Keep DINO retrieval on `--visual-backbone simple_patch` first.
-3. Run the pair-retrieval jobs with `simple_patch` before touching DINOv2.
-4. Download `dinov2-small` only after the simple baseline passes.
-5. Run `scripts/smoke_dinov2_local.py`.
-6. Only then use `--visual-backbone dinov2 --dinov2-model-path "$RS_PROJECT_ROOT/models/dinov2-small" --local-files-only`.
+2. Keep retired visual baseline retrieval on `--visual-backbone simple_patch` first.
+3. Run the pair-retrieval jobs with `simple_patch` before touching retired visual baseline.
+4. Download `retired_visual_baseline-small` only after the simple baseline passes.
+5. Run `scripts/smoke_retired_visual_baseline_local.py`.
+6. Only then use `--visual-backbone retired_visual_baseline --retired_visual_baseline-model-path "$RS_PROJECT_ROOT/models/retired_visual_baseline-small" --local-files-only`.
 
-`DINOv2` is optional. It is not required for default tests, LEVIR-MCI bootstrap, or simple baseline training.
+`retired visual baseline` is optional. It is not required for default tests, LEVIR-MCI bootstrap, or simple baseline training.
 
 ## LEVIR-CC Retrieval Baseline
 
@@ -107,9 +107,9 @@ For the first real LEVIR-CC retrieval baseline, use:
 ```bash
 bash cluster/ysu/run_levir_cc_baseline_end_to_end.sh all
 
-PRESET=dinov2_t2_only RUN_NAME=dinov2_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_t2_only RUN_NAME=retired_visual_baseline_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_signed_delta RUN_NAME=retired_visual_baseline_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_change_fusion RUN_NAME=retired_visual_baseline_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
 ```
 
 If you want the explicit step-by-step variant instead, use:
@@ -122,9 +122,9 @@ PYTHONPATH=src $PYTHON \
   --caption-output "$RS_PROJECT_ROOT/indexes/levir_cc_caption_queries.jsonl"
 
 bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_t2_only RUN_NAME=dinov2_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_signed_delta RUN_NAME=dinov2_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
-PRESET=dinov2_change_fusion RUN_NAME=dinov2_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_t2_only RUN_NAME=retired_visual_baseline_t2_only bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_signed_delta RUN_NAME=retired_visual_baseline_signed_delta bash cluster/ysu/submit_levir_cc_baseline.sh
+PRESET=retired_visual_baseline_change_fusion RUN_NAME=retired_visual_baseline_change_fusion bash cluster/ysu/submit_levir_cc_baseline.sh
 ```
 
 This submits, in order:
@@ -139,12 +139,12 @@ This submits, in order:
 8. per-run environment/model fingerprint artifact
 9. final milestone audit JSON that fails if required evidence is incomplete
 
-For the DINO presets, the helper additionally inserts:
+For the retired visual baseline presets, the helper additionally inserts:
 
 1. retrieval-model asset validation
-2. real DINOv2 + RemoteCLIP one-batch smoke
-3. frozen DINOv2 pair-token cache
-4. frozen RemoteCLIP caption cache
+2. real retired visual baseline + retired cross-modal baseline one-batch smoke
+3. frozen retired visual baseline pair-token cache
+4. frozen retired cross-modal baseline caption cache
 
 The helper creates two run directories per preset:
 

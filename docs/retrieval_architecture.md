@@ -84,7 +84,7 @@ That means the system should not add a separate pair-to-pair head unless experim
 
 ## Novelty Guardrail
 
-`DINOv2 + pair fusion + contrastive retrieval` is a strong engineering baseline, but not a sufficient paper claim by itself.
+`retired visual baseline + pair fusion + contrastive retrieval` is a strong engineering baseline, but not a sufficient paper claim by itself.
 
 The stronger claim is:
 

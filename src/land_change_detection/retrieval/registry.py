@@ -7,14 +7,12 @@ from .backends.fake import FakeRetrievalBackend
 from .backends.noop import NoOpRetrievalBackend
 from .backends.pair_analog_prithvi import PairAnalogPrithviBackend
 from .backends.static_region_prithvi import StaticRegionPrithviBackend
-from .backends.text_bitemporal_remoteclip import TextBitemporalRemoteCLIPBackend
 
 _BACKENDS: dict[str, type[RetrievalBackend]] = {
     "fake": FakeRetrievalBackend,
     "noop": NoOpRetrievalBackend,
     "pair_analog_prithvi": PairAnalogPrithviBackend,
     "static_region_prithvi": StaticRegionPrithviBackend,
-    "text_bitemporal_remoteclip": TextBitemporalRemoteCLIPBackend,
 }
 
 

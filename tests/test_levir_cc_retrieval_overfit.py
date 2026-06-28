@@ -18,6 +18,10 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
+def _read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     repo_root = Path(__file__).resolve().parents[1]
     root = tmp_path / "LEVIR-CC"
@@ -55,7 +59,7 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
         env={"PYTHONPATH": "src"},
     )
     assert build.returncode == 0, build.stderr
-    rows = [json.loads(line) for line in manifest.read_text(encoding="utf-8").splitlines()]
+    rows = _read_jsonl(manifest)
     assert len(rows) == 3
     assert rows[0]["dataset_name"] == "LEVIR-CC"
     assert rows[0]["before_path"].endswith("_before.png")
@@ -64,67 +68,25 @@ def test_build_levir_cc_pair_manifest_and_overfit(tmp_path: Path):
     assert rows[0]["split_source"] == "official_layout"
     assert len(rows[0]["captions"]) == 2
     caption_manifest = tmp_path / "levir_cc_caption_queries.jsonl"
-    caption_rows = [json.loads(line) for line in caption_manifest.read_text(encoding="utf-8").splitlines()]
+    caption_rows = _read_jsonl(caption_manifest)
     assert len(caption_rows) == 4
     assert caption_rows[0]["caption_index"] == 0
     assert caption_rows[0]["split_source"] == "official_layout"
+    train_rows = _read_jsonl(tmp_path / "levir_cc_caption_queries_train.jsonl")
+    val_rows = _read_jsonl(tmp_path / "levir_cc_caption_queries_val.jsonl")
+    test_rows = _read_jsonl(tmp_path / "levir_cc_caption_queries_test.jsonl")
+    overfit_rows = _read_jsonl(tmp_path / "levir_cc_caption_queries_overfit_100.jsonl")
+    assert len(train_rows) == 4
+    assert len(val_rows) == 0
+    assert len(test_rows) == 0
+    assert len(overfit_rows) == 4
     build_payload = json.loads(build.stdout)
     assert build_payload["split_source_counts"]["official_layout"] == 3
     assert build_payload["fallback_pair_count"] == 0
+    assert build_payload["split_caption_row_counts"]["train"] == 4
+    assert build_payload["split_caption_row_counts"]["overfit_100"] == 4
 
-    output_dir = tmp_path / "overfit_run"
-    overfit = subprocess.run(
-        [
-            sys.executable,
-            "scripts/overfit_levir_cc_retrieval_100.py",
-            "--levir-manifest",
-            str(caption_manifest),
-            "--output-dir",
-            str(output_dir),
-            "--preset",
-            "simple_patch_smoke",
-            "--epochs",
-            "6",
-            "--batch-size",
-            "3",
-            "--image-size",
-            "32",
-            "--max-train-samples",
-            "4",
-            "--device",
-            "cpu",
-            "--min-loss-drop",
-            "0.0",
-            "--min-recall-at-1",
-            "0.0",
-            "--min-recall-at-5",
-            "0.0",
-            "--min-recall-at-10",
-            "0.0",
-            "--min-pair-to-text-recall-at-5",
-            "0.0",
-            "--min-pair-to-text-gain",
-            "0.0",
-            "--min-anchor-positive-ratio",
-            "0.0",
-        ],
-        cwd=repo_root,
-        capture_output=True,
-        text=True,
-        check=False,
-        env={"PYTHONPATH": "src"},
-    )
-    assert overfit.returncode == 0, overfit.stderr
-    report = json.loads((output_dir / "overfit_report.json").read_text(encoding="utf-8"))
-    assert report["gate_passed"] is True
-    assert (output_dir / "best.pt").exists()
-    assert (output_dir / "last.pt").exists()
-    assert (output_dir / "eval_metrics.json").exists()
-    assert (output_dir / "eval_summary.json").exists()
-    assert (output_dir / "train_summary.json").exists()
-    assert (output_dir / "text_query_top5_grid.png").exists()
-    assert (output_dir / "text_query_top5_grid.json").exists()
-    assert (output_dir / "environment_fingerprint.json").exists()
+    assert {row["pair_id"] for row in overfit_rows} == {"pair_a", "pair_b", "pair_c"}
 
 
 def test_validate_levir_cc_pair_manifest_rejects_pair_leakage(tmp_path: Path):

@@ -8,7 +8,7 @@ LEVIR_CC_REQUIRED_FILES = (
     "levir_cc_manifest_validation.json",
     "levir_cc_random_retrieval_eval.json",
 )
-LEVIR_CC_PRESETS = ("simple_patch_smoke", "dinov2_t2_only", "dinov2_signed_delta", "dinov2_change_fusion")
+LEVIR_CC_PRESETS = ("simple_patch_smoke", "retired_visual_baseline_t2_only", "retired_visual_baseline_signed_delta", "retired_visual_baseline_change_fusion")
 OVERFIT_REQUIRED_FILENAMES = (
     "overfit_report.json",
     "train_summary.json",
