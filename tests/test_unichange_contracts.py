@@ -11,8 +11,16 @@ from land_change_detection.backbones.universat_backend import (
     UniverSatBackendConfig,
     UniverSatJointBackend,
 )
-from land_change_detection.losses.unichange_losses import masked_multi_positive_sigmoid_loss
+from land_change_detection.losses.unichange_losses import (
+    event_component_coverage_loss,
+    event_overlap_loss,
+    masked_multi_positive_sigmoid_loss,
+    pair_embedding_distillation_loss,
+    smooth_topk_late_interaction_score,
+)
+from land_change_detection.models.directional_change_readout import DirectionalChangeReadout
 from land_change_detection.models.unichange_model import UniChangeConfig, UniChangeModel
+from land_change_detection.training.unichange_curriculum import UniChangeStage, default_unichange_curriculum, stage_by_name
 
 
 class FakeUniverSat(nn.Module):
@@ -83,6 +91,50 @@ def test_masked_multi_positive_loss_ignores_unknowns() -> None:
     assert stats["positive_ratio"] > 0
     assert stats["negative_ratio"] > 0
     assert stats["ignored_ratio"] > 0
+
+
+def test_late_interaction_and_distillation_contracts() -> None:
+    text_tokens = torch.nn.functional.normalize(torch.rand(2, 4, 8), dim=-1)
+    local_tokens = torch.nn.functional.normalize(torch.rand(2, 16, 8), dim=-1)
+    scores = smooth_topk_late_interaction_score(text_tokens, local_tokens, top_k=4)
+    assert scores.shape == (2,)
+    current = torch.nn.functional.normalize(torch.rand(3, 8), dim=-1)
+    previous = current.clone()
+    assert pair_embedding_distillation_loss(current, previous).item() < 1e-5
+
+
+def test_event_mask_regularizers_prefer_coverage_and_low_overlap() -> None:
+    event_masks = torch.zeros(1, 2, 4)
+    event_masks[0, 0, :2] = 1.0
+    event_masks[0, 1, 2:] = 1.0
+    components = event_masks.clone()
+    assert event_component_coverage_loss(event_masks, components).item() < 1e-5
+    assert event_overlap_loss(event_masks).item() < 1e-5
+    collapsed = event_masks.clone()
+    collapsed[0, 1] = collapsed[0, 0]
+    assert event_overlap_loss(collapsed).item() > event_overlap_loss(event_masks).item()
+
+
+def test_directional_change_readout_uses_before_after_tokens() -> None:
+    readout = DirectionalChangeReadout(dim=16, num_heads=4)
+    output = readout(torch.rand(2, 2, 9, 16))
+    assert output.change_tokens.shape == (2, 9, 16)
+    assert output.temporal_attention.shape == (2, 9, 2)
+    assert torch.allclose(output.temporal_attention.sum(dim=-1), torch.ones(2, 9), atol=1e-5)
+
+
+def test_curriculum_keeps_retrieval_before_masks_and_direction() -> None:
+    stages = default_unichange_curriculum()
+    order = [spec.stage for spec in stages]
+    assert order.index(UniChangeStage.GLOBAL_RETRIEVAL) < order.index(UniChangeStage.SUPERVISED_MASKS)
+    assert order.index(UniChangeStage.SUPERVISED_MASKS) < order.index(UniChangeStage.DIRECTIONAL_READOUT)
+    assert order.index(UniChangeStage.DIRECTIONAL_READOUT) < order.index(UniChangeStage.EXPLANATIONS)
+    for spec in stages[order.index(UniChangeStage.LOCAL_RETRIEVAL) : order.index(UniChangeStage.PAIR_TO_PAIR) + 1]:
+        assert spec.retrieval_replay_fraction > 0.0 or spec.loss_weights.distillation > 0.0
+    stage1 = stage_by_name("global_retrieval")
+    assert stage1.loss_weights.retrieval == 1.0
+    assert stage1.loss_weights.mask_bce == 0.0
+    assert "event_decoder" in stage1.frozen_modules
 
 
 def test_levir_rgb_spec_does_not_invent_sensor_dates() -> None:

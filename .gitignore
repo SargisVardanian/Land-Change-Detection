@@ -6,12 +6,12 @@ reports/
 .idea/
 .venv/
 artifacts/
-.cache/
-external/UniverSat/
-models/
+/\.cache/
+/external/UniverSat/
+/models/
 data/
-datasets/
-indexes/
+/datasets/
+/indexes/
 cluster/ysu/private/
 pages/__pycache__/
 scripts/__pycache__/

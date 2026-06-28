@@ -1,3 +1,4 @@
+from .directional_change_readout import DirectionalChangeReadout, DirectionalReadoutOutput
 from .semantic_change import (
     SemanticChangeModel,
     SemanticChangeModelConfig,
@@ -10,6 +11,8 @@ __all__ = [
     "SemanticChangeModel",
     "SemanticChangeModelConfig",
     "SemanticChangeOutput",
+    "DirectionalChangeReadout",
+    "DirectionalReadoutOutput",
     "UniChangeConfig",
     "UniChangeModel",
     "UniChangeOutput",
