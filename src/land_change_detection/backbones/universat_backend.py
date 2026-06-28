@@ -46,6 +46,45 @@ class LevirRGBSpec:
 
 
 @dataclass(frozen=True)
+class UniverSatAdapterSpec:
+    modality_name: str = "spot"
+    date_key: str = "spot_dates"
+    patch_size_m: float = 10.0
+    wavelengths_nm: tuple[float, float, float] | None = None
+    input_res_m: float | None = None
+    subpatches: int | None = None
+    status: str = "registered_rgb_vhr_proxy_for_unknown_LEVIR_RGB"
+    warning: str = "adapter_is_not_verified_sensor_identity"
+
+    def encode_payload(self, pair: Tensor) -> dict[str, Tensor]:
+        relative_dates = torch.arange(pair.shape[1], device=pair.device, dtype=torch.long).unsqueeze(0).expand(pair.shape[0], -1)
+        return {self.modality_name: pair, self.date_key: relative_dates}
+
+    def encode_kwargs(self, output_grid: int) -> dict[str, Any]:
+        kwargs: dict[str, Any] = {"patch_size": self.patch_size_m, "output_grid": output_grid}
+        if self.wavelengths_nm is not None:
+            kwargs["wavelengths"] = {self.modality_name: list(self.wavelengths_nm)}
+        if self.input_res_m is not None:
+            kwargs["input_res"] = {self.modality_name: float(self.input_res_m)}
+        if self.subpatches is not None:
+            kwargs["subpatches"] = {self.modality_name: int(self.subpatches)}
+        return kwargs
+
+    def to_metadata(self) -> dict[str, Any]:
+        return {
+            "modality_name": self.modality_name,
+            "date_key": self.date_key,
+            "patch_size_m": self.patch_size_m,
+            "wavelengths_nm": None if self.wavelengths_nm is None else list(self.wavelengths_nm),
+            "input_res_m": self.input_res_m,
+            "subpatches": self.subpatches,
+            "status": self.status,
+            "warning": self.warning,
+            "relative_dates": [0, 1],
+        }
+
+
+@dataclass(frozen=True)
 class VisualFeatureGrid:
     global_embedding: Tensor
     local_tokens: Tensor
@@ -67,6 +106,7 @@ class UniverSatBackendConfig:
     freeze: bool = True
     local_files_only: bool = True
     sensor_spec: LevirRGBSpec = field(default_factory=LevirRGBSpec)
+    adapter_spec: UniverSatAdapterSpec = field(default_factory=UniverSatAdapterSpec)
     metadata: dict = field(default_factory=dict)
 
 
@@ -130,21 +170,11 @@ class UniverSatJointBackend(nn.Module):
 
     def _call_universat(self, pair: Tensor) -> Tensor:
         sensor_metadata = self.config.sensor_spec.to_universat_metadata()
-        relative_dates = torch.arange(pair.shape[1], device=pair.device, dtype=torch.long).unsqueeze(0).expand(pair.shape[0], -1)
-        encode_payload = {"spot": pair, "spot_dates": relative_dates}
+        encode_payload = self.config.adapter_spec.encode_payload(pair)
         attempts = (
             lambda: self.model.encode(
                 encode_payload,
-                patch_size=10.0,
-                output_grid=self.config.output_grid,
-            ),
-            lambda: self.model.encode(
-                encode_payload,
-                patch_size=10.0,
-                output_grid=self.config.output_grid,
-                wavelengths={"spot": [665.0, 560.0, 490.0]},
-                input_res={"spot": 1.0},
-                subpatches={"spot": 1},
+                **self.config.adapter_spec.encode_kwargs(self.config.output_grid),
             ),
             lambda: self.model(pair, output_grid=self.config.output_grid, **sensor_metadata),
             lambda: self.model(pair, output_grid=self.config.output_grid),
@@ -206,8 +236,7 @@ class UniverSatJointBackend(nn.Module):
                 "source_commit": self.config.source_commit,
                 "output_grid": self.config.output_grid,
                 "sensor_spec": asdict(self.config.sensor_spec),
-                "universat_modality_adapter": "registered_rgb_vhr_adapter_for_unknown_LEVIR_RGB",
-                "relative_dates": [0, 1],
+                "adapter_spec": self.config.adapter_spec.to_metadata(),
                 "frozen": self.config.freeze,
                 **self.config.metadata,
             },

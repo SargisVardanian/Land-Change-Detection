@@ -12,7 +12,7 @@ UniverSat-B
 + soft-mask decoder
 ```
 
-BGE-M3 is not adopted in this branch. The useful lesson from multi-vector retrieval work is the scoring pattern, not a replacement of the chosen text encoder. Jina v5 is used with `Query:` for user/query text and `Document:` for pair-caption semantic targets.
+BGE-M3 is not adopted in this branch. The useful lesson from multi-vector retrieval work is the scoring pattern, not a replacement of the chosen text encoder. Jina v5 is used with `Query:` for user/query text and `Document:` for pair-caption semantic targets. The default shared-space text head is a trainable `1024 -> 512` projection; Matryoshka truncation to 512 remains an explicit ablation/probe mode, not the default training head.
 
 The final representation of a pair is an active set of local change events. The `36x36x768` UniverSat grid is an internal tensor, not the final retrieval index.
 
@@ -42,7 +42,7 @@ output_grid=36 -> [B,1296,768]
 metadata assumptions logged
 ```
 
-No training happens here. The LEVIR adapter must record unknown GSD, unknown calendar dates, and relative before/after order. A registered UniverSat RGB adapter may be used as an implementation adapter, but it must not be reported as verified LEVIR sensor identity.
+No training happens here. The LEVIR adapter must record unknown GSD, unknown calendar dates, and relative before/after order. A registered UniverSat RGB adapter may be used as an implementation adapter, but it must not be reported as verified LEVIR sensor identity. In code this is represented by `UniverSatAdapterSpec`, whose metadata must include `adapter_is_not_verified_sensor_identity`.
 
 Gate:
 
@@ -320,6 +320,8 @@ transition label if known
 short evidence text if known
 ```
 
+Masks are stored as model outputs, for example compressed `36x36` binary/soft masks or RLE records. They are not reconstructed from attention after retrieval.
+
 Text-to-pair retrieval:
 
 ```text
@@ -362,7 +364,7 @@ Only after retrieval and grounding gates pass, attach a small language decoder. 
 ## Source-backed design references
 
 - UniverSat official repo and README: joint temporal inputs and `output_grid=36` dense features.
-- Jina v5 retrieval model card: `Query:` / `Document:` prompting, 1024-dimensional text features, Matryoshka truncation.
+- Jina v5 retrieval model card: `Query:` / `Document:` prompting, 1024-dimensional text features, and Matryoshka-compatible ablations.
 - SigLIP: pairwise sigmoid image-text loss instead of batch softmax competition.
 - ColBERT and FILIP: late interaction between query tokens and precomputed region/image tokens.
 - Mask2Former: query-based mask decoding with localized masks.

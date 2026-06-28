@@ -10,6 +10,7 @@ from torch.nn import functional as F
 
 
 TextRole = Literal["query", "document"]
+GlobalProjectionMode = Literal["learned_projection", "matryoshka_truncate"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class JinaV5TextConfig:
     max_length: int = 64
     retrieval_dim: int = 512
     hidden_dim: int = 1024
+    global_projection_mode: GlobalProjectionMode = "learned_projection"
     freeze: bool = True
     local_files_only: bool = True
     trust_remote_code: bool = True
@@ -58,6 +60,7 @@ class JinaV5TextEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.model_path = Path(config.model_path)
+        self.global_projection = nn.Linear(config.hidden_dim, config.retrieval_dim)
         self.local_projection = nn.Linear(config.hidden_dim, config.retrieval_dim)
         self.tokenizer = None
         self.model = None
@@ -105,6 +108,13 @@ class JinaV5TextEncoder(nn.Module):
         prefix = role_prefix(role)
         return [text if text.startswith(prefix) else f"{prefix}{text}" for text in texts]
 
+    def _project_global(self, pooled: Tensor) -> Tensor:
+        if self.config.global_projection_mode == "learned_projection":
+            return F.normalize(self.global_projection(pooled), dim=-1)
+        if self.config.global_projection_mode == "matryoshka_truncate":
+            return F.normalize(pooled[:, : self.config.retrieval_dim], dim=-1)
+        raise ValueError(f"Unsupported global projection mode: {self.config.global_projection_mode}")
+
     def forward(self, texts: list[str], role: TextRole = "query") -> TextFeatures:
         if self.tokenizer is None or self.model is None:
             raise RuntimeError("Jina v5 tokenizer/model were not loaded.")
@@ -122,8 +132,8 @@ class JinaV5TextEncoder(nn.Module):
         hidden = output.last_hidden_state.to(self.local_projection.weight.dtype)
         if hidden.shape[-1] != self.config.hidden_dim:
             raise ValueError(f"Expected Jina hidden dim {self.config.hidden_dim}, got {hidden.shape[-1]}.")
-        pooled = F.normalize(_last_token_pool(hidden, encoded["attention_mask"]), dim=-1)
-        global_embedding = F.normalize(pooled[:, : self.config.retrieval_dim], dim=-1)
+        pooled = _last_token_pool(hidden, encoded["attention_mask"])
+        global_embedding = self._project_global(pooled)
         token_embeddings = F.normalize(self.local_projection(hidden), dim=-1)
         metadata = {
             "repo_id": "jinaai/jina-embeddings-v5-text-small-retrieval",
@@ -131,6 +141,7 @@ class JinaV5TextEncoder(nn.Module):
             "max_length": self.config.max_length,
             "global_source_dim": hidden.shape[-1],
             "global_dim": global_embedding.shape[-1],
+            "global_projection_mode": self.config.global_projection_mode,
             "token_dim": token_embeddings.shape[-1],
             "frozen": self.config.freeze,
             **self.config.metadata,

@@ -5,9 +5,10 @@ from pathlib import Path
 import torch
 from torch import nn
 
-from land_change_detection.backbones.jina_v5_text import _last_token_pool, role_prefix
+from land_change_detection.backbones.jina_v5_text import JinaV5TextConfig, JinaV5TextEncoder, _last_token_pool, role_prefix
 from land_change_detection.backbones.universat_backend import (
     LevirRGBSpec,
+    UniverSatAdapterSpec,
     UniverSatBackendConfig,
     UniverSatJointBackend,
 )
@@ -20,6 +21,7 @@ from land_change_detection.losses.unichange_losses import (
 )
 from land_change_detection.models.directional_change_readout import DirectionalChangeReadout
 from land_change_detection.models.unichange_model import UniChangeConfig, UniChangeModel
+from land_change_detection.retrieval.unichange_index import build_event_records, decode_binary_mask_rle, encode_binary_mask_rle
 from land_change_detection.training.unichange_curriculum import UniChangeStage, default_unichange_curriculum, stage_by_name
 
 
@@ -44,6 +46,23 @@ def test_text_role_prefixes_and_last_token_pooling() -> None:
     assert torch.equal(pooled[1], hidden[1, 2])
 
 
+def test_jina_global_projection_modes_are_explicit(tmp_path: Path) -> None:
+    learned = JinaV5TextEncoder.__new__(JinaV5TextEncoder)
+    nn.Module.__init__(learned)
+    learned.config = JinaV5TextConfig(model_path=tmp_path, hidden_dim=4, retrieval_dim=2, global_projection_mode="learned_projection")
+    learned.global_projection = nn.Linear(4, 2, bias=False)
+    learned.global_projection.weight.data.copy_(torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]))
+    pooled = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    assert learned._project_global(pooled).shape == (1, 2)
+
+    truncated = JinaV5TextEncoder.__new__(JinaV5TextEncoder)
+    nn.Module.__init__(truncated)
+    truncated.config = JinaV5TextConfig(model_path=tmp_path, hidden_dim=4, retrieval_dim=2, global_projection_mode="matryoshka_truncate")
+    projected = truncated._project_global(pooled)
+    expected = torch.nn.functional.normalize(torch.tensor([[1.0, 2.0]]), dim=-1)
+    assert torch.allclose(projected, expected)
+
+
 def test_universat_joint_backend_uses_single_temporal_input(tmp_path: Path) -> None:
     fake = FakeUniverSat()
     backend = UniverSatJointBackend(
@@ -58,6 +77,7 @@ def test_universat_joint_backend_uses_single_temporal_input(tmp_path: Path) -> N
     assert features.global_embedding.shape == (2, 512)
     assert features.metadata["backend"] == "universat_joint_public"
     assert features.metadata["sensor_spec"]["gsd"]["status"] == "unknown"
+    assert features.metadata["adapter_spec"]["warning"] == "adapter_is_not_verified_sensor_identity"
 
 
 def test_unichange_event_decoder_contract(tmp_path: Path) -> None:
@@ -142,3 +162,25 @@ def test_levir_rgb_spec_does_not_invent_sensor_dates() -> None:
     assert metadata["calendar_dates"] is None
     assert metadata["gsd"]["status"] == "unknown"
     assert metadata["sensor_name"].startswith("unknown")
+    adapter = UniverSatAdapterSpec()
+    assert adapter.to_metadata()["relative_dates"] == [0, 1]
+    assert adapter.to_metadata()["warning"] == "adapter_is_not_verified_sensor_identity"
+
+
+def test_event_index_records_store_masks_not_attention() -> None:
+    mask = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
+    rle = encode_binary_mask_rle(mask)
+    assert torch.equal(decode_binary_mask_rle(rle), mask.bool())
+    records = build_event_records(
+        pair_id="pair_001",
+        event_embeddings=torch.nn.functional.normalize(torch.rand(2, 4), dim=-1),
+        event_presence=torch.tensor([4.0, -4.0]),
+        event_masks=torch.tensor([[0.0, 0.9, 0.8, 0.0], [0.9, 0.0, 0.0, 0.0]]),
+        grid_height=2,
+        grid_width=2,
+        presence_threshold=0.5,
+    )
+    assert len(records) == 1
+    assert records[0].event_id == "pair_001::event_00"
+    assert records[0].bbox_xyxy == (0, 0, 1, 1)
+    assert records[0].mask_rle.height == 2
