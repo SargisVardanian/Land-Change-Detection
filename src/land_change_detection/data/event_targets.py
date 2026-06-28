@@ -14,21 +14,20 @@ TimeSemantics = Literal["ordinal_not_calendar", "calendar_interval"]
 
 @dataclass(frozen=True)
 class TemporalContext:
-    order: tuple[str, str] = ("before", "after")
-    t1_timestamp: str | None = None
-    t2_timestamp: str | None = None
+    before_index: int = 0
+    after_index: int = 1
     delta_days: float | None = None
-    duration_known: bool = False
-    time_semantics: TimeSemantics = "ordinal_not_calendar"
+    timestamps_known: bool = False
 
     def to_dict(self) -> dict:
         return {
-            "order": list(self.order),
-            "t1_timestamp": self.t1_timestamp,
-            "t2_timestamp": self.t2_timestamp,
+            "before_index": self.before_index,
+            "after_index": self.after_index,
             "delta_days": self.delta_days,
-            "duration_known": self.duration_known,
-            "time_semantics": self.time_semantics,
+            "timestamps_known": self.timestamps_known,
+            "order": ["before", "after"] if self.before_index < self.after_index else ["after", "before"],
+            "duration_known": self.timestamps_known,
+            "time_semantics": "calendar_interval" if self.timestamps_known else "ordinal_not_calendar",
         }
 
 

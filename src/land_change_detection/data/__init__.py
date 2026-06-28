@@ -11,6 +11,7 @@ from .dataset_registry import (
 )
 from .event_targets import ComponentTargets, TemporalContext, build_component_targets, connected_components_8
 from .unichange_mci import UniChangeMciDataset, UniChangeMciItem, collate_unichange_mci
+from .unichange_subset import build_deterministic_mci_subset, resolve_levir_mci_root
 
 __all__ = [
     "ComponentTargets",
@@ -20,6 +21,7 @@ __all__ = [
     "UniChangeMciItem",
     "build_download_plan",
     "build_component_targets",
+    "build_deterministic_mci_subset",
     "collect_phase_entries",
     "collate_unichange_mci",
     "connected_components_8",
@@ -27,6 +29,7 @@ __all__ = [
     "dataset_registry",
     "render_human_plan",
     "registry_entry_by_name",
+    "resolve_levir_mci_root",
     "write_download_checksums",
     "write_download_inventory",
 ]

@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 from torchvision.transforms import functional as TF
 
 from land_change_detection.data.event_targets import ComponentTargets, TemporalContext, build_component_targets
+from land_change_detection.data.unichange_subset import load_subset_pair_ids, resolve_levir_mci_root
 from land_change_detection.levir_mci import LevirMciSample, discover_levir_mci_samples
 
 
@@ -58,10 +59,14 @@ class UniChangeMciDataset(Dataset[UniChangeMciItem]):
         output_grid: int = 36,
         min_component_area: int = 4,
         max_pairs: int | None = None,
+        subset_file: str | Path | None = None,
     ):
-        self.data_root = Path(data_root)
+        self.data_root = resolve_levir_mci_root(data_root).root
         samples = [sample for sample in discover_levir_mci_samples(self.data_root) if split == "all" or sample.split == split]
         samples = [sample for sample in samples if _captions_for_sample(sample)]
+        if subset_file is not None:
+            selected = set(load_subset_pair_ids(subset_file))
+            samples = [sample for sample in samples if sample.sample_id in selected]
         if max_pairs is not None:
             samples = samples[: max(0, max_pairs)]
         self.samples = samples

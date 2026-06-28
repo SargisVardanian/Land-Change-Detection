@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import permutations
-
 import torch
 from torch import Tensor
 from torch.nn import functional as F
@@ -15,6 +13,7 @@ class EventMatchResult:
     event_indices: Tensor
     component_indices: Tensor
     cost: Tensor
+    truncated_components: int = 0
 
 
 def _bce_per_pair(mask_logits: Tensor, components: Tensor) -> Tensor:
@@ -44,35 +43,31 @@ def event_component_cost(mask_logits: Tensor, components: Tensor, dice_weight: f
     return dice_weight * _dice_per_pair(mask_logits, components) + bce_weight * _bce_per_pair(mask_logits, components)
 
 
-def _bruteforce_assignment(cost: Tensor) -> tuple[Tensor, Tensor]:
-    num_events, num_components = cost.shape
-    if num_components == 0:
-        empty = torch.empty(0, dtype=torch.long, device=cost.device)
-        return empty, empty
-    if num_components > num_events:
-        raise ValueError("Cannot match more components than event queries.")
-    best_perm: tuple[int, ...] | None = None
-    best_cost: Tensor | None = None
-    for perm in permutations(range(num_events), num_components):
-        candidate = cost[torch.tensor(perm, device=cost.device), torch.arange(num_components, device=cost.device)].sum()
-        if best_cost is None or candidate.item() < best_cost.item():
-            best_cost = candidate
-            best_perm = perm
-    assert best_perm is not None
-    return torch.tensor(best_perm, dtype=torch.long, device=cost.device), torch.arange(num_components, dtype=torch.long, device=cost.device)
-
-
-def hungarian_match_events(mask_logits: Tensor, components: Tensor, dice_weight: float = 1.0, bce_weight: float = 1.0) -> EventMatchResult:
-    cost = event_component_cost(mask_logits, components.to(mask_logits.device), dice_weight=dice_weight, bce_weight=bce_weight)
+def hungarian_match_events(
+    mask_logits: Tensor,
+    components: Tensor,
+    presence_logits: Tensor | None = None,
+    dice_weight: float = 1.0,
+    bce_weight: float = 1.0,
+    presence_weight: float = 0.1,
+) -> EventMatchResult:
+    truncated = 0
+    components = components.to(mask_logits.device)
+    if components.shape[0] > mask_logits.shape[0]:
+        areas = components.sum(dim=1)
+        keep = areas.argsort(descending=True)[: mask_logits.shape[0]]
+        components = components[keep]
+        truncated = int(areas.numel() - keep.numel())
+    cost = event_component_cost(mask_logits, components, dice_weight=dice_weight, bce_weight=bce_weight)
+    if presence_logits is not None and cost.numel() > 0:
+        presence_penalty = (1.0 - torch.sigmoid(presence_logits).to(cost.dtype)).unsqueeze(1)
+        cost = cost + presence_weight * presence_penalty
     if cost.shape[1] == 0:
         empty = torch.empty(0, dtype=torch.long, device=mask_logits.device)
-        return EventMatchResult(empty, empty, cost)
-    try:
-        from scipy.optimize import linear_sum_assignment
+        return EventMatchResult(empty, empty, cost, truncated_components=truncated)
+    from scipy.optimize import linear_sum_assignment
 
-        row, col = linear_sum_assignment(cost.detach().cpu().numpy())
-        event_indices = torch.tensor(row, dtype=torch.long, device=mask_logits.device)
-        component_indices = torch.tensor(col, dtype=torch.long, device=mask_logits.device)
-    except Exception:
-        event_indices, component_indices = _bruteforce_assignment(cost)
-    return EventMatchResult(event_indices=event_indices, component_indices=component_indices, cost=cost)
+    row, col = linear_sum_assignment(cost.detach().cpu().numpy())
+    event_indices = torch.tensor(row, dtype=torch.long, device=mask_logits.device)
+    component_indices = torch.tensor(col, dtype=torch.long, device=mask_logits.device)
+    return EventMatchResult(event_indices=event_indices, component_indices=component_indices, cost=cost, truncated_components=truncated)

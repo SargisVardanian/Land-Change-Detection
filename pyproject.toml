@@ -12,6 +12,7 @@ dependencies = [
   "einops>=0.8.2",
   "numpy>=2.0,<3",
   "pillow>=10.4",
+  "scipy>=1.14",
   "streamlit-extras>=0.7.0",
   "streamlit-cropper>=0.2.2",
   "huggingface_hub>=0.34.0",

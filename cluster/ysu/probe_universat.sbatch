@@ -11,9 +11,10 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common_env.sh"
+cd "$CODE_ROOT"
 
 mkdir -p "$RS_PROJECT_ROOT/reports/model_probes" logs
-PYTHONPATH="$RS_PROJECT_ROOT/src" "$PYTHON" "$RS_PROJECT_ROOT/scripts/probe_universat.py" \
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/probe_universat.py" \
   --source-dir "$RS_PROJECT_ROOT/external/UniverSat" \
   --checkpoint-dir "$RS_PROJECT_ROOT/models/universat-base" \
   --output "$RS_PROJECT_ROOT/reports/model_probes/universat.json" \

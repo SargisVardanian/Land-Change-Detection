@@ -31,9 +31,11 @@ class JointLossWeights:
     semantic: float = 0.25
     local: float = 0.0
     mask: float = 0.0
+    text_mask: float = 0.0
     presence: float = 0.5
     coverage: float = 0.25
     overlap: float = 0.05
+    direction: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,11 @@ class UniChangeJointTrainerConfig:
     presence_positive_target: float = 1.0
     presence_negative_target: float = 0.0
     grad_clip_norm: float | None = 1.0
+    gradient_accumulation_steps: int = 1
+    warmup_steps: int = 10
+    num_workers: int = 2
+    seed: int = 20260629
+    use_bf16: bool = True
     device: str = "cpu"
 
 
@@ -76,9 +83,11 @@ def scheduled_joint_weights(step: int, total_steps: int, local_max: float = 0.25
         semantic=0.25,
         local=ramp(0.10, 0.30, local_max),
         mask=ramp(0.20, 0.40, mask_max),
+        text_mask=ramp(0.20, 0.40, mask_max),
         presence=0.5,
         coverage=0.25,
         overlap=0.05,
+        direction=0.1,
     )
 
 
@@ -114,7 +123,15 @@ class UniChangeJointTrainer:
         self.model.to(self.device)
         trainable = [param for param in self.model.parameters() if param.requires_grad]
         self.optimizer = optimizer or torch.optim.AdamW(trainable, lr=self.config.learning_rate, weight_decay=self.config.weight_decay)
+        self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, self._lr_lambda)
         self.history: list[dict[str, float]] = []
+
+    def _lr_lambda(self, step: int) -> float:
+        if step < self.config.warmup_steps:
+            return max(float(step + 1) / max(self.config.warmup_steps, 1), 1e-6)
+        total = max(self.config.total_steps or self.config.warmup_steps + 1, self.config.warmup_steps + 1)
+        progress = min(max((step - self.config.warmup_steps) / max(total - self.config.warmup_steps, 1), 0.0), 1.0)
+        return 0.5 * (1.0 + torch.cos(torch.tensor(progress * torch.pi)).item())
 
     def _prepare_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
         prepared = dict(batch)
@@ -131,8 +148,8 @@ class UniChangeJointTrainer:
         caption_to_pair: Tensor = batch["caption_to_pair"]
         num_pairs = int(batch["t1"].shape[0])
         weights = scheduled_joint_weights(step, total_steps, self.config.local_max_weight, self.config.mask_max_weight)
-        output = self.model(batch["t1"], batch["t2"], captions, text_role="query")
-        if output.text_global_embedding is None or output.text_token_embeddings is None:
+        output = self.model(batch["t1"], batch["t2"], captions, text_role="query", temporal_context=batch.get("temporal_context"))
+        if output.text_global_embedding is None or output.text_token_embeddings is None or output.text_attention_mask is None:
             raise RuntimeError("Joint training requires text embeddings in UniChangeOutput.")
         if output.event_embeddings is None or output.event_mask_logits is None or output.event_masks is None or output.event_presence_logits is None:
             raise RuntimeError("Joint training requires event embeddings, mask logits, masks and presence logits.")
@@ -161,19 +178,48 @@ class UniChangeJointTrainer:
             output.text_token_embeddings,
             selected_events,
             top_k=min(self.config.local_top_k, selected_events.shape[1]),
+            token_mask=output.text_attention_mask,
         )
-        local_loss = -local_scores.mean()
+        negative_scores: list[Tensor] = []
+        safe_negative_mask = safe_negative_mask.to(caption_to_pair.device)
+        for caption_index in range(safe_negative_mask.shape[0]):
+            negative_pairs = safe_negative_mask[caption_index].nonzero(as_tuple=False).flatten()
+            if negative_pairs.numel() == 0:
+                continue
+            negative_events = output.event_embeddings[negative_pairs]
+            repeated_text = output.text_token_embeddings[caption_index : caption_index + 1].expand(negative_events.shape[0], -1, -1)
+            repeated_mask = output.text_attention_mask[caption_index : caption_index + 1].expand(negative_events.shape[0], -1)
+            negative_scores.append(
+                smooth_topk_late_interaction_score(
+                    repeated_text,
+                    negative_events,
+                    top_k=min(self.config.local_top_k, negative_events.shape[1]),
+                    token_mask=repeated_mask,
+                ).max()
+            )
+        if negative_scores:
+            negative_score = torch.stack(negative_scores)
+            positive_score = local_scores[: negative_score.shape[0]]
+            local_loss = F.softplus(negative_score - positive_score + 0.1).mean()
+        else:
+            local_loss = -local_scores.mean() * 0.0
 
         mask_bce_terms: list[Tensor] = []
         mask_dice_terms: list[Tensor] = []
         presence_targets = torch.full_like(output.event_presence_logits, self.config.presence_negative_target)
         component_batches: list[Tensor] = []
         active_changed = 0
+        truncated_components = 0
         for pair_index, component in enumerate(batch["components"]):
             components = component.masks.to(output.event_mask_logits.device)
             component_batches.append(components)
             if components.shape[0] > 0:
-                match = hungarian_match_events(output.event_mask_logits[pair_index], components)
+                match = hungarian_match_events(
+                    output.event_mask_logits[pair_index],
+                    components,
+                    presence_logits=output.event_presence_logits[pair_index],
+                )
+                truncated_components += match.truncated_components
                 if match.event_indices.numel() > 0:
                     event_idx = match.event_indices
                     comp_idx = match.component_indices
@@ -188,6 +234,30 @@ class UniChangeJointTrainer:
         mask_bce = torch.stack(mask_bce_terms).mean() if mask_bce_terms else zero
         mask_dice = torch.stack(mask_dice_terms).mean() if mask_dice_terms else zero
         presence_loss = F.binary_cross_entropy_with_logits(output.event_presence_logits, presence_targets)
+        text_mask_loss = zero
+        if output.text_conditioned_mask is not None:
+            text_masks = output.text_conditioned_mask
+            if text_masks.ndim == 3:
+                text_masks = text_masks[torch.arange(text_masks.shape[0], device=text_masks.device), caption_to_pair]
+            text_masks_2d = text_masks.view(text_masks.shape[0], 36, 36)
+            caption_targets = F.interpolate(
+                batch["masks"][caption_to_pair].unsqueeze(1),
+                size=(36, 36),
+                mode="nearest",
+            ).squeeze(1)
+            bce = F.binary_cross_entropy(text_masks_2d.clamp(1e-5, 1.0 - 1e-5), caption_targets)
+            intersection = (text_masks_2d * caption_targets).flatten(1).sum(dim=1)
+            denom = text_masks_2d.flatten(1).sum(dim=1) + caption_targets.flatten(1).sum(dim=1)
+            text_mask_loss = bce + (1.0 - ((2.0 * intersection + 1e-6) / (denom + 1e-6))).mean()
+        direction_loss = zero
+        if output.direction_logits is not None:
+            labels = torch.tensor(
+                [1 if int(item.get("before_index", 0)) < int(item.get("after_index", 1)) else 0 for item in batch.get("temporal_context", [])],
+                device=output.direction_logits.device,
+                dtype=torch.long,
+            )
+            if labels.numel() == output.direction_logits.shape[0]:
+                direction_loss = F.cross_entropy(output.direction_logits, labels)
         coverage_terms: list[Tensor] = []
         for pair_index, components in enumerate(component_batches):
             if components.shape[0] == 0:
@@ -200,9 +270,11 @@ class UniChangeJointTrainer:
             + weights.semantic * semantic_loss
             + weights.local * local_loss
             + weights.mask * (mask_bce + mask_dice)
+            + weights.text_mask * text_mask_loss
             + weights.presence * presence_loss
             + weights.coverage * coverage_loss
             + weights.overlap * overlap_loss
+            + weights.direction * direction_loss
         )
 
         with torch.no_grad():
@@ -226,12 +298,16 @@ class UniChangeJointTrainer:
                 "mask_bce_loss": float(mask_bce.detach().item()),
                 "mask_dice_loss": float(mask_dice.detach().item()),
                 "presence_loss": float(presence_loss.detach().item()),
+                "text_mask_loss": float(text_mask_loss.detach().item()),
+                "direction_loss": float(direction_loss.detach().item()),
                 "coverage_loss": float(coverage_loss.detach().item()),
                 "overlap_loss": float(overlap_loss.detach().item()),
                 "weight_local": weights.local,
                 "weight_mask": weights.mask,
+                "weight_text_mask": weights.text_mask,
                 "finite_loss": float(torch.isfinite(total_loss).item()),
                 "changed_samples_with_active_event_ratio": float(active_changed / max(num_pairs, 1)),
+                "truncated_components": float(truncated_components),
                 "union_mask_dice": dice_score(union, target_masks),
                 "text_conditioned_energy_inside_gt": energy,
                 **retrieval_stats,
@@ -254,21 +330,33 @@ class UniChangeJointTrainer:
         if not finite_gradients:
             raise FloatingPointError(f"Non-finite UniChange gradients at step {step}.")
         if self.config.grad_clip_norm is not None:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip_norm)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip_norm)
+        else:
+            grad_norm = torch.tensor(0.0)
         self.optimizer.step()
+        self.scheduler.step()
         metrics = dict(result.metrics)
         metrics["step"] = float(step)
         metrics["finite_gradients"] = 1.0
+        metrics["grad_norm"] = float(grad_norm)
+        metrics["lr"] = float(self.optimizer.param_groups[0]["lr"])
         self.history.append(metrics)
         return metrics
+
+    def trainable_state_dict(self) -> dict[str, Tensor]:
+        return {name: value.detach().cpu() for name, value in self.model.state_dict().items() if self._is_trainable_name(name)}
+
+    def _is_trainable_name(self, name: str) -> bool:
+        return not (name.startswith("visual_encoder.") or name.startswith("text_encoder.model."))
 
     def save_checkpoint(self, path: str | Path, step: int, metrics: dict[str, float] | None = None) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
             {
-                "model": self.model.state_dict(),
+                "heads": self.trainable_state_dict(),
                 "optimizer": self.optimizer.state_dict(),
+                "scheduler": self.scheduler.state_dict(),
                 "step": step,
                 "metrics": metrics or {},
                 "config": {**asdict(self.config), "output_dir": str(self.config.output_dir)},
@@ -278,8 +366,10 @@ class UniChangeJointTrainer:
 
     def load_checkpoint(self, path: str | Path) -> int:
         checkpoint = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(checkpoint["model"])
+        self.model.load_state_dict(checkpoint.get("heads", checkpoint.get("model", {})), strict=False)
         self.optimizer.load_state_dict(checkpoint["optimizer"])
+        if "scheduler" in checkpoint:
+            self.scheduler.load_state_dict(checkpoint["scheduler"])
         return int(checkpoint.get("step", 0))
 
     def fit(self, train_loader: Any) -> dict[str, float]:
@@ -289,6 +379,7 @@ class UniChangeJointTrainer:
         (output_dir / "visuals" / "event_masks").mkdir(parents=True, exist_ok=True)
         (output_dir / "visuals" / "text_conditioned_masks").mkdir(parents=True, exist_ok=True)
         (output_dir / "config.json").write_text(json.dumps({**asdict(self.config), "output_dir": str(output_dir)}, indent=2))
+        (output_dir / "run_manifest.json").write_text(json.dumps({"config": {**asdict(self.config), "output_dir": str(output_dir)}}, indent=2))
         total_steps = self.config.total_steps or max(len(train_loader) * self.config.epochs, 1)
         best_metric = float("-inf")
         best_metrics: dict[str, float] = {}
@@ -300,16 +391,19 @@ class UniChangeJointTrainer:
                 if score >= best_metric:
                     best_metric = score
                     best_metrics = dict(metrics)
-                    self.save_checkpoint(output_dir / "best.pt", step, metrics)
+                    self.save_checkpoint(output_dir / "best_heads.pt", step, metrics)
                 step += 1
                 if step >= total_steps:
                     break
             if step >= total_steps:
                 break
         last_metrics = self.history[-1] if self.history else {}
-        self.save_checkpoint(output_dir / "last.pt", max(step - 1, 0), last_metrics)
+        self.save_checkpoint(output_dir / "last_heads.pt", max(step - 1, 0), last_metrics)
         (output_dir / "metrics.json").write_text(json.dumps({"best": best_metrics, "last": last_metrics}, indent=2))
         self._write_history(output_dir / "history.csv")
+        with (output_dir / "metrics_history.jsonl").open("w", encoding="utf-8") as handle:
+            for row in self.history:
+                handle.write(json.dumps(row) + "\n")
         (output_dir / "rankings.jsonl").write_text("")
         return last_metrics
 
