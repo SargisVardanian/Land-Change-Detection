@@ -18,8 +18,18 @@ class UniChangeOutput:
     text_token_embeddings: Tensor | None
     event_embeddings: Tensor | None
     event_presence: Tensor | None
+    event_mask_logits: Tensor | None
     event_masks: Tensor | None
+    text_conditioned_mask: Tensor | None
     semantic_prediction: Tensor | None
+
+    @property
+    def event_presence_logits(self) -> Tensor | None:
+        return self.event_presence
+
+    @property
+    def text_global_embeddings(self) -> Tensor | None:
+        return self.text_global_embedding
 
 
 @dataclass(frozen=True)
@@ -52,8 +62,8 @@ class ChangeEventDecoder(nn.Module):
         queries = self.event_queries.unsqueeze(0).expand(batch_size, -1, -1)
         event_embeddings = F.normalize(self.decoder(queries, local_tokens), dim=-1)
         presence = self.presence_head(event_embeddings).squeeze(-1)
-        masks = torch.sigmoid(event_embeddings @ local_tokens.transpose(1, 2))
-        return event_embeddings, presence, masks
+        mask_logits = event_embeddings @ local_tokens.transpose(1, 2)
+        return event_embeddings, presence, mask_logits
 
 
 class UniChangeModel(nn.Module):
@@ -95,9 +105,16 @@ class UniChangeModel(nn.Module):
     ) -> UniChangeOutput:
         visual = self.encode_images(t1, t2)
         text = self.encode_text(texts, role=text_role) if texts is not None else None
-        event_embeddings = event_presence = event_masks = None
+        event_embeddings = event_presence = event_mask_logits = event_masks = text_conditioned_mask = None
         if return_events:
-            event_embeddings, event_presence, event_masks = self.event_decoder(visual.local_tokens)
+            event_embeddings, event_presence, event_mask_logits = self.event_decoder(visual.local_tokens)
+            event_masks = torch.sigmoid(event_mask_logits)
+            if text is not None:
+                text_conditioned_mask = self.text_conditioned_mask(
+                    text.global_embedding,
+                    event_embeddings,
+                    event_masks,
+                )
         semantic_prediction = None
         if self.config.predict_semantic:
             semantic_prediction = F.normalize(self.semantic_head(visual.global_embedding), dim=-1)
@@ -108,11 +125,18 @@ class UniChangeModel(nn.Module):
             text_token_embeddings=None if text is None else text.token_embeddings,
             event_embeddings=event_embeddings,
             event_presence=event_presence,
+            event_mask_logits=event_mask_logits,
             event_masks=event_masks,
+            text_conditioned_mask=text_conditioned_mask,
             semantic_prediction=semantic_prediction,
         )
 
     @staticmethod
     def text_conditioned_mask(text_embedding: Tensor, event_embeddings: Tensor, event_masks: Tensor) -> Tensor:
-        weights = F.softmax(text_embedding @ event_embeddings.transpose(1, 2), dim=-1)
-        return weights @ event_masks
+        if text_embedding.ndim != 2 or event_embeddings.ndim != 3 or event_masks.ndim != 3:
+            raise ValueError("Expected text [N,D], events [B,K,D], masks [B,K,P].")
+        if text_embedding.shape[0] == event_embeddings.shape[0]:
+            weights = F.softmax((text_embedding.unsqueeze(1) * event_embeddings).sum(dim=-1), dim=-1)
+            return (weights.unsqueeze(1) @ event_masks).squeeze(1)
+        weights = F.softmax(torch.einsum("nd,bkd->nbk", text_embedding, event_embeddings), dim=-1)
+        return torch.einsum("nbk,bkp->nbp", weights, event_masks)

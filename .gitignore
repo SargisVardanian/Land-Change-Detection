@@ -10,6 +10,8 @@ artifacts/
 /external/UniverSat/
 /models/
 data/
+!src/land_change_detection/data/
+!src/land_change_detection/data/**
 /datasets/
 /indexes/
 cluster/ysu/private/
