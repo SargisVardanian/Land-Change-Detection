@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
-    parser.add_argument("--reverse-probability", type=float, default=0.25)
+    parser.add_argument("--reverse-probability", type=float, default=0.0)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--total-steps", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -70,6 +70,7 @@ def main() -> None:
     rng = random.Random(args.subset_seed)
     collate = partial(collate_unichange_mci, reverse_probability=args.reverse_probability, rng=rng)
     loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate)
+    eval_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=collate_unichange_mci)
     optimizer_steps_per_epoch = math.ceil(len(loader) / max(args.gradient_accumulation_steps, 1))
     total_optimizer_steps = args.total_steps or optimizer_steps_per_epoch * args.epochs
     visual = UniverSatJointBackend(UniverSatBackendConfig(source_dir=args.universat_source, checkpoint_dir=args.universat_checkpoint))
@@ -92,7 +93,7 @@ def main() -> None:
     )
     if args.resume is not None:
         trainer.load_checkpoint(args.resume)
-    metrics = trainer.fit(loader)
+    metrics = trainer.fit(loader, eval_loader=eval_loader)
     manifest = {
         "run_name": args.run_name,
         "dataset_size": len(dataset),

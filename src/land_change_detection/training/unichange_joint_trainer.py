@@ -21,7 +21,7 @@ from land_change_detection.losses.unichange_losses import (
     smooth_topk_late_interaction_score,
 )
 from land_change_detection.metrics.unichange_grounding import dice_score, heatmap_energy_inside_mask, union_mask_from_events
-from land_change_detection.metrics.unichange_retrieval import retrieval_metrics
+from land_change_detection.metrics.unichange_retrieval import dataset_retrieval_metrics, retrieval_metrics
 from land_change_detection.training.hungarian_event_matcher import hungarian_match_events
 from land_change_detection.training.safe_negative_miner import mine_safe_negative_mask
 
@@ -115,6 +115,9 @@ class UniChangeJointTrainer:
         self.optimizer = optimizer or torch.optim.AdamW(trainable, lr=self.config.learning_rate, weight_decay=self.config.weight_decay)
         self.scheduler = torch.optim.lr_scheduler.LambdaLR(self.optimizer, self._lr_lambda)
         self.history: list[dict[str, float]] = []
+        self.resume_epoch = 0
+        self.resume_optimizer_step = 0
+        self.best_score = float("-inf")
 
     def _lr_lambda(self, step: int) -> float:
         if step < self.config.warmup_steps:
@@ -400,6 +403,23 @@ class UniChangeJointTrainer:
             state["torch_cuda"] = torch.cuda.get_rng_state_all()
         return state
 
+    def _restore_random_state(self, state: dict[str, Any] | None) -> None:
+        if not state:
+            return
+        if state.get("python") is not None:
+            random.setstate(state["python"])
+        if state.get("torch_cpu") is not None:
+            torch.set_rng_state(state["torch_cpu"])
+        if state.get("numpy") is not None:
+            try:
+                import numpy as np
+
+                np.random.set_state(state["numpy"])
+            except Exception:
+                pass
+        if torch.cuda.is_available() and state.get("torch_cuda") is not None:
+            torch.cuda.set_rng_state_all(state["torch_cuda"])
+
     def save_checkpoint(self, path: str | Path, step: int, metrics: dict[str, float] | None = None) -> None:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -425,9 +445,13 @@ class UniChangeJointTrainer:
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if "scheduler" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
-        return int(checkpoint.get("optimizer_step", checkpoint.get("step", 0)))
+        self._restore_random_state(checkpoint.get("random_state"))
+        self.resume_epoch = int(checkpoint.get("epoch", 0))
+        self.resume_optimizer_step = int(checkpoint.get("optimizer_step", checkpoint.get("step", 0)))
+        self.best_score = float(checkpoint.get("best_score", float("-inf")))
+        return self.resume_optimizer_step
 
-    def fit(self, train_loader: Any) -> dict[str, float]:
+    def fit(self, train_loader: Any, eval_loader: Any | None = None) -> dict[str, float]:
         output_dir = Path(self.config.output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         (output_dir / "visuals" / "retrieval_examples").mkdir(parents=True, exist_ok=True)
@@ -436,13 +460,14 @@ class UniChangeJointTrainer:
         (output_dir / "config.json").write_text(json.dumps({**asdict(self.config), "output_dir": str(output_dir)}, indent=2))
         (output_dir / "run_manifest.json").write_text(json.dumps({"config": {**asdict(self.config), "output_dir": str(output_dir)}}, indent=2))
         total_steps = self.config.total_steps or max(len(train_loader) * self.config.epochs, 1)
-        best_metric = float("-inf")
+        eval_loader = eval_loader or train_loader
+        best_metric = self.best_score
         best_metrics: dict[str, float] = {}
-        step = 0
+        step = self.resume_optimizer_step
         epoch_metrics_rows: list[dict[str, float]] = []
-        for epoch in range(self.config.epochs):
+        for epoch in range(self.resume_epoch, self.config.epochs):
             step, last_train = self.train_epoch(train_loader, epoch=epoch, optimizer_step=step, total_steps=total_steps)
-            epoch_metrics = self.evaluate_loader(train_loader, step=step, total_steps=total_steps)
+            epoch_metrics = self.evaluate_loader(eval_loader, step=step, total_steps=total_steps)
             score = epoch_metrics.get("R@1", 0.0) + 0.5 * epoch_metrics.get("union_mask_dice", 0.0) + 0.5 * epoch_metrics.get("text_mask_dice", 0.0)
             epoch_metrics.update({"epoch": float(epoch), "score": float(score), "optimizer_step": float(step)})
             epoch_metrics_rows.append(epoch_metrics)
@@ -454,6 +479,7 @@ class UniChangeJointTrainer:
             if step >= total_steps:
                 break
         last_metrics = self.history[-1] if self.history else {}
+        last_metrics = {**last_metrics, "epoch": float(epoch_metrics_rows[-1]["epoch"] if epoch_metrics_rows else self.resume_epoch)}
         self.save_checkpoint(output_dir / "last_heads.pt", max(step - 1, 0), last_metrics)
         (output_dir / "metrics.json").write_text(json.dumps({"best": best_metrics, "last": last_metrics}, indent=2))
         with (output_dir / "epoch_metrics.jsonl").open("w", encoding="utf-8") as handle:
@@ -469,15 +495,49 @@ class UniChangeJointTrainer:
     def evaluate_loader(self, loader: Any, step: int, total_steps: int) -> dict[str, float]:
         self.model.eval()
         rows: list[dict[str, float]] = []
+        pair_embeddings: list[Tensor] = []
+        text_embeddings: list[Tensor] = []
+        caption_to_pair_parts: list[Tensor] = []
+        pair_offset = 0
+        union_dice_values: list[float] = []
+        text_dice_values: list[float] = []
         with torch.no_grad():
             for batch in loader:
+                prepared = self._prepare_batch(batch)
                 result = self.compute_loss(batch, step=step, total_steps=total_steps)
                 rows.append(result.metrics)
+                output = self.model(
+                    prepared["t1"],
+                    prepared["t2"],
+                    batch["captions"],
+                    text_role="query",
+                    temporal_context=batch.get("temporal_context"),
+                )
+                if output.text_global_embedding is None or output.event_masks is None or output.event_presence_logits is None:
+                    continue
+                pair_embeddings.append(output.global_pair_embedding.detach().cpu())
+                text_embeddings.append(output.text_global_embedding.detach().cpu())
+                caption_to_pair_parts.append(batch["caption_to_pair"].detach().cpu() + pair_offset)
+                pair_offset += int(prepared["t1"].shape[0])
+                union = union_mask_from_events(output.event_masks.detach(), output.event_presence_logits.detach()).view(prepared["t1"].shape[0], 36, 36)
+                target_36 = F.interpolate(prepared["masks"].unsqueeze(1), size=(36, 36), mode="nearest").squeeze(1)
+                union_dice_values.append(dice_score(union, target_36))
+                if output.text_conditioned_mask is not None:
+                    text_mask = output.text_conditioned_mask
+                    ctp = prepared["caption_to_pair"]
+                    if text_mask.ndim == 3:
+                        text_mask = text_mask[torch.arange(text_mask.shape[0], device=text_mask.device), ctp]
+                    caption_targets = target_36[ctp]
+                    text_dice_values.append(dice_score(text_mask.view(text_mask.shape[0], 36, 36), caption_targets))
         if not rows:
             return {}
         keys = sorted({key for row in rows for key in row})
         metrics = {key: float(sum(row.get(key, 0.0) for row in rows) / len(rows)) for key in keys}
-        metrics["text_mask_dice"] = 1.0 - metrics.get("text_mask_loss", 1.0)
+        if pair_embeddings and text_embeddings and caption_to_pair_parts:
+            retrieval = dataset_retrieval_metrics(torch.cat(pair_embeddings, dim=0), torch.cat(text_embeddings, dim=0), torch.cat(caption_to_pair_parts, dim=0))
+            metrics.update(retrieval)
+        metrics["union_mask_dice"] = float(sum(union_dice_values) / len(union_dice_values)) if union_dice_values else 0.0
+        metrics["text_mask_dice"] = float(sum(text_dice_values) / len(text_dice_values)) if text_dice_values else 0.0
         return metrics
 
     def _write_history(self, path: Path) -> None:

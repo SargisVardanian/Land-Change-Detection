@@ -65,13 +65,18 @@ def main() -> None:
     pair_embeddings: list[torch.Tensor] = []
     caption_embeddings: list[torch.Tensor] = []
     captions_all: list[str] = []
+    first_caption_row_by_pair: dict[str, int] = {}
+    caption_offset = 0
     with torch.no_grad():
         for batch in loader:
             out = model(batch["t1"].to(args.device), batch["t2"].to(args.device), batch["captions"], temporal_context=batch["temporal_context"])
+            for pair_id in batch["pair_ids"]:
+                first_caption_row_by_pair[pair_id] = caption_offset
             pair_ids.extend(batch["pair_ids"])
             pair_embeddings.append(out.global_pair_embedding.detach().cpu())
             caption_embeddings.append(out.text_global_embedding.detach().cpu())  # type: ignore[union-attr]
             captions_all.extend(batch["captions"])
+            caption_offset += len(batch["captions"])
         all_pairs = torch.cat(pair_embeddings, dim=0)
         all_texts = torch.cat(caption_embeddings, dim=0)
         retrieval_scores = all_texts @ all_pairs.T
@@ -84,8 +89,9 @@ def main() -> None:
             union = 1.0 - torch.prod(1.0 - event_masks * (presence >= 0.5).float().view(-1, 1, 1), dim=0)
             text_mask = out.text_conditioned_mask[0, 0].detach().cpu().view(36, 36) if out.text_conditioned_mask is not None and out.text_conditioned_mask.ndim == 3 else union
             text_to_event = torch.softmax((out.text_global_embedding[0].detach().cpu().unsqueeze(0) * out.event_embeddings[0].detach().cpu()).sum(dim=-1), dim=-1)  # type: ignore[index]
-            top_retrieval_indices = retrieval_scores[index].topk(k=min(5, len(pair_ids))).indices.tolist()
-            top_retrieval = [{"pair_id": pair_ids[item], "score": float(retrieval_scores[index, item].item())} for item in top_retrieval_indices]
+            caption_row = first_caption_row_by_pair[batch["pair_ids"][0]]
+            top_retrieval_indices = retrieval_scores[caption_row].topk(k=min(5, len(pair_ids))).indices.tolist()
+            top_retrieval = [{"pair_id": pair_ids[item], "score": float(retrieval_scores[caption_row, item].item())} for item in top_retrieval_indices]
             gt = batch["masks"][0]
             gt_36 = F.interpolate(gt[None, None], size=(36, 36), mode="nearest").squeeze()
             diff = (batch["t2"][0] - batch["t1"][0]).abs()
@@ -116,6 +122,7 @@ def main() -> None:
             sidecar = {
                 "pair_id": batch["pair_ids"][0],
                 "caption": caption,
+                "caption_row": caption_row,
                 "event_presence": presence.tolist(),
                 "text_to_event_weights": text_to_event.tolist(),
                 "top_event_indices": top_events.tolist(),

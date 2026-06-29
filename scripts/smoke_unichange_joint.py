@@ -46,7 +46,38 @@ def main() -> None:
     )
     trainer = UniChangeJointTrainer(model, UniChangeJointTrainerConfig(output_dir=args.output_dir, total_steps=1, device=args.device, use_bf16=args.use_bf16))
     batch = next(iter(loader))
+    if batch["t1"].shape[0] >= 2:
+        t1_second = batch["t1"][1].clone()
+        batch["t1"][1] = batch["t2"][1]
+        batch["t2"][1] = t1_second
+        batch["temporal_context"][1] = {"before_index": 1, "after_index": 0, "delta_days": None, "timestamps_known": False}
+        batch["direction_target"] = torch.tensor([1, 0], dtype=torch.long)
     metrics = trainer.train_step(batch, step=0, total_steps=1)
+    frozen_grad_violations = [
+        name
+        for name, parameter in trainer.model.named_parameters()
+        if (name.startswith("visual_encoder.model.") or name.startswith("text_encoder.model."))
+        and parameter.grad is not None
+        and parameter.grad.abs().sum().item() > 0
+    ]
+    required = {
+        "visual_projection": ("visual_encoder.local_projection", "visual_encoder.global_pool"),
+        "text_projection": ("text_encoder.global_projection", "text_encoder.local_projection"),
+        "event_decoder": ("event_decoder.decoder", "event_decoder.event_queries"),
+        "mask_head": ("event_decoder.mask_query_projection", "event_decoder.mask_pixel_projection", "event_decoder.mask_logit_scale"),
+        "semantic_head": ("semantic_head",),
+        "time_encoder": ("time_encoder",),
+    }
+    missing_gradients: list[str] = []
+    for label, prefixes in required.items():
+        total = 0.0
+        for name, parameter in trainer.model.named_parameters():
+            if any(name.startswith(prefix) for prefix in prefixes) and parameter.requires_grad and parameter.grad is not None:
+                total += float(parameter.grad.detach().abs().sum().item())
+        if total <= 0.0:
+            missing_gradients.append(label)
+    if frozen_grad_violations or missing_gradients:
+        raise RuntimeError(f"Smoke gradient contract failed: frozen={frozen_grad_violations}, missing={missing_gradients}")
     checkpoint = args.output_dir / "smoke_heads.pt"
     trainer.save_checkpoint(checkpoint, 0, metrics)
     trainer.load_checkpoint(checkpoint)
@@ -64,7 +95,21 @@ def main() -> None:
         ["two-pair retrieval smoke"],
     )
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    (args.output_dir / "smoke_report.json").write_text(json.dumps({"metrics": metrics, "checkpoint": str(checkpoint), "panel": str(panel)}, indent=2))
+    (args.output_dir / "smoke_report.json").write_text(
+        json.dumps(
+            {
+                "metrics": metrics,
+                "checkpoint": str(checkpoint),
+                "panel": str(panel),
+                "frozen_grad_violations": frozen_grad_violations,
+                "missing_gradients": missing_gradients,
+                "direction_targets": batch["direction_target"].tolist(),
+                "bf16_requested": bool(args.use_bf16),
+                "bf16_active": bool(metrics.get("amp_bf16_enabled", 0.0)),
+            },
+            indent=2,
+        )
+    )
 
 
 if __name__ == "__main__":
