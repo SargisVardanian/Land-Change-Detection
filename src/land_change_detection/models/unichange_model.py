@@ -62,12 +62,13 @@ class ChangeEventDecoder(nn.Module):
         self.mask_query_projection = nn.Linear(retrieval_dim, mask_dim)
         self.mask_pixel_projection = nn.Linear(retrieval_dim, mask_dim)
         self.mask_logit_scale = nn.Parameter(torch.tensor(1.0))
+        self.event_time_gate = nn.Parameter(torch.tensor(0.0))
 
     def forward(self, local_tokens: Tensor, time_embedding: Tensor | None = None) -> tuple[Tensor, Tensor, Tensor]:
         batch_size = local_tokens.shape[0]
         queries = self.event_queries.unsqueeze(0).expand(batch_size, -1, -1)
         if time_embedding is not None:
-            queries = queries + time_embedding.unsqueeze(1)
+            queries = queries + torch.tanh(self.event_time_gate) * time_embedding.unsqueeze(1)
         decoded = self.decoder(queries, local_tokens)
         event_embeddings = F.normalize(decoded, dim=-1)
         presence = self.presence_head(decoded).squeeze(-1)
@@ -83,6 +84,8 @@ class TemporalConditionEncoder(nn.Module):
         self.role_embedding = nn.Embedding(2, retrieval_dim)
         self.known_embedding = nn.Embedding(2, retrieval_dim)
         self.delta_projection = nn.Sequential(nn.Linear(1, retrieval_dim), nn.Tanh())
+        self.time_norm = nn.LayerNorm(retrieval_dim)
+        self.global_time_gate = nn.Parameter(torch.tensor(0.0))
         self.direction_head = nn.Linear(retrieval_dim, 2)
 
     def forward(self, temporal_context: list[dict] | None, batch_size: int, device: torch.device, dtype: torch.dtype) -> tuple[Tensor, Tensor]:
@@ -96,13 +99,14 @@ class TemporalConditionEncoder(nn.Module):
             device=device,
             dtype=dtype,
         ).view(batch_size, 1)
-        time_embedding = (
+        time_embedding = self.time_norm(
             self.role_embedding(after).to(dtype)
             - self.role_embedding(before).to(dtype)
             + self.known_embedding(known).to(dtype)
             + self.delta_projection(torch.log1p(delta))
         )
-        return time_embedding, self.direction_head(time_embedding)
+        gated = torch.tanh(self.global_time_gate) * time_embedding
+        return gated, time_embedding
 
 
 class UniChangeModel(nn.Module):
@@ -131,9 +135,10 @@ class UniChangeModel(nn.Module):
         return self
 
     def _keep_frozen_backbones_eval(self) -> None:
-        self.visual_encoder.eval()
+        base_visual = getattr(self.visual_encoder, "model", None)
+        if base_visual is not None:
+            base_visual.eval()
         if self.text_encoder is not None:
-            self.text_encoder.eval()
             base = getattr(self.text_encoder, "model", None)
             if base is not None:
                 base.eval()
@@ -159,16 +164,18 @@ class UniChangeModel(nn.Module):
     ) -> UniChangeOutput:
         visual = self.encode_images(t1, t2)
         text = self.encode_text(texts, role=text_role) if texts is not None else None
-        time_embedding, direction_logits = self.time_encoder(
+        gated_time_embedding, raw_time_embedding = self.time_encoder(
             temporal_context,
             batch_size=visual.global_embedding.shape[0],
             device=visual.global_embedding.device,
             dtype=visual.global_embedding.dtype,
         )
-        global_pair_embedding = F.normalize(visual.global_embedding + time_embedding, dim=-1)
+        direction_features = visual.global_embedding + gated_time_embedding
+        direction_logits = self.time_encoder.direction_head(direction_features)
+        global_pair_embedding = F.normalize(direction_features, dim=-1)
         event_embeddings = event_presence = event_mask_logits = event_masks = text_conditioned_mask = None
         if return_events:
-            event_embeddings, event_presence, event_mask_logits = self.event_decoder(visual.local_tokens, time_embedding=time_embedding)
+            event_embeddings, event_presence, event_mask_logits = self.event_decoder(visual.local_tokens, time_embedding=raw_time_embedding)
             event_masks = torch.sigmoid(event_mask_logits)
             if text is not None:
                 text_conditioned_mask = self.text_conditioned_mask(

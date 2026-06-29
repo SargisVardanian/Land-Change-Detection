@@ -12,6 +12,10 @@ source "$SCRIPT_DIR/common_env.sh"
 cd "$CODE_ROOT"
 RUN_DIR="$RS_PROJECT_ROOT/runs/joint_retrieval_grounding_overfit_100"
 MCI_DATA="${MCI_ROOT:-$RS_PROJECT_ROOT/datasets/processed/LEVIR-MCI}"
+BF16_FLAG=(--use-bf16)
+if [ "${USE_BF16:-1}" = "0" ]; then BF16_FLAG=(--no-bf16); fi
+RESUME_ARGS=()
+if [ -n "${RESUME_CHECKPOINT:-}" ]; then RESUME_ARGS=(--resume "$RESUME_CHECKPOINT"); fi
 PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/train_unichange_joint.py" \
   --data-root "$MCI_DATA" \
   --subset-file "$RUN_DIR/subset_100.json" \
@@ -22,5 +26,8 @@ PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/train_unich
   --max-pairs 100 \
   --batch-size "${BATCH_SIZE:-4}" \
   --epochs "${EPOCHS:-10}" \
+  --gradient-accumulation-steps "${GRADIENT_ACCUMULATION_STEPS:-1}" \
   --num-workers "${NUM_WORKERS:-4}" \
-  --device cuda
+  --device cuda \
+  "${BF16_FLAG[@]}" \
+  "${RESUME_ARGS[@]}"

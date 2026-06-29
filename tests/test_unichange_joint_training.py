@@ -82,16 +82,19 @@ def test_temporal_context_marks_levir_time_as_ordinal_unknown_duration() -> None
     assert payload["time_semantics"] == "ordinal_not_calendar"
 
 
-def _write_official_mci_layout(root: Path, names: list[str]) -> None:
-    (root / "images" / "train" / "A").mkdir(parents=True)
-    (root / "images" / "train" / "B").mkdir(parents=True)
-    (root / "images" / "train" / "label").mkdir(parents=True)
-    rows = []
+def _write_official_mci_layout(root: Path, names: list[str], split: str = "train") -> None:
+    (root / "images" / split / "A").mkdir(parents=True)
+    (root / "images" / split / "B").mkdir(parents=True)
+    (root / "images" / split / "label").mkdir(parents=True)
+    import json
+
+    caption_path = root / "LevirCCcaptions.json"
+    rows = json.loads(caption_path.read_text()).get("images", []) if caption_path.exists() else []
     for index, name in enumerate(names):
         for part in ("A", "B", "label"):
-            (root / "images" / "train" / part / f"{name}.png").write_bytes(b"x")
+            (root / "images" / split / part / f"{name}.png").write_bytes(b"x")
         rows.append({"filename": f"{name}.png", "sentences": [{"raw": f"caption for {name}", "sentid": index}]})
-    (root / "LevirCCcaptions.json").write_text('{"images": ' + __import__("json").dumps(rows) + "}")
+    (root / "LevirCCcaptions.json").write_text(json.dumps({"images": rows}))
 
 
 def test_official_and_nested_mci_root_resolution(tmp_path: Path) -> None:
@@ -108,7 +111,17 @@ def test_deterministic_subset_identity(tmp_path: Path) -> None:
     _write_official_mci_layout(root, [f"p{i:03d}" for i in range(3)])
     subset = build_deterministic_mci_subset(root, tmp_path / "subset.json", count=2, seed=7, code_root=tmp_path)
     assert subset["seed"] == 7
-    assert [item["pair_id"] for item in subset["items"]] == ["p000", "p001"]
+    assert [item["pair_id"] for item in subset["items"]] == ["p002", "p000"]
+
+
+def test_subset_filters_train_before_seed_selection(tmp_path: Path) -> None:
+    root = tmp_path / "LEVIR-MCI"
+    _write_official_mci_layout(root, [f"train_{i}" for i in range(4)], split="train")
+    _write_official_mci_layout(root, [f"val_{i}" for i in range(4)], split="val")
+    _write_official_mci_layout(root, [f"test_{i}" for i in range(4)], split="test")
+    subset = build_deterministic_mci_subset(root, tmp_path / "subset.json", count=3, seed=1, split="train", code_root=tmp_path)
+    assert {item["split"] for item in subset["items"]} == {"train"}
+    assert all(item["pair_id"].startswith("train_") for item in subset["items"])
 
 
 def test_scheduled_joint_weights_ramp_in_one_run() -> None:
@@ -129,8 +142,8 @@ def test_mask_logits_can_exceed_unit_range() -> None:
 
 def test_temporal_context_changes_model_conditioning() -> None:
     encoder = TemporalConditionEncoder(retrieval_dim=8)
-    forward, _ = encoder([{"before_index": 0, "after_index": 1, "delta_days": None, "timestamps_known": False}], 1, torch.device("cpu"), torch.float32)
-    reverse, _ = encoder([{"before_index": 1, "after_index": 0, "delta_days": None, "timestamps_known": False}], 1, torch.device("cpu"), torch.float32)
+    _, forward = encoder([{"before_index": 0, "after_index": 1, "delta_days": None, "timestamps_known": False}], 1, torch.device("cpu"), torch.float32)
+    _, reverse = encoder([{"before_index": 1, "after_index": 0, "delta_days": None, "timestamps_known": False}], 1, torch.device("cpu"), torch.float32)
     assert not torch.allclose(forward, reverse)
 
 
@@ -220,6 +233,44 @@ def test_synthetic_joint_training_step_and_checkpoint_resume(tmp_path: Path) -> 
     path = tmp_path / "run" / "last.pt"
     trainer.save_checkpoint(path, 0, metrics)
     assert trainer.load_checkpoint(path) == 0
+
+
+def test_checkpoint_roundtrips_visual_projection_weights(tmp_path: Path) -> None:
+    model = TinyJointModel()
+    trainer = UniChangeJointTrainer(model, UniChangeJointTrainerConfig(output_dir=tmp_path / "run", total_steps=10, device="cpu"))
+    with torch.no_grad():
+        model.pair_table.add_(3.0)
+    expected = model.pair_table.detach().clone()
+    path = tmp_path / "run" / "heads.pt"
+    trainer.save_checkpoint(path, 3, {"optimizer_step": 3})
+    fresh = TinyJointModel()
+    fresh_trainer = UniChangeJointTrainer(fresh, UniChangeJointTrainerConfig(output_dir=tmp_path / "run2", total_steps=10, device="cpu"))
+    fresh_trainer.load_checkpoint(path)
+    assert torch.equal(fresh.pair_table, expected)
+
+
+def test_scheduler_does_not_collapse_after_few_micro_batches(tmp_path: Path) -> None:
+    model = TinyJointModel()
+    trainer = UniChangeJointTrainer(
+        model,
+        UniChangeJointTrainerConfig(output_dir=tmp_path / "run", total_steps=300, gradient_accumulation_steps=4, warmup_steps=10, device="cpu"),
+    )
+    for step in range(11):
+        trainer.train_step(_synthetic_batch(), step=step, total_steps=300)
+    assert trainer.optimizer.param_groups[0]["lr"] > 0.0
+
+
+def test_reverse_augmentation_sets_both_direction_classes() -> None:
+    import random
+
+    mask = torch.ones(8, 8)
+    items = [
+        UniChangeMciItem(str(i), torch.zeros(3, 8, 8), torch.ones(3, 8, 8), ["caption"], mask, _components(mask), TemporalContext(), {})
+        for i in range(6)
+    ]
+    batch = collate_unichange_mci(items, reverse_probability=0.5, rng=random.Random(1))
+    targets = set(batch["direction_target"].tolist())
+    assert targets == {0, 1}
 
 
 def test_mask_rendering_writes_panel(tmp_path: Path) -> None:

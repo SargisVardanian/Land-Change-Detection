@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import random
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -91,17 +92,6 @@ def scheduled_joint_weights(step: int, total_steps: int, local_max: float = 0.25
     )
 
 
-def _pair_document_targets(model: nn.Module, captions: list[str], caption_to_pair: Tensor, num_pairs: int) -> Tensor:
-    with torch.no_grad():
-        document_features = model.encode_text(captions, role="document")
-        document_embeddings = document_features.global_embedding.detach()
-        targets = torch.zeros(num_pairs, document_embeddings.shape[-1], device=document_embeddings.device, dtype=document_embeddings.dtype)
-        counts = torch.zeros(num_pairs, device=document_embeddings.device, dtype=document_embeddings.dtype)
-        targets.index_add_(0, caption_to_pair.long(), document_embeddings)
-        counts.index_add_(0, caption_to_pair.long(), torch.ones_like(caption_to_pair, dtype=document_embeddings.dtype))
-        return F.normalize(targets / counts.clamp_min(1).unsqueeze(-1), dim=-1)
-
-
 def _move_components(components: list[ComponentTargets], device: torch.device) -> list[ComponentTargets]:
     moved: list[ComponentTargets] = []
     for component in components:
@@ -139,6 +129,8 @@ class UniChangeJointTrainer:
         prepared["t2"] = batch["t2"].to(self.device)
         prepared["caption_to_pair"] = batch["caption_to_pair"].to(self.device)
         prepared["masks"] = batch["masks"].to(self.device)
+        if "direction_target" in batch:
+            prepared["direction_target"] = batch["direction_target"].to(self.device)
         prepared["components"] = _move_components(batch["components"], self.device)
         return prepared
 
@@ -170,7 +162,12 @@ class UniChangeJointTrainer:
             temperature=self.config.retrieval_temperature,
         )
 
-        semantic_target = _pair_document_targets(self.model, captions, caption_to_pair, num_pairs).to(output.semantic_prediction.device)
+        with torch.no_grad():
+            semantic_target = torch.zeros(num_pairs, output.text_global_embedding.shape[-1], device=output.text_global_embedding.device)
+            counts = torch.zeros(num_pairs, device=output.text_global_embedding.device, dtype=output.text_global_embedding.dtype)
+            semantic_target.index_add_(0, caption_to_pair.long(), output.text_global_embedding.detach())
+            counts.index_add_(0, caption_to_pair.long(), torch.ones_like(caption_to_pair, dtype=output.text_global_embedding.dtype))
+            semantic_target = F.normalize(semantic_target / counts.clamp_min(1).unsqueeze(-1), dim=-1)
         semantic_loss = cosine_semantic_regression(output.semantic_prediction, semantic_target)
 
         selected_events = output.event_embeddings[caption_to_pair]
@@ -180,7 +177,7 @@ class UniChangeJointTrainer:
             top_k=min(self.config.local_top_k, selected_events.shape[1]),
             token_mask=output.text_attention_mask,
         )
-        negative_scores: list[Tensor] = []
+        negative_terms: list[Tensor] = []
         safe_negative_mask = safe_negative_mask.to(caption_to_pair.device)
         for caption_index in range(safe_negative_mask.shape[0]):
             negative_pairs = safe_negative_mask[caption_index].nonzero(as_tuple=False).flatten()
@@ -189,18 +186,15 @@ class UniChangeJointTrainer:
             negative_events = output.event_embeddings[negative_pairs]
             repeated_text = output.text_token_embeddings[caption_index : caption_index + 1].expand(negative_events.shape[0], -1, -1)
             repeated_mask = output.text_attention_mask[caption_index : caption_index + 1].expand(negative_events.shape[0], -1)
-            negative_scores.append(
-                smooth_topk_late_interaction_score(
+            negative_score = smooth_topk_late_interaction_score(
                     repeated_text,
                     negative_events,
                     top_k=min(self.config.local_top_k, negative_events.shape[1]),
                     token_mask=repeated_mask,
-                ).max()
-            )
-        if negative_scores:
-            negative_score = torch.stack(negative_scores)
-            positive_score = local_scores[: negative_score.shape[0]]
-            local_loss = F.softplus(negative_score - positive_score + 0.1).mean()
+            ).max()
+            negative_terms.append(F.softplus(negative_score - local_scores[caption_index] + 0.1))
+        if negative_terms:
+            local_loss = torch.stack(negative_terms).mean()
         else:
             local_loss = -local_scores.mean() * 0.0
 
@@ -251,11 +245,13 @@ class UniChangeJointTrainer:
             text_mask_loss = bce + (1.0 - ((2.0 * intersection + 1e-6) / (denom + 1e-6))).mean()
         direction_loss = zero
         if output.direction_logits is not None:
-            labels = torch.tensor(
-                [1 if int(item.get("before_index", 0)) < int(item.get("after_index", 1)) else 0 for item in batch.get("temporal_context", [])],
-                device=output.direction_logits.device,
-                dtype=torch.long,
-            )
+            labels = batch.get("direction_target")
+            if labels is None:
+                labels = torch.tensor(
+                    [1 if int(item.get("before_index", 0)) < int(item.get("after_index", 1)) else 0 for item in batch.get("temporal_context", [])],
+                    device=output.direction_logits.device,
+                    dtype=torch.long,
+                )
             if labels.numel() == output.direction_logits.shape[0]:
                 direction_loss = F.cross_entropy(output.direction_logits, labels)
         coverage_terms: list[Tensor] = []
@@ -315,10 +311,14 @@ class UniChangeJointTrainer:
             }
         return JointStepResult(total_loss, metrics)
 
+    def _amp_enabled(self) -> bool:
+        return self.device.type == "cuda" and self.config.use_bf16 and torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+
     def train_step(self, batch: dict[str, Any], step: int, total_steps: int) -> dict[str, float]:
         self.model.train()
         self.optimizer.zero_grad(set_to_none=True)
-        result = self.compute_loss(batch, step=step, total_steps=total_steps)
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self._amp_enabled()):
+            result = self.compute_loss(batch, step=step, total_steps=total_steps)
         if not torch.isfinite(result.loss):
             raise FloatingPointError(f"Non-finite UniChange loss at step {step}: {result.metrics}")
         result.loss.backward()
@@ -340,14 +340,65 @@ class UniChangeJointTrainer:
         metrics["finite_gradients"] = 1.0
         metrics["grad_norm"] = float(grad_norm)
         metrics["lr"] = float(self.optimizer.param_groups[0]["lr"])
+        metrics["optimizer_step"] = float(step)
+        metrics["micro_step"] = float(step)
+        metrics["accumulation_position"] = 1.0
+        metrics["amp_bf16_enabled"] = float(self._amp_enabled())
         self.history.append(metrics)
         return metrics
 
-    def trainable_state_dict(self) -> dict[str, Tensor]:
-        return {name: value.detach().cpu() for name, value in self.model.state_dict().items() if self._is_trainable_name(name)}
+    def train_epoch(self, train_loader: Any, epoch: int, optimizer_step: int, total_steps: int) -> tuple[int, dict[str, float]]:
+        self.model.train()
+        self.optimizer.zero_grad(set_to_none=True)
+        last_metrics: dict[str, float] = {}
+        accumulation = max(self.config.gradient_accumulation_steps, 1)
+        for micro_index, batch in enumerate(train_loader):
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=self._amp_enabled()):
+                result = self.compute_loss(batch, step=optimizer_step, total_steps=total_steps)
+                loss = result.loss / accumulation
+            if not torch.isfinite(loss):
+                raise FloatingPointError(f"Non-finite UniChange loss at micro step {micro_index}: {result.metrics}")
+            loss.backward()
+            boundary = ((micro_index + 1) % accumulation == 0) or (micro_index + 1 == len(train_loader))
+            if not boundary:
+                last_metrics = dict(result.metrics)
+                last_metrics.update({"micro_step": float(micro_index), "optimizer_step": float(optimizer_step), "accumulation_position": float((micro_index % accumulation) + 1), "amp_bf16_enabled": float(self._amp_enabled()), "lr": float(self.optimizer.param_groups[0]["lr"]), "grad_norm": 0.0})
+                self.history.append(last_metrics)
+                continue
+            finite_gradients = all(param.grad is None or torch.all(torch.isfinite(param.grad)) for param in self.model.parameters())
+            if not finite_gradients:
+                raise FloatingPointError(f"Non-finite UniChange gradients at micro step {micro_index}.")
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.grad_clip_norm) if self.config.grad_clip_norm is not None else torch.tensor(0.0)
+            self.optimizer.step()
+            self.scheduler.step()
+            self.optimizer.zero_grad(set_to_none=True)
+            last_metrics = dict(result.metrics)
+            last_metrics.update({"micro_step": float(micro_index), "optimizer_step": float(optimizer_step), "accumulation_position": float((micro_index % accumulation) + 1), "amp_bf16_enabled": float(self._amp_enabled()), "lr": float(self.optimizer.param_groups[0]["lr"]), "grad_norm": float(grad_norm)})
+            self.history.append(last_metrics)
+            optimizer_step += 1
+            if optimizer_step >= total_steps:
+                break
+        return optimizer_step, last_metrics
 
-    def _is_trainable_name(self, name: str) -> bool:
-        return not (name.startswith("visual_encoder.") or name.startswith("text_encoder.model."))
+    def trainable_state_dict(self) -> dict[str, Tensor]:
+        trainable_names = {name for name, parameter in self.model.named_parameters() if parameter.requires_grad}
+        state = self.model.state_dict()
+        return {name: value.detach().cpu() for name, value in state.items() if name in trainable_names}
+
+    def _random_state(self) -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "python": random.getstate(),
+            "torch_cpu": torch.get_rng_state(),
+        }
+        try:
+            import numpy as np
+
+            state["numpy"] = np.random.get_state()
+        except Exception:
+            state["numpy"] = None
+        if torch.cuda.is_available():
+            state["torch_cuda"] = torch.cuda.get_rng_state_all()
+        return state
 
     def save_checkpoint(self, path: str | Path, step: int, metrics: dict[str, float] | None = None) -> None:
         path = Path(path)
@@ -357,20 +408,24 @@ class UniChangeJointTrainer:
                 "heads": self.trainable_state_dict(),
                 "optimizer": self.optimizer.state_dict(),
                 "scheduler": self.scheduler.state_dict(),
-                "step": step,
+                "epoch": int((metrics or {}).get("epoch", 0)),
+                "micro_step": int((metrics or {}).get("micro_step", step)),
+                "optimizer_step": step,
                 "metrics": metrics or {},
                 "config": {**asdict(self.config), "output_dir": str(self.config.output_dir)},
+                "random_state": self._random_state(),
+                "best_score": float((metrics or {}).get("best_score", float("-inf"))),
             },
             path,
         )
 
     def load_checkpoint(self, path: str | Path) -> int:
-        checkpoint = torch.load(path, map_location=self.device)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         self.model.load_state_dict(checkpoint.get("heads", checkpoint.get("model", {})), strict=False)
         self.optimizer.load_state_dict(checkpoint["optimizer"])
         if "scheduler" in checkpoint:
             self.scheduler.load_state_dict(checkpoint["scheduler"])
-        return int(checkpoint.get("step", 0))
+        return int(checkpoint.get("optimizer_step", checkpoint.get("step", 0)))
 
     def fit(self, train_loader: Any) -> dict[str, float]:
         output_dir = Path(self.config.output_dir)
@@ -384,28 +439,46 @@ class UniChangeJointTrainer:
         best_metric = float("-inf")
         best_metrics: dict[str, float] = {}
         step = 0
-        for _epoch in range(self.config.epochs):
-            for batch in train_loader:
-                metrics = self.train_step(batch, step=step, total_steps=total_steps)
-                score = metrics.get("R@5", 0.0) + metrics.get("union_mask_dice", 0.0)
-                if score >= best_metric:
-                    best_metric = score
-                    best_metrics = dict(metrics)
-                    self.save_checkpoint(output_dir / "best_heads.pt", step, metrics)
-                step += 1
-                if step >= total_steps:
-                    break
+        epoch_metrics_rows: list[dict[str, float]] = []
+        for epoch in range(self.config.epochs):
+            step, last_train = self.train_epoch(train_loader, epoch=epoch, optimizer_step=step, total_steps=total_steps)
+            epoch_metrics = self.evaluate_loader(train_loader, step=step, total_steps=total_steps)
+            score = epoch_metrics.get("R@1", 0.0) + 0.5 * epoch_metrics.get("union_mask_dice", 0.0) + 0.5 * epoch_metrics.get("text_mask_dice", 0.0)
+            epoch_metrics.update({"epoch": float(epoch), "score": float(score), "optimizer_step": float(step)})
+            epoch_metrics_rows.append(epoch_metrics)
+            if score >= best_metric:
+                best_metric = score
+                best_metrics = dict(epoch_metrics)
+                best_metrics["best_score"] = best_metric
+                self.save_checkpoint(output_dir / "best_heads.pt", step, best_metrics)
             if step >= total_steps:
                 break
         last_metrics = self.history[-1] if self.history else {}
         self.save_checkpoint(output_dir / "last_heads.pt", max(step - 1, 0), last_metrics)
         (output_dir / "metrics.json").write_text(json.dumps({"best": best_metrics, "last": last_metrics}, indent=2))
+        with (output_dir / "epoch_metrics.jsonl").open("w", encoding="utf-8") as handle:
+            for row in epoch_metrics_rows:
+                handle.write(json.dumps(row) + "\n")
         self._write_history(output_dir / "history.csv")
         with (output_dir / "metrics_history.jsonl").open("w", encoding="utf-8") as handle:
             for row in self.history:
                 handle.write(json.dumps(row) + "\n")
         (output_dir / "rankings.jsonl").write_text("")
         return last_metrics
+
+    def evaluate_loader(self, loader: Any, step: int, total_steps: int) -> dict[str, float]:
+        self.model.eval()
+        rows: list[dict[str, float]] = []
+        with torch.no_grad():
+            for batch in loader:
+                result = self.compute_loss(batch, step=step, total_steps=total_steps)
+                rows.append(result.metrics)
+        if not rows:
+            return {}
+        keys = sorted({key for row in rows for key in row})
+        metrics = {key: float(sum(row.get(key, 0.0) for row in rows) / len(rows)) for key in keys}
+        metrics["text_mask_dice"] = 1.0 - metrics.get("text_mask_loss", 1.0)
+        return metrics
 
     def _write_history(self, path: Path) -> None:
         if not self.history:

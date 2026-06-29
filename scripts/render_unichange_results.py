@@ -53,13 +53,28 @@ def main() -> None:
         JinaV5TextEncoder(JinaV5TextConfig(model_path=args.jina_model, max_length=64, freeze=True)),
         UniChangeConfig(event_queries=16),
     ).to(args.device)
-    checkpoint = torch.load(args.checkpoint, map_location=args.device)
+    checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     model.load_state_dict(checkpoint.get("heads", checkpoint.get("model", {})), strict=False)
     model.eval()
     panel_dir = args.output_dir / "panels"
+    metadata_dir = args.output_dir / "metadata"
     panel_dir.mkdir(parents=True, exist_ok=True)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
     entries: list[str] = []
+    pair_ids: list[str] = []
+    pair_embeddings: list[torch.Tensor] = []
+    caption_embeddings: list[torch.Tensor] = []
+    captions_all: list[str] = []
     with torch.no_grad():
+        for batch in loader:
+            out = model(batch["t1"].to(args.device), batch["t2"].to(args.device), batch["captions"], temporal_context=batch["temporal_context"])
+            pair_ids.extend(batch["pair_ids"])
+            pair_embeddings.append(out.global_pair_embedding.detach().cpu())
+            caption_embeddings.append(out.text_global_embedding.detach().cpu())  # type: ignore[union-attr]
+            captions_all.extend(batch["captions"])
+        all_pairs = torch.cat(pair_embeddings, dim=0)
+        all_texts = torch.cat(caption_embeddings, dim=0)
+        retrieval_scores = all_texts @ all_pairs.T
         for index, batch in enumerate(loader):
             if index >= args.limit:
                 break
@@ -68,6 +83,9 @@ def main() -> None:
             event_masks = out.event_masks[0].detach().cpu().view(-1, 36, 36)  # type: ignore[index]
             union = 1.0 - torch.prod(1.0 - event_masks * (presence >= 0.5).float().view(-1, 1, 1), dim=0)
             text_mask = out.text_conditioned_mask[0, 0].detach().cpu().view(36, 36) if out.text_conditioned_mask is not None and out.text_conditioned_mask.ndim == 3 else union
+            text_to_event = torch.softmax((out.text_global_embedding[0].detach().cpu().unsqueeze(0) * out.event_embeddings[0].detach().cpu()).sum(dim=-1), dim=-1)  # type: ignore[index]
+            top_retrieval_indices = retrieval_scores[index].topk(k=min(5, len(pair_ids))).indices.tolist()
+            top_retrieval = [{"pair_id": pair_ids[item], "score": float(retrieval_scores[index, item].item())} for item in top_retrieval_indices]
             gt = batch["masks"][0]
             gt_36 = F.interpolate(gt[None, None], size=(36, 36), mode="nearest").squeeze()
             diff = (batch["t2"][0] - batch["t1"][0]).abs()
@@ -90,7 +108,7 @@ def main() -> None:
             for slot in range(len(top_events), 4):
                 axes[2, slot].axis("off")
             caption = batch["captions"][0]
-            fig.suptitle(f"{batch['pair_ids'][0]} | {caption[:160]}")
+            fig.suptitle(f"{batch['pair_ids'][0]} | {caption[:120]} | top5: {', '.join(item['pair_id'] for item in top_retrieval)}")
             fig.tight_layout()
             panel_path = panel_dir / f"{batch['pair_ids'][0]}.png"
             fig.savefig(panel_path)
@@ -99,10 +117,12 @@ def main() -> None:
                 "pair_id": batch["pair_ids"][0],
                 "caption": caption,
                 "event_presence": presence.tolist(),
+                "text_to_event_weights": text_to_event.tolist(),
                 "top_event_indices": top_events.tolist(),
+                "top_five_retrieval": top_retrieval,
                 "subset_file": str(args.subset_file),
             }
-            panel_path.with_suffix(".json").write_text(json.dumps(sidecar, indent=2))
+            (metadata_dir / f"{batch['pair_ids'][0]}.json").write_text(json.dumps(sidecar, indent=2))
             entries.append(f'<figure><img src="panels/{panel_path.name}"><figcaption>{batch["pair_ids"][0]}</figcaption></figure>')
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "index.html").write_text("<html><body><h1>UniChange Results</h1>" + "\n".join(entries) + "</body></html>")

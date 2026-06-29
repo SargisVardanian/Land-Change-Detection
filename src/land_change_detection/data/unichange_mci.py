@@ -65,8 +65,9 @@ class UniChangeMciDataset(Dataset[UniChangeMciItem]):
         samples = [sample for sample in discover_levir_mci_samples(self.data_root) if split == "all" or sample.split == split]
         samples = [sample for sample in samples if _captions_for_sample(sample)]
         if subset_file is not None:
-            selected = set(load_subset_pair_ids(subset_file))
-            samples = [sample for sample in samples if sample.sample_id in selected]
+            selected_ids = load_subset_pair_ids(subset_file)
+            order = {pair_id: index for index, pair_id in enumerate(selected_ids)}
+            samples = sorted([sample for sample in samples if sample.sample_id in order], key=lambda sample: order[sample.sample_id])
         if max_pairs is not None:
             samples = samples[: max(0, max_pairs)]
         self.samples = samples
@@ -102,20 +103,40 @@ class UniChangeMciDataset(Dataset[UniChangeMciItem]):
         )
 
 
-def collate_unichange_mci(items: list[UniChangeMciItem]) -> dict[str, Any]:
+def collate_unichange_mci(items: list[UniChangeMciItem], reverse_probability: float = 0.0, rng: Any | None = None) -> dict[str, Any]:
+    if rng is None:
+        import random
+
+        rng = random
     captions: list[str] = []
     caption_to_pair: list[int] = []
+    t1_items: list[Tensor] = []
+    t2_items: list[Tensor] = []
+    temporal_contexts: list[dict[str, Any]] = []
+    direction_targets: list[int] = []
     for pair_index, item in enumerate(items):
         captions.extend(item.captions)
         caption_to_pair.extend([pair_index] * len(item.captions))
+        reverse = bool(reverse_probability > 0.0 and rng.random() < reverse_probability)
+        if reverse:
+            t1_items.append(item.t2)
+            t2_items.append(item.t1)
+            temporal_contexts.append(TemporalContext(before_index=1, after_index=0).to_dict())
+            direction_targets.append(0)
+        else:
+            t1_items.append(item.t1)
+            t2_items.append(item.t2)
+            temporal_contexts.append(item.temporal_context.to_dict())
+            direction_targets.append(1)
     return {
         "pair_ids": [item.pair_id for item in items],
-        "t1": torch.stack([item.t1 for item in items], dim=0),
-        "t2": torch.stack([item.t2 for item in items], dim=0),
+        "t1": torch.stack(t1_items, dim=0),
+        "t2": torch.stack(t2_items, dim=0),
         "captions": captions,
         "caption_to_pair": torch.tensor(caption_to_pair, dtype=torch.long),
         "masks": torch.stack([item.mask for item in items], dim=0),
         "components": [item.components for item in items],
-        "temporal_context": [item.temporal_context.to_dict() for item in items],
+        "temporal_context": temporal_contexts,
+        "direction_target": torch.tensor(direction_targets, dtype=torch.long),
         "metadata": [item.metadata for item in items],
     }

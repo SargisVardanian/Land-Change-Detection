@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import random
+from functools import partial
 from pathlib import Path
 
 from torch.utils.data import DataLoader
@@ -11,7 +14,7 @@ from torch.utils.data import DataLoader
 from land_change_detection.backbones.jina_v5_text import JinaV5TextConfig, JinaV5TextEncoder
 from land_change_detection.backbones.universat_backend import UniverSatBackendConfig, UniverSatJointBackend
 from land_change_detection.data.unichange_mci import UniChangeMciDataset, collate_unichange_mci
-from land_change_detection.data.unichange_subset import build_deterministic_mci_subset, resolve_levir_mci_root
+from land_change_detection.data.unichange_subset import build_deterministic_mci_subset, resolve_levir_mci_root, validate_mci_subset
 from land_change_detection.models.unichange_model import UniChangeConfig, UniChangeModel
 from land_change_detection.training.unichange_joint_trainer import UniChangeJointTrainer, UniChangeJointTrainerConfig
 
@@ -31,12 +34,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-component-area", type=int, default=4)
     parser.add_argument("--subset-file", type=Path, default=None)
     parser.add_argument("--subset-seed", type=int, default=20260629)
+    parser.add_argument("--rebuild-subset", action="store_true")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
+    parser.add_argument("--reverse-probability", type=float, default=0.25)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--total-steps", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument("--use-bf16", dest="use_bf16", action="store_true", default=True)
+    parser.add_argument("--no-bf16", dest="use_bf16", action="store_false")
     parser.add_argument("--device", default="cuda")
     return parser.parse_args()
 
@@ -45,8 +53,9 @@ def main() -> None:
     args = parse_args()
     resolved_root = resolve_levir_mci_root(args.data_root).root
     subset_file = args.subset_file or args.output_dir / "subset_100.json"
-    if not subset_file.exists():
-        build_deterministic_mci_subset(resolved_root, subset_file, count=args.max_pairs, seed=args.subset_seed, code_root=Path.cwd())
+    if args.rebuild_subset or not subset_file.exists():
+        build_deterministic_mci_subset(resolved_root, subset_file, count=args.max_pairs, seed=args.subset_seed, split=args.split, code_root=Path.cwd())
+    validate_mci_subset(subset_file, expected_count=args.max_pairs, expected_split=args.split)
     dataset = UniChangeMciDataset(
         resolved_root,
         split=args.split,
@@ -58,7 +67,11 @@ def main() -> None:
     )
     if len(dataset) == 0:
         raise RuntimeError(f"No LEVIR-MCI samples found under {args.data_root}")
-    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate_unichange_mci)
+    rng = random.Random(args.subset_seed)
+    collate = partial(collate_unichange_mci, reverse_probability=args.reverse_probability, rng=rng)
+    loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=collate)
+    optimizer_steps_per_epoch = math.ceil(len(loader) / max(args.gradient_accumulation_steps, 1))
+    total_optimizer_steps = args.total_steps or optimizer_steps_per_epoch * args.epochs
     visual = UniverSatJointBackend(UniverSatBackendConfig(source_dir=args.universat_source, checkpoint_dir=args.universat_checkpoint))
     text = JinaV5TextEncoder(JinaV5TextConfig(model_path=args.jina_model, max_length=64, freeze=True))
     model = UniChangeModel(visual_encoder=visual, text_encoder=text, config=UniChangeConfig(event_queries=16))
@@ -69,9 +82,11 @@ def main() -> None:
             output_dir=args.output_dir,
             learning_rate=args.learning_rate,
             epochs=args.epochs,
-            total_steps=args.total_steps,
+            total_steps=total_optimizer_steps,
+            gradient_accumulation_steps=args.gradient_accumulation_steps,
             num_workers=args.num_workers,
             seed=args.subset_seed,
+            use_bf16=args.use_bf16,
             device=args.device,
         ),
     )
@@ -83,6 +98,8 @@ def main() -> None:
         "dataset_size": len(dataset),
         "dataset_root": str(resolved_root),
         "subset_file": str(subset_file),
+        "optimizer_steps_per_epoch": optimizer_steps_per_epoch,
+        "total_optimizer_steps": total_optimizer_steps,
         "max_pairs": args.max_pairs,
         "temporal_context": {
             "order": ["before", "after"],

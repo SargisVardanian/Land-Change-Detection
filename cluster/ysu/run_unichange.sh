@@ -41,6 +41,7 @@ case "$cmd" in
       --max-pairs 100 \
       --batch-size "${BATCH_SIZE:-4}" \
       --epochs "${EPOCHS:-10}" \
+      --gradient-accumulation-steps "${GRADIENT_ACCUMULATION_STEPS:-1}" \
       --device "${DEVICE:-cuda}"
     ;;
   train-retrieval)
@@ -74,6 +75,10 @@ case "$cmd" in
       --jina-model "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
       --output-dir "$UNICHANGE_RUN_DIR/visuals" \
       --device "${DEVICE:-cuda}"
+    ;;
+  plot)
+    PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/plot_unichange_history.py" \
+      --run-dir "$UNICHANGE_RUN_DIR"
     ;;
   *)
     cat >&2 <<'USAGE'

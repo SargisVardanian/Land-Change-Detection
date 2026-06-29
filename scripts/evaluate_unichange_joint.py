@@ -41,7 +41,7 @@ def main() -> None:
         JinaV5TextEncoder(JinaV5TextConfig(model_path=args.jina_model, max_length=64, freeze=True)),
         UniChangeConfig(event_queries=16),
     ).to(args.device)
-    checkpoint = torch.load(args.checkpoint, map_location=args.device)
+    checkpoint = torch.load(args.checkpoint, map_location=args.device, weights_only=False)
     model.load_state_dict(checkpoint.get("heads", checkpoint.get("model", {})), strict=False)
     model.eval()
     pair_ids: list[str] = []

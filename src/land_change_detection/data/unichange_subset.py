@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,21 +56,49 @@ def resolve_levir_mci_root(base: str | Path | None = None, override: str | Path 
 
 def current_git_commit(code_root: str | Path | None = None) -> str:
     try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=code_root, text=True).strip()
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=code_root, text=True, stderr=subprocess.DEVNULL).strip()
     except Exception:
         return "unknown"
 
 
-def build_deterministic_mci_subset(root: str | Path, output_path: str | Path, count: int = 100, seed: int = 20260629, code_root: str | Path | None = None) -> dict[str, Any]:
-    samples = discover_levir_mci_samples(root)
+def validate_mci_subset(path: str | Path, expected_count: int = 100, expected_split: str = "train") -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    items = payload.get("items", [])
+    ids = [str(item.get("pair_id")) for item in items]
+    if len(items) != expected_count:
+        raise ValueError(f"Subset {path} has {len(items)} items; expected {expected_count}.")
+    if len(set(ids)) != len(ids):
+        raise ValueError(f"Subset {path} contains duplicate pair IDs.")
+    for item in items:
+        if item.get("split") != expected_split:
+            raise ValueError(f"Subset {path} contains split {item.get('split')!r}; expected {expected_split!r}.")
+        if int(item.get("caption_count", 0)) <= 0:
+            raise ValueError(f"Subset item {item.get('pair_id')} has no captions.")
+        for key in ("t1", "t2", "mask"):
+            if not Path(str(item.get(key, ""))).exists():
+                raise FileNotFoundError(f"Subset item {item.get('pair_id')} references missing {key}: {item.get(key)}")
+    return payload
+
+
+def build_deterministic_mci_subset(
+    root: str | Path,
+    output_path: str | Path,
+    count: int = 100,
+    seed: int = 20260629,
+    split: str = "train",
+    code_root: str | Path | None = None,
+) -> dict[str, Any]:
+    samples = [sample for sample in discover_levir_mci_samples(root) if sample.split == split]
     if len(samples) < count:
-        raise ValueError(f"LEVIR-MCI subset requires {count} samples, found {len(samples)} under {root}")
-    ordered = sorted(samples, key=lambda sample: (sample.split, sample.sample_id))
+        raise ValueError(f"LEVIR-MCI subset requires {count} {split!r} samples, found {len(samples)} under {root}")
+    ordered = sorted(samples, key=lambda sample: sample.sample_id)
+    random.Random(seed).shuffle(ordered)
     selected = ordered[:count]
     payload = {
         "dataset": "LEVIR-MCI",
         "root": str(root),
         "count": count,
+        "split": split,
         "seed": seed,
         "code_commit": current_git_commit(code_root),
         "items": [
