@@ -78,6 +78,30 @@ def build_caption_positive_mask(
     return positives
 
 
+def _infer_duplicate_groups_from_embeddings(text_embeddings: Tensor) -> Tensor:
+    detached = F.normalize(text_embeddings.detach().float(), dim=-1)
+    same_text = torch.isclose(
+        detached[:, None, :],
+        detached[None, :, :],
+        rtol=1e-5,
+        atol=1e-6,
+    ).all(dim=-1)
+    group_ids = torch.full(
+        (detached.shape[0],),
+        -1,
+        dtype=torch.long,
+        device=detached.device,
+    )
+    next_group = 0
+    for caption_index in range(detached.shape[0]):
+        if group_ids[caption_index] >= 0:
+            continue
+        members = torch.nonzero(same_text[caption_index], as_tuple=False).flatten()
+        group_ids[members] = next_group
+        next_group += 1
+    return group_ids
+
+
 def multi_positive_symmetric_info_nce(
     pair_embeddings: Tensor,
     text_embeddings: Tensor,
@@ -88,10 +112,13 @@ def multi_positive_symmetric_info_nce(
     pair = F.normalize(pair_embeddings, dim=-1)
     text = F.normalize(text_embeddings, dim=-1)
     logits = pair @ text.T / temperature
+    groups = caption_group_ids
+    if groups is None:
+        groups = _infer_duplicate_groups_from_embeddings(text_embeddings)
     positives = build_caption_positive_mask(
         caption_to_pair,
         pair_count=pair.shape[0],
-        caption_group_ids=caption_group_ids,
+        caption_group_ids=groups,
     )
     pair_log_prob = logits.log_softmax(dim=1)
     text_log_prob = logits.T.log_softmax(dim=1)
