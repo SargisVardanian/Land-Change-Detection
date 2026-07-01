@@ -61,17 +61,26 @@ def test_unichange_v2_retrieval_smoke_cli_with_fake_backbones(tmp_path: Path):
     assert report["shape_report"]["images"] == [2, 2, 3, 32, 32]
 
 
-def test_full_retrieval_sbatch_is_gated_on_real_smoke_report():
-    script = (Path(__file__).resolve().parents[1] / "cluster" / "ysu" / "train_unichange_v2_retrieval.sbatch").read_text(
-        encoding="utf-8"
-    )
+def test_full_retrieval_sbatch_is_gated_on_real_smoke_and_memory_reports():
+    root = Path(__file__).resolve().parents[1]
+    script = (root / "cluster" / "ysu" / "train_unichange_v2_retrieval.sbatch").read_text(encoding="utf-8")
+    gate = (root / "scripts" / "ucv2_readiness_gate.py").read_text(encoding="utf-8")
 
     assert "SMOKE_REPORT" in script
-    assert "status" in script and "PASS" in script
-    assert "fake_backbones" in script and "must be false" in script
-    assert "frozen_grad_violations" in script
-    assert "missing_gradients" in script
-    assert "checkpoint_roundtrip_passed" in script
+    assert "MEMORY_REPORT" in script
+    assert "ucv2_readiness_gate.py" in script
+    assert "1 32" in script
+    assert "BATCH_SIZE < 32" in script
+
+    assert "real_cluster_smoke_passed" in gate
+    assert "git_commit" in gate
+    assert "finite_loss" in gate
+    assert "fake_backbones" in gate
+    assert "frozen_grad_violations" in gate
+    assert "missing_gradients" in gate
+    assert "checkpoint_roundtrip_passed" in gate
+    assert "memory.get(\"status\") != \"PASS\"" in gate
+    assert "required_local" in gate
 
 
 @pytest.mark.skipif(os.environ.get("RUN_REAL_UNICHANGE_V2_PROBE") != "1", reason="real UniverSat/Jina/LEVIR-MCI probe is opt-in")
