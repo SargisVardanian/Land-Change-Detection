@@ -1,21 +1,24 @@
-# Semantic Change Model Architecture
+# SemanticChangeBaseline Architecture
 
 Date: 2026-05-30
 
 ## Decision
 
-The project model path is semantic-first:
+This document describes `SemanticChangeBaseline`, not the full UniChange v2
+multimodal temporal model. The baseline path is:
 
 ```text
 T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> interpretable report
 ```
 
-The implemented model code is in:
+The full model direction is documented in `docs/unichange_v2_architecture.md`.
+
+The implemented baseline code is in:
 
 - `src/land_change_detection/models/semantic_change.py`
 - `src/land_change_detection/training/losses.py`
 
-The architecture is a Siamese semantic-transition network:
+The baseline architecture is a Siamese semantic-transition network:
 
 1. A shared encoder-decoder segmenter processes T1 and T2 independently.
 2. The primary outputs are T1 and T2 land-cover class logits.
@@ -26,7 +29,7 @@ The architecture is a Siamese semantic-transition network:
 transition_id = before_class_id * num_classes + after_class_id
 ```
 
-This keeps the answer to "what changed into what?" separate from the auxiliary "where did anything change?" mask.
+This keeps the answer to "what changed into what?" separate from the auxiliary "where did anything change?" mask inside the baseline. UniChange v2 will use these labels as segmentation/grounding supervision while sharing one temporal change representation with retrieval and captioning.
 
 ## Default Input
 

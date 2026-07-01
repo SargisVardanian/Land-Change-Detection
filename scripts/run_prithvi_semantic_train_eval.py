@@ -8,7 +8,10 @@ from pathlib import Path
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the semantic baseline in Prithvi-style 6-band mode from a Prithvi semantic manifest."
+        description=(
+            "Run the six-band semantic baseline from a Prithvi-compatible manifest. "
+            "This is not TerraTorch Prithvi foundation-model fine-tuning."
+        )
     )
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -22,7 +25,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint = args.output_dir / "semantic_change_model.pt"
+    checkpoint = args.output_dir / "best.pt"
     eval_output = args.output_dir / "eval_metrics.json"
 
     subprocess.run(
@@ -30,6 +33,10 @@ def main() -> int:
             sys.executable,
             "scripts/train_semantic_change.py",
             "--manifest",
+            str(args.manifest),
+            "--train-manifest",
+            str(args.manifest),
+            "--val-manifest",
             str(args.manifest),
             "--output-dir",
             str(args.output_dir),
@@ -44,7 +51,7 @@ def main() -> int:
             "--num-classes",
             str(args.num_classes),
             "--run-tag",
-            "prithvi_6band_baseline",
+            "six_band_semantic_baseline",
         ],
         check=True,
     )
@@ -65,11 +72,11 @@ def main() -> int:
             "--num-classes",
             str(args.num_classes),
             "--run-tag",
-            "prithvi_6band_baseline",
+            "six_band_semantic_baseline",
         ],
         check=True,
     )
-    print(f"Prithvi-style semantic baseline complete -> {args.output_dir}")
+    print(f"Six-band semantic baseline complete -> {args.output_dir}")
     return 0
 
 

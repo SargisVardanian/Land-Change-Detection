@@ -36,7 +36,7 @@ class JointLossWeights:
     presence: float = 0.5
     coverage: float = 0.25
     overlap: float = 0.05
-    direction: float = 0.1
+    direction: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -52,6 +52,7 @@ class UniChangeJointTrainerConfig:
     safe_negative_bottom_quantile: float = 0.35
     retrieval_temperature: float = 0.07
     local_top_k: int = 8
+    direction_max_weight: float = 0.0
     presence_positive_target: float = 1.0
     presence_negative_target: float = 0.0
     grad_clip_norm: float | None = 1.0
@@ -69,7 +70,13 @@ class JointStepResult:
     metrics: dict[str, float]
 
 
-def scheduled_joint_weights(step: int, total_steps: int, local_max: float = 0.25, mask_max: float = 1.0) -> JointLossWeights:
+def scheduled_joint_weights(
+    step: int,
+    total_steps: int,
+    local_max: float = 0.25,
+    mask_max: float = 1.0,
+    direction_max: float = 0.0,
+) -> JointLossWeights:
     progress = 1.0 if total_steps <= 1 else min(max(step / float(total_steps - 1), 0.0), 1.0)
 
     def ramp(start: float, end: float, maximum: float) -> float:
@@ -88,7 +95,7 @@ def scheduled_joint_weights(step: int, total_steps: int, local_max: float = 0.25
         presence=0.5,
         coverage=0.25,
         overlap=0.05,
-        direction=0.1,
+        direction=direction_max,
     )
 
 
@@ -142,7 +149,13 @@ class UniChangeJointTrainer:
         captions: list[str] = batch["captions"]
         caption_to_pair: Tensor = batch["caption_to_pair"]
         num_pairs = int(batch["t1"].shape[0])
-        weights = scheduled_joint_weights(step, total_steps, self.config.local_max_weight, self.config.mask_max_weight)
+        weights = scheduled_joint_weights(
+            step,
+            total_steps,
+            self.config.local_max_weight,
+            self.config.mask_max_weight,
+            self.config.direction_max_weight,
+        )
         output = self.model(batch["t1"], batch["t2"], captions, text_role="query", temporal_context=batch.get("temporal_context"))
         if output.text_global_embedding is None or output.text_token_embeddings is None or output.text_attention_mask is None:
             raise RuntimeError("Joint training requires text embeddings in UniChangeOutput.")

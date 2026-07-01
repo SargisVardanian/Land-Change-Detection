@@ -12,9 +12,12 @@ set -euo pipefail
 
 PROJECT_ROOT="${PROJECT_ROOT:-/data/$USER/rs_change_project}"
 CODE_ROOT="${CODE_ROOT:-${PROJECT_ROOT}/code/project}"
-MANIFEST_PATH="${MANIFEST_PATH:-${PROJECT_ROOT}/indexes/semantic/second_cc_change_mask_manifest.jsonl}"
+TRAIN_MANIFEST_PATH="${TRAIN_MANIFEST_PATH:-${PROJECT_ROOT}/indexes/semantic/second_cc_transition_train_manifest.jsonl}"
+VAL_MANIFEST_PATH="${VAL_MANIFEST_PATH:-${PROJECT_ROOT}/indexes/semantic/second_cc_transition_val_manifest.jsonl}"
+TEST_MANIFEST_PATH="${TEST_MANIFEST_PATH:-}"
 OUTPUT_DIR="${OUTPUT_DIR:-${PROJECT_ROOT}/runs/semantic_change_train}"
-EPOCHS="${EPOCHS:-3}"
+EPOCHS="${EPOCHS:-30}"
+BATCH_SIZE="${BATCH_SIZE:-8}"
 
 cd "${CODE_ROOT}"
 source "$(dirname "$0")/common_env.sh"
@@ -25,12 +28,21 @@ else
     source ~/venvs/rschange/bin/activate
 fi
 
+EXTRA_ARGS=()
+if [[ -n "${TEST_MANIFEST_PATH}" ]]; then
+  EXTRA_ARGS+=(--test-manifest "${TEST_MANIFEST_PATH}")
+fi
+
 python scripts/train_semantic_change.py \
-  --manifest "${MANIFEST_PATH}" \
+  --train-manifest "${TRAIN_MANIFEST_PATH}" \
+  --val-manifest "${VAL_MANIFEST_PATH}" \
   --output-dir "${OUTPUT_DIR}" \
-  --epochs "${EPOCHS}"
+  --epochs "${EPOCHS}" \
+  --batch-size "${BATCH_SIZE}" \
+  "${EXTRA_ARGS[@]}"
 
 python scripts/eval_semantic_change.py \
-  --manifest "${MANIFEST_PATH}" \
-  --checkpoint "${OUTPUT_DIR}/semantic_change_model.pt" \
-  --output "${OUTPUT_DIR}/eval_metrics.json"
+  --manifest "${VAL_MANIFEST_PATH}" \
+  --checkpoint "${OUTPUT_DIR}/best.pt" \
+  --output "${OUTPUT_DIR}/eval_metrics.json" \
+  --batch-size "${BATCH_SIZE}"

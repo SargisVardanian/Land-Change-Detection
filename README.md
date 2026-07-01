@@ -255,13 +255,16 @@ For the remote-sensing change retrieval dataset workflow on YSU-HPC, the repo no
 - [scripts/render_bootstrap_previews.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/render_bootstrap_previews.py): renders first automatic previews from bootstrap metadata
 - [scripts/build_levir_cc_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_levir_cc_manifest.py): builds a lightweight text retrieval manifest from `LEVIR-CC` captions
 - [scripts/build_change_retrieval_training_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_change_retrieval_training_manifest.py): converts indexed pair datasets into training-ready retrieval JSONL
+- [scripts/train_unichange_v2_retrieval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_unichange_v2_retrieval.py): minimal UniChange v2 Stage-1 retrieval smoke trainer with LEVIR-MCI, per-frame UniverSat, frozen Jina, text-to-pair InfoNCE, gradient audit, memory report, and checkpoint roundtrip
 - [scripts/build_semantic_change_task_manifests.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_semantic_change_task_manifests.py): converts indexed datasets into change-mask and semantic-transition manifests
-- [scripts/train_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_semantic_change.py): baseline semantic-first training from semantic manifests
-- [scripts/eval_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/eval_semantic_change.py): baseline semantic-first evaluation
+- [scripts/train_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_semantic_change.py): split-aware `SemanticChangeBaseline` training from semantic-transition manifests with `best.pt`, `last.pt`, rich validation metrics, and optional test metrics
+- [scripts/eval_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/eval_semantic_change.py): `SemanticChangeBaseline` evaluation with T1/T2 semantic metrics, transition metrics, binary QA metrics, and transition summaries
 
-## Retrieval-First Runbook
+## UniChange And Retrieval Runbook
 
-A. Existing LEVIR-MCI baseline:
+The main model line is UniChange v2: per-timestamp UniverSat features feed a temporal change encoder whose shared representation supports text-to-pair retrieval, pair-to-pair retrieval, captioning, segmentation, text-conditioned grounding, and event-level descriptions. The `SemanticChangeBaseline` remains useful, but it is one supervised baseline/stage rather than the full architecture.
+
+A. Existing LEVIR-MCI retrieval and localization baseline:
 
 - validate dataset with `scripts/validate_levir_mci_dataset.py`
 - render debug gallery with `scripts/render_levir_mci_debug_gallery.py`
@@ -306,10 +309,12 @@ E. Optional retired visual baseline pair retrieval:
 - [cluster/ysu/bootstrap_change_retrieval_assets.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/bootstrap_change_retrieval_assets.sh): one-command asset bootstrap on the cluster
 - [cluster/ysu/bootstrap_change_retrieval_assets.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/bootstrap_change_retrieval_assets.sbatch): batch bootstrap for generated indexes and previews
 - [cluster/ysu/train_change_retrieval_head.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_change_retrieval_head.sbatch): batch retrieval train/eval on generated manifests
+- [cluster/ysu/smoke_unichange_v2_retrieval.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/smoke_unichange_v2_retrieval.sbatch): first required H100 smoke for UniChange v2 retrieval; do not claim cluster-ready until this completes with Slurm `COMPLETED` and `ExitCode 0:0`
+- [cluster/ysu/train_unichange_v2_retrieval.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_unichange_v2_retrieval.sbatch): full retrieval baseline entrypoint, gated on successful smoke
 - [cluster/ysu/build_semantic_manifests.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_semantic_manifests.sbatch): batch semantic-manifest generation for mask/transition tasks
 - [cluster/ysu/train_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_semantic_change.sbatch): batch semantic-first baseline training/eval
-- [cluster/ysu/build_prithvi_semantic_manifest.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_prithvi_semantic_manifest.sbatch): batch Prithvi-style manifest generation
-- [cluster/ysu/train_prithvi_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_semantic_change.sbatch): batch Prithvi-style semantic baseline training/eval
+- [cluster/ysu/build_prithvi_semantic_manifest.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_prithvi_semantic_manifest.sbatch): batch six-band Prithvi-compatible manifest generation
+- [cluster/ysu/train_prithvi_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_semantic_change.sbatch): batch six-band semantic baseline training/eval; true Prithvi/TerraTorch fine-tuning remains separate
 - [cluster/ysu/train_prithvi_terratorch_experimental.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_terratorch_experimental.sbatch): batch experimental Prithvi/TerraTorch runner with fallback reporting
 - [cluster/ysu/install_terratorch.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/install_terratorch.sh): cluster helper for TerraTorch installation
 - [cluster/ysu/write_prithvi_terratorch_template.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/write_prithvi_terratorch_template.sh): writes a starter TerraTorch config on the cluster
@@ -328,6 +333,9 @@ bash cluster/ysu/download_change_retrieval_datasets.sh
 bash cluster/ysu/bootstrap_change_retrieval_assets.sh
 sbatch cluster/ysu/bootstrap_change_retrieval_assets.sbatch
 sbatch cluster/ysu/train_change_retrieval_head.sbatch
+sbatch cluster/ysu/smoke_unichange_v2_retrieval.sbatch
+# Only after smoke_report.json passes and Slurm reports COMPLETED/0:0:
+# sbatch cluster/ysu/train_unichange_v2_retrieval.sbatch
 sbatch cluster/ysu/build_semantic_manifests.sbatch
 sbatch cluster/ysu/train_semantic_change.sbatch
 sbatch cluster/ysu/build_prithvi_semantic_manifest.sbatch
@@ -349,7 +357,18 @@ For that reason, retired visual feature extractor is not part of the Streamlit r
 
 ## Architecture Direction
 
-The longer-term research architecture remains semantic-first:
+The longer-term research architecture is UniChange v2:
+
+```text
+images [B,T,C,H,W]
+  -> UniverSat per timestamp
+  -> TemporalChangeEncoder
+  -> pair_embedding + change_tokens + event_tokens
+  -> retrieval, captioning, segmentation, grounding, event descriptions
+```
+
+The T1/T2 semantic-transition path remains `SemanticChangeBaseline` and a
+segmentation supervision stage, not the whole model:
 
 ```text
 T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> interpretable report
@@ -357,11 +376,11 @@ T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> int
 
 Planned next steps:
 
-1. Keep Mask2Former as the current RGB baseline.
-2. Integrate `Prithvi-EO-2.0-300M-TL` through a proper multispectral TerraTorch path.
-3. Add `Prithvi-EO-2.0-600M-TL` only after the 300M path is stable.
-4. Add CDMamba as a binary changed/unchanged validation baseline, not as the main semantic answer.
-5. Keep VLMs as explanation/reporting tools, not as pixel-mask evidence generators.
+1. Keep CLIP-like text-pair alignment as the first retrieval objective.
+2. Keep DINO and VL-JEPA out of the first working training pipeline.
+3. Keep Mask2Former and `SemanticChangeBaseline` as supervised segmentation baselines.
+4. Integrate `Prithvi-EO-2.0-300M-TL` through a proper multispectral TerraTorch path.
+5. Add CDMamba as a binary changed/unchanged validation baseline, not as the main semantic answer.
 
 ## Verification
 
@@ -376,7 +395,7 @@ PYTHONPATH=src python -m pytest -q
 Expected current result:
 
 ```text
-26 passed
+177 passed, 1 skipped
 ```
 
 ## Sources

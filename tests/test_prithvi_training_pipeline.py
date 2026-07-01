@@ -74,5 +74,8 @@ def test_run_prithvi_semantic_train_eval(tmp_path: Path):
     assert (output_dir / "semantic_change_model.pt").exists()
     metrics = json.loads((output_dir / "metrics.json").read_text(encoding="utf-8"))
     eval_metrics = json.loads((output_dir / "eval_metrics.json").read_text(encoding="utf-8"))
-    assert metrics["run_tag"] == "prithvi_6band_baseline"
-    assert eval_metrics["run_tag"] == "prithvi_6band_baseline"
+    assert (output_dir / "best.pt").exists()
+    assert metrics["run_tag"] == "six_band_semantic_baseline"
+    assert eval_metrics["run_tag"] == "six_band_semantic_baseline"
+    assert "semantic_mean_iou" in eval_metrics
+    assert "transition_summary" in eval_metrics

@@ -20,7 +20,12 @@ from land_change_detection.training.unichange_joint_trainer import UniChangeJoin
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Train the unified UniChange retrieval-grounding milestone.")
+    parser = argparse.ArgumentParser(
+        description=(
+            "Train the current UniChange retrieval/grounding milestone. "
+            "This remains a v1 overfit/smoke path until the UniChange v2 temporal encoder stages land."
+        )
+    )
     root = Path(os.environ.get("RS_PROJECT_ROOT", Path.cwd()))
     parser.add_argument("--data-root", type=Path, default=root / "datasets" / "processed" / "LEVIR-MCI")
     parser.add_argument("--universat-source", type=Path, default=root / "external" / "UniverSat")
@@ -39,6 +44,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument("--reverse-probability", type=float, default=0.0)
+    parser.add_argument(
+        "--direction-loss-weight",
+        type=float,
+        default=0.0,
+        help="Keep at 0 unless reverse samples have semantically rewritten reverse captions.",
+    )
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--total-steps", type=int, default=None)
     parser.add_argument("--learning-rate", type=float, default=1e-4)
@@ -89,6 +100,7 @@ def main() -> None:
             seed=args.subset_seed,
             use_bf16=args.use_bf16,
             device=args.device,
+            direction_max_weight=args.direction_loss_weight,
         ),
     )
     if args.resume is not None:
@@ -107,6 +119,14 @@ def main() -> None:
             "delta_days": None,
             "duration_known": False,
             "time_semantics": "ordinal_not_calendar",
+        },
+        "project_role": "unichange_v1_retrieval_grounding_smoke",
+        "unichange_v2_correction": {
+            "primary_project_pipeline": "UniverSat per-frame features -> TemporalChangeEncoder -> retrieval, captioning, segmentation, and text grounding stages",
+            "semantic_baseline_role": "T1/T2 semantic transition training is retained as a supervised baseline and later segmentation stage, not the full model.",
+            "levir_mci_limitation": "LEVIR-MCI binary masks cannot provide full semantic transition supervision.",
+            "jina_role": "Jina is used for retrieval/query text embeddings, not pixel-class evidence.",
+            "direction_loss_warning": "Keep direction loss disabled unless reverse captions are semantically rewritten.",
         },
         "final_metrics": metrics,
         "overfit_gates": {

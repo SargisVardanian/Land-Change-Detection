@@ -4,11 +4,21 @@
 
 This project is an AI-powered land cover change detection and analysis system for satellite, aerial, and UAV imagery, with a practical Armenia-focused environmental and agricultural use case.
 
-The main technical direction is semantic-first land-change analysis:
+The main technical direction is UniChange v2: a multimodal temporal change
+model with one shared temporal representation for text-to-pair retrieval,
+pair-to-pair retrieval, captioning, segmentation, text-conditioned grounding,
+and event-level descriptions:
+
+`images [B,T,C,H,W] -> UniverSat per timestamp -> TemporalChangeEncoder -> pair_embedding + change_tokens + event_tokens`
+
+Semantic transition analysis remains mandatory as a supervised baseline and as
+segmentation/grounding supervision:
 
 `T1 semantic segmentation -> T2 semantic segmentation -> land-cover transition matrix -> interpretable change report`
 
-Binary change detection is useful as an auxiliary baseline for "where did anything change?", but it must not replace semantic transition analysis for "what changed into what?".
+Binary change detection is useful for "where did anything change?", but it must
+not replace semantic transition analysis or the multimodal retrieval/captioning
+objectives.
 
 ## Canonical SOTA Google Doc
 

@@ -1,5 +1,20 @@
 # UniChange Staged Training Plan
 
+## Project Role
+
+UniChange is the main multimodal temporal model line: shared per-timestamp
+UniverSat features feed a temporal change representation used by retrieval,
+captioning, segmentation, text-conditioned grounding, and event descriptions.
+The standalone T1/T2 semantic-transition pipeline is retained as
+`SemanticChangeBaseline` and as supervision for the segmentation stage, but it
+does not replace the multimodal model.
+
+LEVIR-MCI binary masks can test localization and overfit behavior, but they do
+not provide full semantic transition supervision. Jina embeddings are retrieval
+and query-text evidence, not pixel-class evidence. Direction loss must remain
+disabled unless reverse samples use semantically rewritten captions such as
+"buildings disappeared" instead of reusing a forward caption.
+
 ## Decision
 
 The project remains on the selected Stage-1 stack:

@@ -8,9 +8,10 @@ The first practical training path should not center a general-purpose VLM.
 
 The project should start from a remote-sensing evidence model:
 
-`EO visual backbone -> bi-temporal change fusion -> transition segmentation + retrieval -> optional explanation`
+`EO visual backbone -> temporal change fusion -> retrieval + captioning + segmentation + grounding -> event descriptions`
 
-This keeps the project aligned with the canonical semantic-first goal:
+This keeps the project aligned with the UniChange v2 goal while retaining
+semantic transitions as supervised evidence:
 
 `T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> interpretable report`
 
@@ -22,10 +23,12 @@ A VLM can be useful later for explanation, captioning, or instruction following,
 - language fluency can hide weak pixel evidence
 - end-to-end VLM training expands scope too early across segmentation, retrieval, captioning, and instruction tuning
 
-So the correct split is:
+So the correct split is staged training:
 
-- evidence model first
-- language model last
+- retrieval encoder first
+- caption decoder adapters second
+- segmentation/grounding heads after retrieval is stable
+- event-level language last
 
 ## Model Roles
 

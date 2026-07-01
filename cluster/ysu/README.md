@@ -15,6 +15,8 @@ This folder prepares `Land-Change-Detection` for training on the Yerevan State U
 - `cluster/ysu/validate_prithvi_runtime_bundle.sbatch`: exports the unified Prithvi runtime bundle JSON.
 - `cluster/ysu/inspect_prithvi_backend.sbatch`: exports the current backend runtime scaffold JSON.
 - `cluster/ysu/load_prithvi_backend_runtime.sbatch`: exercises the backend loader lifecycle and writes the loaded runtime scaffold JSON.
+- `cluster/ysu/smoke_unichange_v2_retrieval.sbatch`: required UniChange v2 Stage-1 H100 smoke; cluster-ready remains false until this job completes with `COMPLETED` and `ExitCode 0:0`.
+- `cluster/ysu/train_unichange_v2_retrieval.sbatch`: full UniChange v2 retrieval baseline entrypoint, gated on the smoke report.
 - `cluster/ysu/setup_rschange_env.sh`: creates or reuses the `rschange` environment and installs the required Python packages.
 - `cluster/ysu/push_and_bootstrap_from_mac.sh`: Mac-side helper that syncs the repo to YSU-HPC and launches dataset/model bootstrap remotely.
 - `cluster/ysu/bootstrap_from_mac.sh`: Mac-side entrypoint that optionally writes `~/.ssh/config`, runs preflight, and then launches the remote bootstrap.
@@ -87,9 +89,24 @@ Retrieval-head scaffold run:
 sbatch cluster/ysu/train_retrieval_head.sbatch
 ```
 
+UniChange v2 retrieval smoke:
+
+```bash
+sbatch cluster/ysu/smoke_unichange_v2_retrieval.sbatch
+```
+
 The Slurm templates default to the `research` partition and keep logs under `/mnt/weka/svardanyan/land-change-detection/slurm_logs`.
 
-## Retrieval-First Order
+## UniChange Retrieval Order
+
+The main model line is UniChange v2 with retrieval, captioning, segmentation,
+text-conditioned grounding, and event descriptions on one temporal change
+representation. The jobs below are the current retrieval/localization smoke
+steps that should feed into that staged model rather than replace it.
+
+Do not run `train_unichange_v2_retrieval.sbatch` until the v2 smoke job is Slurm
+`COMPLETED` with `ExitCode 0:0` and its `smoke_report.json` passes gradient,
+memory, leakage, and checkpoint roundtrip checks.
 
 1. Run LEVIR-MCI validation, render, and `overfit_100` with the current simple baseline.
 2. Keep retired visual baseline retrieval on `--visual-backbone simple_patch` first.

@@ -53,6 +53,16 @@ def load_semantic_manifest(path: str | Path) -> list[SemanticManifestRecord]:
     return rows
 
 
+def filter_semantic_supervised_records(records: list[SemanticManifestRecord]) -> list[SemanticManifestRecord]:
+    return [
+        record
+        for record in records
+        if record.semantic_before_path
+        and record.semantic_after_path
+        and record.task == "semantic_transition_segmentation"
+    ]
+
+
 class SemanticManifestDataset:
     def __init__(self, records: list[SemanticManifestRecord], *, input_channels: int = 6, ignore_index: int = -1):
         self.records = records
@@ -93,6 +103,7 @@ class SemanticManifestDataset:
         return {
             "sample_id": record.sample_id,
             "task": record.task,
+            "dominant_transition": str((record.metadata or {}).get("dominant_transition") or (record.metadata or {}).get("transition_label") or ""),
             "before": torch.tensor(before, dtype=torch.float32),
             "after": torch.tensor(after, dtype=torch.float32),
             "before_target": torch.tensor(before_target, dtype=torch.long),
