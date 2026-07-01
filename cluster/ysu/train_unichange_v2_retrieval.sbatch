@@ -11,52 +11,37 @@
 #SBATCH --time=24:00:00
 
 set -euo pipefail
-
 source "$SLURM_SUBMIT_DIR/cluster/ysu/common_env.sh"
 cd "$CODE_ROOT"
 
 MCI_DATA="${MCI_ROOT:-$RS_PROJECT_ROOT/datasets/processed/LEVIR-MCI}"
 RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/unichange_v2_retrieval_train}"
-SMOKE_REPORT="${SMOKE_REPORT:-$RS_PROJECT_ROOT/runs/unichange_v2_retrieval_smoke/smoke_report.json}"
+SMOKE_REPORT="${SMOKE_REPORT:?Set SMOKE_REPORT to the successful smoke_report.json}"
+MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful memory_probe.json}"
+CURRENT_COMMIT="$(git rev-parse HEAD)"
 
-"$PYTHON" - "$SMOKE_REPORT" <<'PY'
-import json
-import sys
+BATCH_SIZE="$($PYTHON - "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" <<'PY'
+import json, sys
 from pathlib import Path
-
-path = Path(sys.argv[1])
-if not path.exists():
-    raise SystemExit(f"Missing smoke report: {path}")
-report = json.loads(path.read_text(encoding="utf-8"))
-errors = []
-if report.get("status") != "PASS":
-    errors.append(f"status={report.get('status')!r}")
-if report.get("fake_backbones") is not False:
-    errors.append("fake_backbones must be false")
-if report.get("frozen_grad_violations") != []:
-    errors.append(f"frozen_grad_violations={report.get('frozen_grad_violations')!r}")
-if report.get("missing_gradients") != []:
-    errors.append(f"missing_gradients={report.get('missing_gradients')!r}")
-if report.get("checkpoint_roundtrip_passed") is not True:
-    errors.append("checkpoint_roundtrip_passed must be true")
-if report.get("gradient_audit_passed") is not True:
-    errors.append("gradient_audit_passed must be true")
-if report.get("train_val_disjoint") is not True:
-    errors.append("train_val_disjoint must be true")
-if errors:
-    raise SystemExit("UniChange v2 retrieval full training is gated on a successful real smoke: " + "; ".join(errors))
-print(f"Smoke gate passed: {path}")
+smoke_path, memory_path, current = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
+if not smoke_path.exists() or not memory_path.exists():
+    raise SystemExit("Missing smoke or memory report")
+smoke=json.loads(smoke_path.read_text()); memory=json.loads(memory_path.read_text())
+checks={"real_cluster_smoke_passed":True,"git_commit":current,"steps_completed":10,"finite_loss":True,"device_type":"cuda","bf16_active":True,"fake_backbones":False,"train_val_disjoint":True,"frozen_grad_violations":[],"missing_gradients":[],"checkpoint_roundtrip_passed":True,"image_size":256,"output_grid":32}
+errors=[f"{k}={smoke.get(k)!r}" for k,v in checks.items() if smoke.get(k)!=v]
+if "H100" not in smoke.get("gpu_name",""): errors.append("gpu is not H100")
+if memory.get("status")!="PASS" or memory.get("git_commit")!=current: errors.append("memory probe invalid or stale")
+if errors: raise SystemExit("Readiness gate failed: "+"; ".join(errors))
+print(memory.get("recommended_batch_size") or 4)
 PY
+)"
+BATCH_SIZE="${BATCH_SIZE_OVERRIDE:-$BATCH_SIZE}"
+RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
+mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
 
-PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/train_unichange_v2_retrieval.py" \
-  --data-root "$MCI_DATA" \
-  --output-dir "$RUN_DIR" \
-  --universat-source "$RS_PROJECT_ROOT/external/UniverSat" \
-  --universat-checkpoint "$RS_PROJECT_ROOT/models/universat-base" \
-  --jina-model "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
-  --device cuda \
-  --image-size 256 \
-  --output-grid 32 \
-  --batch-size "${BATCH_SIZE:-16}" \
-  --epochs "${EPOCHS:-25}" \
-  --num-workers "${NUM_WORKERS:-8}"
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/train_unichange_v2_retrieval_full.py" \
+  "$MCI_DATA" "$RUN_DIR" \
+  "$RS_PROJECT_ROOT/external/UniverSat" \
+  "$RS_PROJECT_ROOT/models/universat-base" \
+  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
+  "$BATCH_SIZE" "${EPOCHS:-25}" "${NUM_WORKERS:-8}" "$RESUME_CHECKPOINT"
