@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader
 
 import train_unichange_v2_retrieval as base
 from ucv2_cluster_common import build_model, strict_device
+from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 
 
 def save_checkpoint(path, model, optimizer, scheduler, config, epoch, batch_index, step, best_metric, metrics):
@@ -38,7 +39,7 @@ def run(data_root: Path, output_dir: Path, universat_source: Path, universat_che
         warmup_ratio=0.05, min_lr=1e-6, grad_clip_norm=1.0,
         use_bf16=True, device="cuda",
     )
-    base._write_json(output_dir / "run_config.json", asdict(config) | {"resume": str(resume) if resume else None})
+    base._write_json(output_dir / "run_config.json", asdict(config) | {"resume": str(resume) if resume else None, "duplicate_caption_aware": True})
     train, val = base._build_datasets(config)
     base._assert_disjoint(train, val)
     train_loader = DataLoader(train, batch_size=batch_size, shuffle=True, num_workers=num_workers, collate_fn=base._collate_temporal)
@@ -76,7 +77,7 @@ def run(data_root: Path, output_dir: Path, universat_source: Path, universat_che
                 handle.write(json.dumps({"epoch": epoch, "step": step, "loss": float(loss.detach().cpu())}) + "\n")
             if step % 500 == 0:
                 save_checkpoint(output_dir / f"step_{step}.pt", model, optimizer, scheduler, config, epoch, batch_index + 1, step, best_metric, {})
-        metrics = base._retrieval_metrics(model, val_loader, device, config)
+        metrics = relevance_aware_retrieval_metrics(model, val_loader, device, config)
         if metrics["text_to_pair_R@1"] > best_metric:
             best_metric = metrics["text_to_pair_R@1"]
             save_checkpoint(output_dir / "best_retrieval.pt", model, optimizer, scheduler, config, epoch + 1, 0, step, best_metric, metrics)
