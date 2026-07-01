@@ -30,10 +30,9 @@ def _has_official_mci_layout(root: Path) -> bool:
 
 
 def resolve_levir_mci_root(base: str | Path | None = None, override: str | Path | None = None) -> MciRootResolution:
-    override = override or os.environ.get("MCI_ROOT")
     candidates: list[tuple[Path, str]] = []
-    if override:
-        candidates.append((Path(override), "MCI_ROOT"))
+    if override is not None:
+        candidates.append((Path(override), "override"))
     if base is not None:
         base_path = Path(base)
         candidates.extend(
@@ -42,6 +41,9 @@ def resolve_levir_mci_root(base: str | Path | None = None, override: str | Path 
                 (base_path / "LEVIR-MCI-dataset", "provided_nested"),
             ]
         )
+    environment_root = os.environ.get("MCI_ROOT")
+    if environment_root:
+        candidates.append((Path(environment_root), "MCI_ROOT"))
     for candidate, source in candidates:
         if _has_official_mci_layout(candidate):
             return MciRootResolution(candidate, source)
