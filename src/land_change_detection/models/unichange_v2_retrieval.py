@@ -64,7 +64,7 @@ class UniChangeV2RetrievalModel(nn.Module):
 
     def encode_texts(self, captions: list[str]) -> Tensor:
         with torch.no_grad():
-            features = self.text_encoder(captions, role="document")
+            features = self.text_encoder(captions, role="query")
         if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
             raise TypeError("text_encoder must return an object with global_embedding")
         return features.global_embedding.detach()
