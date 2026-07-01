@@ -24,7 +24,7 @@ def run(data_root: Path, output_dir: Path, universat_source: Path, universat_che
     model = build_model(cfg, device)
     optimizer = base._make_optimizer(model, cfg)
     rows = []
-    for batch_size in (2, 4, 8, 16):
+    for batch_size in (2, 4, 8, 16, 32):
         loader = DataLoader(train, batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=base._collate_temporal, drop_last=True)
         torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats(device)
         success = True; error = ""; shapes = {}
@@ -42,6 +42,6 @@ def run(data_root: Path, output_dir: Path, universat_source: Path, universat_che
             success = False; error = str(exc); optimizer.zero_grad(set_to_none=True); torch.cuda.empty_cache()
         rows.append({"batch_size": batch_size, "success": success, "error": error, "peak_allocated_vram_bytes": torch.cuda.max_memory_allocated(device), "peak_reserved_vram_bytes": torch.cuda.max_memory_reserved(device), "shapes": shapes})
     ok = [row["batch_size"] for row in rows if row["success"]]
-    report = {**run_metadata(), "status": "PASS" if ok else "FAIL", "gpu_name": torch.cuda.get_device_name(device), "results": rows, "recommended_batch_size": max(ok) if ok else None}
+    report = {**run_metadata(), "status": "PASS" if ok else "FAIL", "gpu_name": torch.cuda.get_device_name(device), "results": rows, "recommended_batch_size": max(ok) if ok else None, "batch_32_passed": 32 in ok}
     (output_dir / "memory_probe.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return 0 if ok else 1
