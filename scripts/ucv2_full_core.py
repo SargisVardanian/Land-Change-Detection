@@ -118,6 +118,8 @@ def run(data_root: Path, output_dir: Path, universat_source: Path, universat_che
 
         torch.cuda.synchronize(device)
         train_seconds = time.perf_counter() - epoch_started
+        training_peak_allocated = int(torch.cuda.max_memory_allocated(device))
+        training_peak_reserved = int(torch.cuda.max_memory_reserved(device))
         validation_started = time.perf_counter()
         metrics = relevance_aware_retrieval_metrics(model, val_loader, device, config)
         validation_seconds = time.perf_counter() - validation_started
@@ -131,8 +133,8 @@ def run(data_root: Path, output_dir: Path, universat_source: Path, universat_che
             "train_seconds": train_seconds,
             "train_pairs_per_second": epoch_pair_count / max(train_seconds, 1e-12),
             "validation_seconds": validation_seconds,
-            "training_peak_allocated_vram_bytes": int(torch.cuda.max_memory_allocated(device)),
-            "training_peak_reserved_vram_bytes": int(torch.cuda.max_memory_reserved(device)),
+            "training_peak_allocated_vram_bytes": training_peak_allocated,
+            "training_peak_reserved_vram_bytes": training_peak_reserved,
             **metrics,
         }
         _append_history(history_path, epoch_record)
