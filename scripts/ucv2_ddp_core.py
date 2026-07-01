@@ -14,6 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 import train_unichange_v2_retrieval as base
 from ucv2_cluster_common import build_model
 from ucv2_full_core import save_checkpoint
+from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 from land_change_detection.training.distributed_retrieval import distributed_multi_positive_info_nce
 
 
@@ -78,6 +79,7 @@ def run(
                 "world_size": world_size,
                 "local_batch_size": local_batch_size,
                 "global_batch_size": global_batch_size,
+                "duplicate_caption_aware": True,
                 "resume": str(resume) if resume else None,
             },
         )
@@ -130,7 +132,7 @@ def run(
         dist.barrier()
         if rank == 0:
             assert val_loader is not None
-            metrics = base._retrieval_metrics(model, val_loader, device, config)
+            metrics = relevance_aware_retrieval_metrics(model, val_loader, device, config)
             metrics["global_batch_size"] = global_batch_size
             if metrics["text_to_pair_R@1"] > best_metric:
                 best_metric = metrics["text_to_pair_R@1"]
