@@ -19,4 +19,4 @@ LOCAL_BATCH="$($PYTHON "$CODE_ROOT/scripts/ucv2_readiness_gate.py" "$SMOKE_REPOR
 LOCAL_BATCH="${LOCAL_BATCH_OVERRIDE:-$LOCAL_BATCH}"
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
 mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
-PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" torchrun --standalone --nproc_per_node=2 "$CODE_ROOT/scripts/train_unichange_v2_retrieval_ddp.py" "$MCI_DATA" "$RUN_DIR" "$RS_PROJECT_ROOT/external/UniverSat" "$RS_PROJECT_ROOT/models/universat-base" "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" "$LOCAL_BATCH" "${EPOCHS:-25}" "${NUM_WORKERS:-8}" "$RESUME_CHECKPOINT"
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" -m torch.distributed.run --standalone --nproc_per_node=2 "$CODE_ROOT/scripts/train_unichange_v2_retrieval_ddp.py" "$MCI_DATA" "$RUN_DIR" "$RS_PROJECT_ROOT/external/UniverSat" "$RS_PROJECT_ROOT/models/universat-base" "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" "$LOCAL_BATCH" "${EPOCHS:-25}" "${NUM_WORKERS:-8}" "$RESUME_CHECKPOINT"
