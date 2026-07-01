@@ -16,26 +16,16 @@ cd "$CODE_ROOT"
 
 MCI_DATA="${MCI_ROOT:-$RS_PROJECT_ROOT/datasets/processed/LEVIR-MCI}"
 RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/unichange_v2_retrieval_train}"
-SMOKE_REPORT="${SMOKE_REPORT:?Set SMOKE_REPORT to the successful smoke_report.json}"
-MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful memory_probe.json}"
+SMOKE_REPORT="${SMOKE_REPORT:?Set SMOKE_REPORT to the successful smoke report}"
+MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful memory report}"
 CURRENT_COMMIT="$(git rev-parse HEAD)"
 
-BATCH_SIZE="$($PYTHON - "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" <<'PY'
-import json, sys
-from pathlib import Path
-smoke_path, memory_path, current = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]
-if not smoke_path.exists() or not memory_path.exists():
-    raise SystemExit("Missing smoke or memory report")
-smoke=json.loads(smoke_path.read_text()); memory=json.loads(memory_path.read_text())
-checks={"real_cluster_smoke_passed":True,"git_commit":current,"steps_completed":10,"finite_loss":True,"device_type":"cuda","bf16_active":True,"fake_backbones":False,"train_val_disjoint":True,"frozen_grad_violations":[],"missing_gradients":[],"checkpoint_roundtrip_passed":True,"image_size":256,"output_grid":32}
-errors=[f"{k}={smoke.get(k)!r}" for k,v in checks.items() if smoke.get(k)!=v]
-if "H100" not in smoke.get("gpu_name",""): errors.append("gpu is not H100")
-if memory.get("status")!="PASS" or memory.get("git_commit")!=current: errors.append("memory probe invalid or stale")
-if errors: raise SystemExit("Readiness gate failed: "+"; ".join(errors))
-print(memory.get("recommended_batch_size") or 4)
-PY
-)"
+BATCH_SIZE="$($PYTHON "$CODE_ROOT/scripts/ucv2_readiness_gate.py" "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32)"
 BATCH_SIZE="${BATCH_SIZE_OVERRIDE:-$BATCH_SIZE}"
+if (( BATCH_SIZE < 32 )); then
+  echo "One-H100 training requires actual batch size at least 32" >&2
+  exit 2
+fi
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
 mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
 
