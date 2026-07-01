@@ -3,6 +3,8 @@
 #SBATCH --account=research
 #SBATCH --partition=research
 #SBATCH --qos=researcher
+#SBATCH --output=/mnt/weka/%u/rs_change_project/logs/%x_%j.out
+#SBATCH --error=/mnt/weka/%u/rs_change_project/logs/%x_%j.err
 #SBATCH --gres=gpu:2
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=220G
