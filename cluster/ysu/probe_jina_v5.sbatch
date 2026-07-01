@@ -8,12 +8,11 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/common_env.sh"
-cd "$CODE_ROOT"
+source "${SLURM_SUBMIT_DIR}/cluster/ysu/common_env.sh"
+cd "${CODE_ROOT}"
 
-mkdir -p "$RS_PROJECT_ROOT/reports/model_probes" logs
-PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/probe_jina_v5.py" \
-  --model-path "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
-  --output "$RS_PROJECT_ROOT/reports/model_probes/jina_v5.json" \
+mkdir -p "${RS_PROJECT_ROOT}/reports/model_probes" logs
+PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}" "${PYTHON}" "${CODE_ROOT}/scripts/probe_jina_v5.py" \
+  --model-path "${RS_PROJECT_ROOT}/models/jina-v5-text-small-retrieval" \
+  --output "${RS_PROJECT_ROOT}/reports/model_probes/jina_v5.json" \
   --device "${DEVICE:-cpu}"
