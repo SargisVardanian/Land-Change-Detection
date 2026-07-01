@@ -160,6 +160,8 @@ def run(
         dist.barrier()
         torch.cuda.synchronize(device)
         train_seconds = time.perf_counter() - epoch_started
+        training_peak_allocated = int(torch.cuda.max_memory_allocated(device))
+        training_peak_reserved = int(torch.cuda.max_memory_reserved(device))
         if rank == 0:
             assert val_loader is not None
             validation_started = time.perf_counter()
@@ -178,8 +180,8 @@ def run(
                 "train_pairs_per_second": global_pairs / max(train_seconds, 1e-12),
                 "validation_seconds": validation_seconds,
                 "world_size": world_size,
-                "training_peak_allocated_vram_bytes_rank0": int(torch.cuda.max_memory_allocated(device)),
-                "training_peak_reserved_vram_bytes_rank0": int(torch.cuda.max_memory_reserved(device)),
+                "training_peak_allocated_vram_bytes_rank0": training_peak_allocated,
+                "training_peak_reserved_vram_bytes_rank0": training_peak_reserved,
                 **metrics,
             }
             _append_history(history_path, epoch_record)
