@@ -18,7 +18,11 @@ cd "$CODE_ROOT"
 MCI_DATA="${MCI_ROOT:-$RS_PROJECT_ROOT/datasets/processed/LEVIR-MCI}"
 RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/unichange_v2_retrieval_smoke}"
 
-PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/train_unichange_v2_retrieval.py" \
+mkdir -p "$RS_PROJECT_ROOT/logs" "$RS_PROJECT_ROOT/runs"
+rm -rf "$RUN_DIR"
+mkdir -p "$RUN_DIR"
+
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" "$CODE_ROOT/scripts/train_unichange_v2_retrieval_cluster.py" \
   --data-root "$MCI_DATA" \
   --output-dir "$RUN_DIR" \
   --universat-source "$RS_PROJECT_ROOT/external/UniverSat" \
