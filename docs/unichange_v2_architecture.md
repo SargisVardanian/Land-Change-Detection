@@ -81,14 +81,17 @@ Smoke PASS requires:
 - finite loss and finite nonzero gradients in `TemporalChangeEncoder` and
   retrieval head.
 - no gradients in frozen UniverSat or frozen Jina.
+- `status == "PASS"`, `fake_backbones == false`,
+  `frozen_grad_violations == []`, and `missing_gradients == []`.
 - train/validation pair IDs are disjoint.
 - checkpoint save/reload preserves a validation embedding within `1e-5`.
 - `smoke_report.json` records GPU name, PyTorch/CUDA versions, peak allocated
   and reserved VRAM, parameter counts, shapes, and validation retrieval metrics.
 
-Do not launch `cluster/ysu/train_unichange_v2_retrieval.sbatch` until the smoke
-job passes. Captioning, grounding, semantic segmentation integration, and
-pair-to-pair retrieval are still later stages.
+`cluster/ysu/train_unichange_v2_retrieval.sbatch` enforces this gate in code and
+exits before training if the smoke report is missing or fails these checks.
+Captioning, grounding, semantic segmentation integration, and pair-to-pair
+retrieval are still later stages.
 
 ## Explicit Non-Goals For The First Pipeline
 

@@ -395,7 +395,7 @@ PYTHONPATH=src python -m pytest -q
 Expected current result:
 
 ```text
-177 passed, 1 skipped
+178 passed, 1 skipped
 ```
 
 ## Sources

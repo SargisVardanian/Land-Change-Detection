@@ -332,6 +332,26 @@ def _parameter_counts(model: UniChangeV2RetrievalModel) -> dict[str, int]:
     return {"trainable": trainable, "frozen": frozen}
 
 
+def _audit_failures(gradient_audit: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+    if gradient_audit is None:
+        return ["visual_backbone", "text_encoder"], ["temporal_encoder", "retrieval_head"]
+    frozen_grad_violations = [
+        name
+        for name in ("visual_backbone", "text_encoder")
+        if bool(gradient_audit.get(name, {}).get("has_grad", False))
+    ]
+    missing_gradients = [
+        name
+        for name in ("temporal_encoder", "retrieval_head")
+        if not (
+            bool(gradient_audit.get(name, {}).get("has_grad", False))
+            and bool(gradient_audit.get(name, {}).get("finite", False))
+            and bool(gradient_audit.get(name, {}).get("nonzero", False))
+        )
+    ]
+    return frozen_grad_violations, missing_gradients
+
+
 def _retrieval_metrics(model: UniChangeV2RetrievalModel, loader: DataLoader, device: torch.device, config: RetrievalConfig) -> dict[str, float]:
     model.eval()
     pair_embeddings: list[Tensor] = []
@@ -530,6 +550,10 @@ def main() -> int:
         _save_checkpoint(output_dir / "best_retrieval.pt", model, optimizer, scheduler, config, step, final_metrics)
     _save_checkpoint(output_dir / "last_retrieval.pt", model, optimizer, scheduler, config, step, final_metrics)
     roundtrip = _checkpoint_roundtrip(model, optimizer, scheduler, output_dir / "last_retrieval.pt", val_loader, device, config)
+    frozen_grad_violations, missing_gradients = _audit_failures(gradient_audit)
+    gradient_audit_passed = not frozen_grad_violations and not missing_gradients
+    checkpoint_roundtrip_passed = bool(roundtrip["ok"])
+    smoke_status = "PASS" if gradient_audit_passed and checkpoint_roundtrip_passed else "FAIL"
     memory = {
         "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
         "torch_version": torch.__version__,
@@ -538,26 +562,22 @@ def main() -> int:
         "peak_reserved_vram_bytes": torch.cuda.max_memory_reserved(device) if device.type == "cuda" else 0,
     }
     report = {
-        "status": "completed_local_or_slurm_process",
+        "status": smoke_status,
         "cluster_ready": False,
         "cluster_ready_requires": "Slurm job state COMPLETED and ExitCode 0:0 with this smoke_report.json.",
+        "fake_backbones": config.fake_backbones,
+        "universat_checkpoint": config.universat_checkpoint,
+        "jina_model": config.jina_model,
         "samples": {"train": len(train_dataset), "validation": len(val_dataset)},
         "train_val_disjoint": True,
         "steps_completed": step,
         "finite_loss": True,
         "gradient_audit": gradient_audit,
-        "gradient_audit_passed": bool(
-            gradient_audit
-            and not gradient_audit["visual_backbone"]["has_grad"]
-            and not gradient_audit["text_encoder"]["has_grad"]
-            and gradient_audit["temporal_encoder"]["has_grad"]
-            and gradient_audit["temporal_encoder"]["finite"]
-            and gradient_audit["temporal_encoder"]["nonzero"]
-            and gradient_audit["retrieval_head"]["has_grad"]
-            and gradient_audit["retrieval_head"]["finite"]
-            and gradient_audit["retrieval_head"]["nonzero"]
-        ),
+        "gradient_audit_passed": gradient_audit_passed,
+        "frozen_grad_violations": frozen_grad_violations,
+        "missing_gradients": missing_gradients,
         "checkpoint_roundtrip": roundtrip,
+        "checkpoint_roundtrip_passed": checkpoint_roundtrip_passed,
         "parameter_counts": _parameter_counts(model),
         "shape_report": shape_report,
         "final_validation": final_metrics,
@@ -568,7 +588,7 @@ def main() -> int:
         ],
     }
     _write_json(output_dir / "smoke_report.json", report)
-    if not report["gradient_audit_passed"] or not report["checkpoint_roundtrip"]["ok"]:
+    if report["status"] != "PASS":
         raise RuntimeError("Smoke audit failed; see smoke_report.json")
     return 0
 
