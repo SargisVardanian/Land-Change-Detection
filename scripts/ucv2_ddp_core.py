@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import asdict
 from pathlib import Path
 
@@ -16,6 +17,11 @@ from ucv2_cluster_common import build_model
 from ucv2_full_core import save_checkpoint
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 from land_change_detection.training.distributed_retrieval import distributed_multi_positive_info_nce
+
+
+def _append_history(path: Path, payload: dict) -> None:
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload) + "\n")
 
 
 def run(
@@ -80,6 +86,7 @@ def run(
                 "local_batch_size": local_batch_size,
                 "global_batch_size": global_batch_size,
                 "duplicate_caption_aware": True,
+                "history_schema": 2,
                 "resume": str(resume) if resume else None,
             },
         )
@@ -107,6 +114,13 @@ def run(
     history_path = output_dir / "metrics_history.jsonl"
     for epoch in range(start_epoch, epochs):
         sampler.set_epoch(epoch)
+        torch.cuda.reset_peak_memory_stats(device)
+        torch.cuda.synchronize(device)
+        epoch_started = time.perf_counter()
+        epoch_loss_sum = 0.0
+        epoch_steps = 0
+        epoch_local_pairs = 0
+
         for batch_index, batch in enumerate(train_loader):
             if epoch == start_epoch and batch_index < resume_batch:
                 continue
@@ -123,19 +137,55 @@ def run(
             optimizer.step()
             scheduler.step()
             step += 1
+
+            loss_value = float(loss.detach().cpu())
+            local_pairs = int(batch["images"].shape[0])
+            epoch_loss_sum += loss_value
+            epoch_steps += 1
+            epoch_local_pairs += local_pairs
             if rank == 0:
-                with history_path.open("a", encoding="utf-8") as handle:
-                    handle.write(json.dumps({"epoch": epoch, "step": step, "loss": float(loss.detach().cpu()), "global_batch_size": global_batch_size}) + "\n")
+                _append_history(history_path, {
+                    "record_type": "train_step",
+                    "epoch": epoch + 1,
+                    "step": step,
+                    "loss": loss_value,
+                    "local_batch_size": local_pairs,
+                    "global_batch_size": local_pairs * world_size,
+                    "captions_per_rank": len(batch["captions"]),
+                    "learning_rates": [float(group["lr"]) for group in optimizer.param_groups],
+                })
                 if step % 500 == 0:
                     save_checkpoint(output_dir / f"step_{step}.pt", model, optimizer, scheduler, config, epoch, batch_index + 1, step, best_metric, {})
 
         dist.barrier()
+        torch.cuda.synchronize(device)
+        train_seconds = time.perf_counter() - epoch_started
         if rank == 0:
             assert val_loader is not None
+            validation_started = time.perf_counter()
             metrics = relevance_aware_retrieval_metrics(model, val_loader, device, config)
+            validation_seconds = time.perf_counter() - validation_started
+            global_pairs = epoch_local_pairs * world_size
             metrics["global_batch_size"] = global_batch_size
-            if metrics["text_to_pair_R@1"] > best_metric:
-                best_metric = metrics["text_to_pair_R@1"]
+            epoch_record = {
+                "record_type": "epoch",
+                "epoch": epoch + 1,
+                "step": step,
+                "train_loss_mean": epoch_loss_sum / max(epoch_steps, 1),
+                "train_steps": epoch_steps,
+                "train_pair_count": global_pairs,
+                "train_seconds": train_seconds,
+                "train_pairs_per_second": global_pairs / max(train_seconds, 1e-12),
+                "validation_seconds": validation_seconds,
+                "world_size": world_size,
+                "training_peak_allocated_vram_bytes_rank0": int(torch.cuda.max_memory_allocated(device)),
+                "training_peak_reserved_vram_bytes_rank0": int(torch.cuda.max_memory_reserved(device)),
+                **metrics,
+            }
+            _append_history(history_path, epoch_record)
+            base._write_json(output_dir / "latest_metrics.json", epoch_record)
+            if float(metrics["text_to_pair_R@1"]) > best_metric:
+                best_metric = float(metrics["text_to_pair_R@1"])
                 save_checkpoint(output_dir / "best_retrieval.pt", model, optimizer, scheduler, config, epoch + 1, 0, step, best_metric, metrics)
             save_checkpoint(output_dir / "last_retrieval.pt", model, optimizer, scheduler, config, epoch + 1, 0, step, best_metric, metrics)
         dist.barrier()
