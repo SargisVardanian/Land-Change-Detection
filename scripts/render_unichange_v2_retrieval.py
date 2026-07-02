@@ -4,6 +4,7 @@ import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
+from types import SimpleNamespace
 
 import matplotlib
 matplotlib.use("Agg")
@@ -67,38 +68,63 @@ def render_pair(axes, sample, heading: str, score: float | None = None) -> None:
         axis.axis("off")
 
 
+def _checkpoint_config(args: argparse.Namespace, checkpoint: dict) -> SimpleNamespace:
+    saved = dict(checkpoint.get("config", {}))
+    saved.update(
+        {
+            "data_root": str(args.data_root),
+            "output_dir": str(args.output_dir),
+            "universat_source": str(args.universat_source),
+            "universat_checkpoint": str(args.universat_checkpoint),
+            "jina_model": str(args.jina_model),
+            "train_split": "train",
+            "val_split": args.split,
+            "batch_size": args.batch_size,
+            "epochs": 1,
+            "num_workers": args.num_workers,
+            "use_bf16": True,
+            "device": args.device,
+        }
+    )
+    saved.setdefault("image_size", 256)
+    saved.setdefault("output_grid", 32)
+    saved.setdefault("temporal_depth", 4)
+    saved.setdefault("use_direction_embeddings", False)
+    saved.setdefault("use_explicit_change_fusion", False)
+    saved.setdefault("trainable_temperature", False)
+    saved.setdefault("initial_temperature", 0.07)
+    saved.setdefault("max_logit_scale", 100.0)
+    saved.setdefault("caption_frequency_power", 0.5)
+    saved.setdefault("seed", 20260701)
+    return SimpleNamespace(**saved)
+
+
 def main() -> int:
     args = parse_args()
     device = strict_device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location=device)
-    saved_config = checkpoint.get("config", {})
-    image_size = int(saved_config.get("image_size", 256))
-    output_grid = int(saved_config.get("output_grid", 32))
-    config = base.RetrievalConfig(
-        data_root=str(args.data_root),
-        output_dir=str(args.output_dir),
-        universat_source=str(args.universat_source),
-        universat_checkpoint=str(args.universat_checkpoint),
-        jina_model=str(args.jina_model),
-        train_split="train",
-        val_split=args.split,
+    config = _checkpoint_config(args, checkpoint)
+    image_size = int(config.image_size)
+    output_grid = int(config.output_grid)
+    dataset = UniChangeMciDataset(
+        args.data_root,
+        split=args.split,
         image_size=image_size,
         output_grid=output_grid,
-        batch_size=args.batch_size,
-        epochs=1,
-        num_workers=args.num_workers,
-        use_bf16=True,
-        device=args.device,
     )
-    dataset = UniChangeMciDataset(args.data_root, split=args.split, image_size=image_size, output_grid=output_grid)
-    loader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        num_workers=args.num_workers,
-        collate_fn=base._collate_temporal,
-        pin_memory=device.type == "cuda",
-    )
+    if checkpoint.get("stage1_next"):
+        from ucv2_stage1_next_core import make_eval_loader
+
+        loader = make_eval_loader(dataset, config)
+    else:
+        loader = DataLoader(
+            dataset,
+            batch_size=args.batch_size,
+            shuffle=False,
+            num_workers=args.num_workers,
+            collate_fn=base._collate_temporal,
+            pin_memory=device.type == "cuda",
+        )
     model = build_model(config, device)
     model.load_state_dict(checkpoint["model"], strict=True)
     model.eval()
@@ -108,11 +134,19 @@ def main() -> int:
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
     sample_by_id = {sample.sample_id: sample for sample in dataset.samples}
     group_to_pairs: dict[int, set[int]] = defaultdict(set)
-    for group_id, mapped_pair in zip(corpus.caption_group_ids.tolist(), corpus.caption_to_pair.tolist(), strict=True):
+    for group_id, mapped_pair in zip(
+        corpus.caption_group_ids.tolist(),
+        corpus.caption_to_pair.tolist(),
+        strict=True,
+    ):
         group_to_pairs[int(group_id)].add(int(mapped_pair))
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    query_items = [item for item in manifest.get("items", []) if item.get("pair_id") in pair_index][:args.max_queries]
+    query_items = [
+        item
+        for item in manifest.get("items", [])
+        if item.get("pair_id") in pair_index
+    ][: args.max_queries]
     args.output_dir.mkdir(parents=True, exist_ok=True)
     visuals = args.output_dir / "visuals"
     visuals.mkdir(parents=True, exist_ok=True)
@@ -127,8 +161,11 @@ def main() -> int:
         normalized_query = normalize_caption_text(query_caption)
         caption_candidates = [
             index
-            for index, (caption, mapped_pair) in enumerate(zip(corpus.captions, corpus.caption_to_pair.tolist(), strict=True))
-            if int(mapped_pair) == query_pair_index and normalize_caption_text(caption) == normalized_query
+            for index, (caption, mapped_pair) in enumerate(
+                zip(corpus.captions, corpus.caption_to_pair.tolist(), strict=True)
+            )
+            if int(mapped_pair) == query_pair_index
+            and normalize_caption_text(caption) == normalized_query
         ]
         if not caption_candidates:
             raise RuntimeError(f"Missing query caption for {query_pair_id}")
@@ -142,9 +179,13 @@ def main() -> int:
         exact_rank = int(inverse_rank[query_pair_index].item()) + 1
         relevance_ranks.append(relevant_rank)
         exact_ranks.append(exact_rank)
-        top_indices = order[:min(args.top_k, order.numel())].tolist()
+        top_indices = order[: min(args.top_k, order.numel())].tolist()
 
-        figure, axes = plt.subplots(1 + len(top_indices), 4, figsize=(16, 4 * (1 + len(top_indices))))
+        figure, axes = plt.subplots(
+            1 + len(top_indices),
+            4,
+            figsize=(16, 4 * (1 + len(top_indices))),
+        )
         if axes.ndim == 1:
             axes = axes[None, :]
         render_pair(axes[0], sample_by_id[query_pair_id], f"QUERY {query_pair_id}")
@@ -155,21 +196,32 @@ def main() -> int:
             is_relevant = int(retrieved_index) in relevant
             label = f"#{row} {retrieved_id} {'RELEVANT' if is_relevant else 'OTHER'}"
             render_pair(axes[row], sample_by_id[retrieved_id], label, score)
-            retrieved.append({"rank": row, "pair_id": retrieved_id, "score": score, "relevant": is_relevant})
-        figure.suptitle(f"Query: {query_caption}\nRelevant rank={relevant_rank}; exact pair rank={exact_rank}")
+            retrieved.append(
+                {
+                    "rank": row,
+                    "pair_id": retrieved_id,
+                    "score": score,
+                    "relevant": is_relevant,
+                }
+            )
+        figure.suptitle(
+            f"Query: {query_caption}\nRelevant rank={relevant_rank}; exact pair rank={exact_rank}"
+        )
         figure.tight_layout(rect=(0, 0, 1, 0.98))
         image_name = f"query_{query_number:03d}_{query_pair_id}.png"
         figure.savefig(visuals / image_name, dpi=140, bbox_inches="tight")
         plt.close(figure)
-        records.append({
-            "query_pair_id": query_pair_id,
-            "query_caption": query_caption,
-            "stratum": item.get("stratum"),
-            "best_relevant_rank": relevant_rank,
-            "exact_pair_rank": exact_rank,
-            "retrieved": retrieved,
-            "image": image_name,
-        })
+        records.append(
+            {
+                "query_pair_id": query_pair_id,
+                "query_caption": query_caption,
+                "stratum": item.get("stratum"),
+                "best_relevant_rank": relevant_rank,
+                "exact_pair_rank": exact_rank,
+                "retrieved": retrieved,
+                "image": image_name,
+            }
+        )
 
     rank_tensor = torch.tensor(relevance_ranks, dtype=torch.float32) if relevance_ranks else torch.empty(0)
     exact_tensor = torch.tensor(exact_ranks, dtype=torch.float32) if exact_ranks else torch.empty(0)
@@ -180,17 +232,23 @@ def main() -> int:
         "R@10": float((rank_tensor <= 10).float().mean().item()) if relevance_ranks else 0.0,
         "MRR": float((1.0 / rank_tensor).mean().item()) if relevance_ranks else 0.0,
         "exact_pair_R@1": float((exact_tensor <= 1).float().mean().item()) if exact_ranks else 0.0,
+        "exact_pair_R@5": float((exact_tensor <= 5).float().mean().item()) if exact_ranks else 0.0,
+        "exact_pair_R@10": float((exact_tensor <= 10).float().mean().item()) if exact_ranks else 0.0,
     }
     report = {
         "checkpoint": str(args.checkpoint),
-        "checkpoint_epoch": checkpoint.get("epoch"),
+        "stage1_next": bool(checkpoint.get("stage1_next")),
+        "checkpoint_epoch": checkpoint.get("epoch", checkpoint.get("epoch_index")),
         "checkpoint_step": checkpoint.get("step"),
         "split": args.split,
         "corpus_metrics": metrics,
         "gallery_metrics": gallery_metrics,
         "top_k": args.top_k,
     }
-    (args.output_dir / "retrieval_metrics.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    (args.output_dir / "retrieval_metrics.json").write_text(
+        json.dumps(report, indent=2),
+        encoding="utf-8",
+    )
     with (args.output_dir / "retrieval_results.jsonl").open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record) + "\n")
