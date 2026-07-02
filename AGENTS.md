@@ -79,3 +79,94 @@ Substantial work is complete only when:
 2. verification commands are run where possible;
 3. Google Doc write success or OAuth blocker is explicitly reported;
 4. a reusable lesson is ready for project/global memory.
+
+## UniChange v2 Stage-1 cluster context
+
+Read `docs/UNICHANGE_V2_STAGE1_HANDOFF.md` before changing Stage-1 retrieval code.
+
+- Baseline branch: `codex/unichange-universat-jina-v5`.
+- Baseline full-run commit: `ab10cb3d3995778e2d1810ed06a15dc0f08620bf`.
+- Next-development branch: `codex/unichange-v2-stage1-next`.
+- Cluster account/partition/QoS: `research / research / researcher`.
+- Project root: `/mnt/weka/svardanyan/rs_change_project`.
+- Baseline code checkout: `/mnt/weka/svardanyan/rs_change_project/code/project`.
+- Python: `/mnt/weka/svardanyan/rs_change_project/envs/rschange/bin/python`.
+- Environment: `source "$HOME/rschange_env.sh"`.
+- UniverSat source/checkpoint: `$RS_PROJECT_ROOT/external/UniverSat`, `$RS_PROJECT_ROOT/models/universat-base`.
+- Jina checkpoint: `$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval`.
+
+Do not modify the checkout used by an active Slurm job. Use a separate worktree for the next branch. The first baseline run was submitted as training job `83161`, dependent evaluation job `83162`, with run directory:
+
+`/mnt/weka/svardanyan/rs_change_project/runs/unichange_v2_retrieval_1gpu_20260702-125746`
+
+Those IDs and the metrics below are historical context, not proof that the jobs eventually completed. Inspect `sacct`, JSON reports and artifacts before claiming completion.
+
+### Dataset audit
+
+- 10,077 image pairs: train 6,815, validation 1,333, test 1,929.
+- Five captions per pair; 50,385 caption rows.
+- 19,266 unique normalized captions; about 65.5% of rows are duplicates.
+- No missing files and no split overlap were found.
+- `changeflag`: 5,039 no-change / 5,038 change.
+- Binary masks: 4,978 empty / 5,099 changed.
+- 511 changeflag/mask disagreements were found. Captions and masks can also disagree; do not blindly filter the official benchmark.
+- Stage-1 uses T1, T2 and captions. Masks are diagnostics unless an experiment explicitly adds auxiliary supervision.
+
+### Baseline gates
+
+The baseline smoke and memory gates passed on an H100 80 GB at commit `ab10cb3...`:
+
+- smoke job `83140`: `COMPLETED 0:0`, 10 finite BF16 steps, correct frozen/trainable gradients and exact checkpoint roundtrip;
+- memory job `83141`: `COMPLETED 0:0`, physical batch 32 passed, about 55.7 GB allocated and 61.9 GB reserved.
+
+Any code change makes those reports stale. Run Stage-1-next smoke and memory probes at the exact new commit before submitting full training.
+
+### Preliminary baseline results at epoch 8
+
+| epoch | train loss | dup-aware R@1 | R@5 | R@10 | MRR | mean rank | exact-pair R@1 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 3.9135 | 0.4029 | 0.5209 | 0.5377 | 0.4668 | 125.35 | 0.0033 |
+| 2 | 3.6123 | 0.5047 | 0.5320 | 0.5592 | 0.5249 | 90.60 | 0.0042 |
+| 3 | 3.5011 | 0.4077 | 0.5431 | 0.5740 | 0.4812 | 84.98 | 0.0060 |
+| 4 | 3.4434 | 0.5091 | 0.5419 | 0.5668 | 0.5316 | 74.66 | 0.0071 |
+| 5 | 3.3848 | 0.5092 | 0.5479 | 0.5730 | 0.5347 | 70.78 | 0.0078 |
+| 6 | 3.3455 | 0.5158 | 0.5616 | 0.5977 | 0.5443 | 70.33 | 0.0108 |
+| 7 | 3.3277 | 0.5148 | 0.5547 | 0.5877 | 0.5413 | 68.99 | 0.0104 |
+| 8 | 3.2898 | 0.5163 | 0.5565 | 0.5905 | 0.5422 | 64.78 | 0.0111 |
+
+Interpret duplicate-aware metrics carefully. A generic normalized caption can make many pairs relevant. Exact-pair retrieval remains much harder.
+
+### Stage-1-next requirements
+
+The new path must preserve the baseline scripts and add a separate feature-gated experiment with:
+
+1. before/after direction embeddings;
+2. explicit change fusion using `F1`, `F2`, `F2-F1`, `abs(F2-F1)` and `F1*F2`;
+3. stable normalized caption groups during training and evaluation;
+4. set-mass multi-positive InfoNCE;
+5. text-to-pair weighted more strongly than pair-to-text;
+6. frequency-balanced sampling of at most two captions per pair during training, with all captions retained for validation;
+7. bounded trainable CLIP-style temperature;
+8. no weight decay for biases, normalization parameters, direction/global tokens and logit scale;
+9. logged pre-clip gradient norms and clipping frequency;
+10. several best-checkpoint criteria;
+11. exact, caption-frequency and mask-size-stratified metrics;
+12. a periodic fixed train-subset evaluation.
+
+Do not add encoder depth merely because aggregate R@1 plateaus. First diagnose directionality, objective mismatch, caption duplication, label noise and the train/validation gap.
+
+### Required validation
+
+```bash
+source "$HOME/rschange_env.sh"
+cd "$CODE_ROOT"
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" \
+  "$RSCHANGE_PYTHON" -m compileall -q src scripts tests
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" \
+  "$RSCHANGE_PYTHON" -m pytest -q
+bash -n cluster/ysu/*.sbatch
+```
+
+Then run exact-commit Stage-1-next smoke and memory probes. Require Slurm `COMPLETED 0:0`, valid reports, real H100/BF16, 10 finite steps, correct gradients, checkpoint roundtrip and a physical local batch of at least 32.
+
+Never claim training, evaluation or a cluster gate succeeded without user-provided Slurm state and report contents.
