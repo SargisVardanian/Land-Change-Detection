@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import hashlib
 import time
-from collections import defaultdict
 from dataclasses import dataclass
 
 import torch
@@ -25,6 +25,17 @@ class RetrievalCorpus:
     encode_seconds: float
     peak_allocated_vram_bytes: int
     peak_reserved_vram_bytes: int
+
+
+@dataclass(frozen=True)
+class RetrievalRankResult:
+    similarities: Tensor
+    ranked_candidate_indices: Tensor
+    duplicate_aware_ranks: Tensor
+    exact_pair_ranks: Tensor
+    positive_mask: Tensor
+    positive_counts: Tensor
+    candidate_tie_keys: Tensor
 
 
 def _synchronize(device: torch.device) -> None:
@@ -141,9 +152,154 @@ def _masked_rank_summary(ranks: Tensor, mask: Tensor, prefix: str) -> dict[str, 
     return _rank_summary(ranks[mask], prefix=prefix)
 
 
-def compute_retrieval_metrics(corpus: RetrievalCorpus) -> tuple[dict[str, float | int | bool], Tensor]:
+def _hash_strings(values: list[str]) -> str:
+    digest = hashlib.blake2b(digest_size=16)
+    for value in values:
+        encoded = str(value).encode("utf-8")
+        digest.update(len(encoded).to_bytes(8, "little"))
+        digest.update(encoded)
+    return digest.hexdigest()
+
+
+def _hash_tensor(tensor: Tensor) -> str:
+    digest = hashlib.blake2b(digest_size=16)
+    cpu = tensor.detach().cpu().contiguous()
+    digest.update(str(cpu.dtype).encode("utf-8"))
+    digest.update(str(tuple(cpu.shape)).encode("utf-8"))
+    digest.update(cpu.numpy().tobytes())
+    return digest.hexdigest()
+
+
+def _candidate_tie_keys(pair_ids: list[str], candidate_count: int) -> Tensor:
+    if len(pair_ids) != candidate_count:
+        return torch.arange(candidate_count, dtype=torch.long)
+    keys: list[int] = []
+    for pair_id in pair_ids:
+        payload = str(pair_id).encode("utf-8")
+        value = int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big")
+        keys.append(value & 0x7FFF_FFFF_FFFF_FFFF)
+    return torch.tensor(keys, dtype=torch.long)
+
+
+def _validate_corpus(corpus: RetrievalCorpus) -> None:
+    pair_count = int(corpus.pair_embeddings.shape[0])
+    query_count = int(corpus.text_embeddings.shape[0])
+    if corpus.pair_embeddings.ndim != 2 or corpus.text_embeddings.ndim != 2:
+        raise ValueError("pair_embeddings and text_embeddings must be rank-2 tensors")
+    if corpus.pair_embeddings.shape[1] != corpus.text_embeddings.shape[1]:
+        raise ValueError("pair/text embedding dimensions do not match")
+    if corpus.caption_to_pair.shape != (query_count,):
+        raise ValueError("caption_to_pair must have one entry per text query")
+    if corpus.caption_group_ids.shape != (query_count,):
+        raise ValueError("caption_group_ids must have one entry per text query")
+    if len(corpus.captions) != query_count:
+        raise ValueError("captions length must match text query count")
+    if len(corpus.pair_ids) != pair_count:
+        raise ValueError("pair_ids length must match candidate pair count")
+    if len(set(corpus.pair_ids)) != len(corpus.pair_ids):
+        raise ValueError("pair_ids must be unique for deterministic retrieval ranking")
+    if query_count:
+        mapping = corpus.caption_to_pair.long()
+        if int(mapping.min().item()) < 0 or int(mapping.max().item()) >= pair_count:
+            raise ValueError("caption_to_pair contains an out-of-range candidate index")
+
+
+def build_duplicate_aware_positive_mask(corpus: RetrievalCorpus) -> Tensor:
+    _validate_corpus(corpus)
+    query_count = int(corpus.text_embeddings.shape[0])
+    pair_count = int(corpus.pair_embeddings.shape[0])
+    mapping = corpus.caption_to_pair.long()
+    groups = corpus.caption_group_ids.long()
+    columns = torch.arange(query_count, dtype=torch.long)
+    caption_pair_matrix = torch.zeros(query_count, pair_count, dtype=torch.bool)
+    caption_pair_matrix[columns, mapping] = True
+    same_group = groups[:, None] == groups[None, :]
+    positives = (same_group.float() @ caption_pair_matrix.float()).to(torch.bool)
+    if not positives[columns, mapping].all():
+        raise RuntimeError("Positive mask lost an original caption-to-pair association")
+    return positives
+
+
+def similarity_matrix(
+    corpus: RetrievalCorpus,
+    *,
+    query_chunk_size: int | None = None,
+    candidate_chunk_size: int | None = None,
+) -> Tensor:
+    _validate_corpus(corpus)
+    query_count = int(corpus.text_embeddings.shape[0])
+    candidate_count = int(corpus.pair_embeddings.shape[0])
+    if query_chunk_size is None or query_chunk_size <= 0:
+        query_chunk_size = max(query_count, 1)
+    if candidate_chunk_size is None or candidate_chunk_size <= 0:
+        candidate_chunk_size = max(candidate_count, 1)
+    output = torch.empty(query_count, candidate_count, dtype=torch.float32)
+    text = corpus.text_embeddings.float()
+    pairs = corpus.pair_embeddings.float()
+    for query_start in range(0, query_count, query_chunk_size):
+        query_end = min(query_start + query_chunk_size, query_count)
+        for candidate_start in range(0, candidate_count, candidate_chunk_size):
+            candidate_end = min(candidate_start + candidate_chunk_size, candidate_count)
+            output[query_start:query_end, candidate_start:candidate_end] = (
+                text[query_start:query_end] @ pairs[candidate_start:candidate_end].T
+            )
+    return output
+
+
+def stable_ranked_candidate_indices(similarities: Tensor, candidate_tie_keys: Tensor) -> Tensor:
+    if similarities.ndim != 2:
+        raise ValueError("similarities must be a rank-2 matrix")
+    if candidate_tie_keys.shape != (similarities.shape[1],):
+        raise ValueError("candidate_tie_keys must have one key per candidate")
+    key_order = torch.argsort(candidate_tie_keys.cpu(), stable=True)
+    ranked_rows: list[Tensor] = []
+    scores_cpu = similarities.detach().cpu()
+    for row in scores_cpu:
+        score_order = torch.argsort(row[key_order], descending=True, stable=True)
+        ranked_rows.append(key_order[score_order])
+    return torch.stack(ranked_rows, dim=0)
+
+
+def compute_retrieval_ranks(
+    corpus: RetrievalCorpus,
+    *,
+    query_chunk_size: int | None = None,
+    candidate_chunk_size: int | None = None,
+) -> RetrievalRankResult:
+    similarities = similarity_matrix(
+        corpus,
+        query_chunk_size=query_chunk_size,
+        candidate_chunk_size=candidate_chunk_size,
+    )
+    positives = build_duplicate_aware_positive_mask(corpus)
+    positive_counts = positives.sum(dim=1).long()
+    if not torch.all(positive_counts > 0):
+        raise ValueError("Every retrieval query must have at least one positive candidate")
+    tie_keys = _candidate_tie_keys(corpus.pair_ids, similarities.shape[1])
+    ranked = stable_ranked_candidate_indices(similarities, tie_keys)
+    inverse_rank = torch.empty_like(ranked)
+    inverse_rank.scatter_(1, ranked, torch.arange(ranked.shape[1], dtype=torch.long).view(1, -1).expand_as(ranked))
+    duplicate_ranks = (inverse_rank.masked_fill(~positives, ranked.shape[1]).amin(dim=1) + 1).long()
+    exact_ranks = (inverse_rank[torch.arange(ranked.shape[0]), corpus.caption_to_pair.long()] + 1).long()
+    return RetrievalRankResult(
+        similarities=similarities,
+        ranked_candidate_indices=ranked,
+        duplicate_aware_ranks=duplicate_ranks,
+        exact_pair_ranks=exact_ranks,
+        positive_mask=positives,
+        positive_counts=positive_counts,
+        candidate_tie_keys=tie_keys,
+    )
+
+
+def compute_retrieval_metrics(
+    corpus: RetrievalCorpus,
+    *,
+    query_chunk_size: int | None = None,
+    candidate_chunk_size: int | None = None,
+) -> tuple[dict[str, float | int | bool | str], Tensor]:
     if corpus.pair_embeddings.numel() == 0:
-        empty_metrics: dict[str, float | int | bool] = {
+        empty_metrics: dict[str, float | int | bool | str] = {
             "text_to_pair_R@1": 0.0,
             "text_to_pair_R@5": 0.0,
             "text_to_pair_R@10": 0.0,
@@ -158,6 +314,11 @@ def compute_retrieval_metrics(corpus: RetrievalCorpus) -> tuple[dict[str, float 
             "exact_pair_mean_rank": 0.0,
             "pair_count": 0,
             "caption_count": 0,
+            "num_queries": 0,
+            "num_candidates": 0,
+            "positive_count_min": 0,
+            "positive_count_mean": 0.0,
+            "positive_count_max": 0,
             "embedding_dim": 0,
             "encode_seconds": corpus.encode_seconds,
             "pairs_per_second": 0.0,
@@ -172,35 +333,21 @@ def compute_retrieval_metrics(corpus: RetrievalCorpus) -> tuple[dict[str, float 
         return empty_metrics, torch.empty(0, 0)
 
     search_started = time.perf_counter()
-    similarities = corpus.text_embeddings @ corpus.pair_embeddings.T
-    group_to_pairs: dict[int, set[int]] = defaultdict(set)
-    for group_id, pair_id in zip(
-        corpus.caption_group_ids.tolist(), corpus.caption_to_pair.tolist(), strict=True
-    ):
-        group_to_pairs[int(group_id)].add(int(pair_id))
-
-    relevance_ranks: list[int] = []
-    exact_ranks: list[int] = []
-    group_pair_counts: list[int] = []
-    for caption_index, exact_pair in enumerate(corpus.caption_to_pair.tolist()):
-        order = torch.argsort(similarities[caption_index], descending=True)
-        inverse_rank = torch.empty_like(order)
-        inverse_rank[order] = torch.arange(order.numel())
-        group_id = int(corpus.caption_group_ids[caption_index].item())
-        relevant_pairs = sorted(group_to_pairs[group_id])
-        best_relevant_rank = min(int(inverse_rank[pair_id].item()) + 1 for pair_id in relevant_pairs)
-        relevance_ranks.append(best_relevant_rank)
-        exact_ranks.append(int(inverse_rank[int(exact_pair)].item()) + 1)
-        group_pair_counts.append(len(relevant_pairs))
+    rank_result = compute_retrieval_ranks(
+        corpus,
+        query_chunk_size=query_chunk_size,
+        candidate_chunk_size=candidate_chunk_size,
+    )
     search_seconds = time.perf_counter() - search_started
 
-    ranks = torch.tensor(relevance_ranks, dtype=torch.float32)
-    exact = torch.tensor(exact_ranks, dtype=torch.float32)
-    frequencies = torch.tensor(group_pair_counts, dtype=torch.long)
+    similarities = rank_result.similarities
+    ranks = rank_result.duplicate_aware_ranks.float()
+    exact = rank_result.exact_pair_ranks.float()
+    frequencies = rank_result.positive_counts
     pair_count = int(corpus.pair_embeddings.shape[0])
     caption_count = int(corpus.text_embeddings.shape[0])
 
-    metrics: dict[str, float | int | bool] = {
+    metrics: dict[str, float | int | bool | str] = {
         "text_to_pair_R@1": float((ranks <= 1).float().mean().item()),
         "text_to_pair_R@5": float((ranks <= 5).float().mean().item()),
         "text_to_pair_R@10": float((ranks <= 10).float().mean().item()),
@@ -215,6 +362,11 @@ def compute_retrieval_metrics(corpus: RetrievalCorpus) -> tuple[dict[str, float 
         "exact_pair_mean_rank": float(exact.mean().item()),
         "pair_count": pair_count,
         "caption_count": caption_count,
+        "num_queries": caption_count,
+        "num_candidates": pair_count,
+        "positive_count_min": int(frequencies.min().item()),
+        "positive_count_mean": float(frequencies.float().mean().item()),
+        "positive_count_max": int(frequencies.max().item()),
         "embedding_dim": int(corpus.pair_embeddings.shape[1]),
         "encode_seconds": float(corpus.encode_seconds),
         "pairs_per_second": float(pair_count / max(corpus.encode_seconds, 1e-12)),
@@ -225,6 +377,15 @@ def compute_retrieval_metrics(corpus: RetrievalCorpus) -> tuple[dict[str, float 
         "peak_allocated_vram_bytes": corpus.peak_allocated_vram_bytes,
         "peak_reserved_vram_bytes": corpus.peak_reserved_vram_bytes,
         "duplicate_aware": True,
+        "pair_order_fingerprint": _hash_strings(corpus.pair_ids),
+        "query_order_fingerprint": _hash_strings(
+            [f"{int(pair)}\t{int(group)}\t{caption}" for pair, group, caption in zip(corpus.caption_to_pair.tolist(), corpus.caption_group_ids.tolist(), corpus.captions, strict=True)]
+        ),
+        "caption_to_pair_fingerprint": _hash_tensor(corpus.caption_to_pair.long()),
+        "caption_group_fingerprint": _hash_tensor(corpus.caption_group_ids.long()),
+        "rank_fingerprint": _hash_tensor(rank_result.duplicate_aware_ranks.long()),
+        "exact_rank_fingerprint": _hash_tensor(rank_result.exact_pair_ranks.long()),
+        "positive_mask_fingerprint": _hash_tensor(rank_result.positive_mask.to(torch.uint8)),
     }
 
     metrics.update(_masked_rank_summary(ranks, frequencies == 1, "unique_caption_"))

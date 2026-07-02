@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections import defaultdict
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,7 +18,7 @@ from land_change_detection.data.unichange_mci import UniChangeMciDataset
 from land_change_detection.models.retrieval_heads import normalize_caption_text
 from land_change_detection.visualization import mask_rgba_overlay, rgb_absolute_difference
 from ucv2_cluster_common import build_model, strict_device
-from ucv2_retrieval_metrics import collect_retrieval_corpus, compute_retrieval_metrics
+from ucv2_retrieval_metrics import collect_retrieval_corpus, compute_retrieval_metrics, compute_retrieval_ranks
 
 
 def parse_args() -> argparse.Namespace:
@@ -130,16 +129,10 @@ def main() -> int:
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
     metrics, similarities = compute_retrieval_metrics(corpus)
+    rank_result = compute_retrieval_ranks(corpus)
 
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
     sample_by_id = {sample.sample_id: sample for sample in dataset.samples}
-    group_to_pairs: dict[int, set[int]] = defaultdict(set)
-    for group_id, mapped_pair in zip(
-        corpus.caption_group_ids.tolist(),
-        corpus.caption_to_pair.tolist(),
-        strict=True,
-    ):
-        group_to_pairs[int(group_id)].add(int(mapped_pair))
 
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     query_items = [
@@ -170,13 +163,11 @@ def main() -> int:
         if not caption_candidates:
             raise RuntimeError(f"Missing query caption for {query_pair_id}")
         caption_index = caption_candidates[0]
-        relevant = group_to_pairs[int(corpus.caption_group_ids[caption_index].item())]
+        relevant_mask = rank_result.positive_mask[caption_index]
         scores = similarities[caption_index]
-        order = torch.argsort(scores, descending=True)
-        inverse_rank = torch.empty_like(order)
-        inverse_rank[order] = torch.arange(order.numel())
-        relevant_rank = min(int(inverse_rank[index].item()) + 1 for index in relevant)
-        exact_rank = int(inverse_rank[query_pair_index].item()) + 1
+        order = rank_result.ranked_candidate_indices[caption_index]
+        relevant_rank = int(rank_result.duplicate_aware_ranks[caption_index].item())
+        exact_rank = int(rank_result.exact_pair_ranks[caption_index].item())
         relevance_ranks.append(relevant_rank)
         exact_ranks.append(exact_rank)
         top_indices = order[: min(args.top_k, order.numel())].tolist()
@@ -193,7 +184,7 @@ def main() -> int:
         for row, retrieved_index in enumerate(top_indices, start=1):
             retrieved_id = corpus.pair_ids[int(retrieved_index)]
             score = float(scores[int(retrieved_index)].item())
-            is_relevant = int(retrieved_index) in relevant
+            is_relevant = bool(relevant_mask[int(retrieved_index)].item())
             label = f"#{row} {retrieved_id} {'RELEVANT' if is_relevant else 'OTHER'}"
             render_pair(axes[row], sample_by_id[retrieved_id], label, score)
             retrieved.append(

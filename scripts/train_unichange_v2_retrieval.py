@@ -21,7 +21,7 @@ from land_change_detection.backbones.sequence_universat import SequenceUniverSat
 from land_change_detection.backbones.universat_backend import UniverSatBackendConfig, UniverSatJointBackend
 from land_change_detection.data.unichange_mci import UniChangeMciDataset, UniChangeMciItem
 from land_change_detection.data.unichange_subset import resolve_levir_mci_root
-from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, multi_positive_symmetric_info_nce
+from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, multi_positive_symmetric_info_nce, stable_caption_group_ids
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder, TemporalChangeEncoderConfig
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
 
@@ -370,9 +370,13 @@ def _retrieval_metrics(model: UniChangeV2RetrievalModel, loader: DataLoader, dev
     pair_embeddings: list[Tensor] = []
     text_embeddings: list[Tensor] = []
     caption_to_pair_all: list[Tensor] = []
+    pair_ids: list[str] = []
+    captions: list[str] = []
     pair_offset = 0
     with torch.no_grad():
         for batch in loader:
+            pair_ids.extend(str(pair_id) for pair_id in batch.get("pair_ids", []))
+            captions.extend(str(caption) for caption in batch["captions"])
             batch = _move_batch(batch, device)
             with _amp_context(device, config.use_bf16):
                 output = model(batch["images"], batch["captions"], batch["caption_to_pair"], batch["temporal_valid_mask"])
@@ -385,20 +389,25 @@ def _retrieval_metrics(model: UniChangeV2RetrievalModel, loader: DataLoader, dev
     pairs = torch.cat(pair_embeddings)
     texts = torch.cat(text_embeddings)
     caption_to_pair = torch.cat(caption_to_pair_all)
-    sims = texts @ pairs.T
-    ranks = []
-    for caption_index, pair_index in enumerate(caption_to_pair.tolist()):
-        order = torch.argsort(sims[caption_index], descending=True)
-        rank = int((order == pair_index).nonzero(as_tuple=False)[0].item()) + 1
-        ranks.append(rank)
-    rank_tensor = torch.tensor(ranks, dtype=torch.float32)
-    return {
-        "text_to_pair_R@1": float((rank_tensor <= 1).float().mean().item()),
-        "text_to_pair_R@5": float((rank_tensor <= 5).float().mean().item()),
-        "text_to_pair_R@10": float((rank_tensor <= 10).float().mean().item()),
-        "MRR": float((1.0 / rank_tensor).mean().item()),
-        "median_rank": float(rank_tensor.median().item()),
-    }
+    if len(pair_ids) != pairs.shape[0]:
+        pair_ids = [str(index) for index in range(pairs.shape[0])]
+    from ucv2_retrieval_metrics import RetrievalCorpus, compute_retrieval_metrics
+
+    metrics, _ = compute_retrieval_metrics(
+        RetrievalCorpus(
+            pair_embeddings=pairs,
+            text_embeddings=texts,
+            caption_to_pair=caption_to_pair,
+            caption_group_ids=stable_caption_group_ids(captions),
+            pair_ids=pair_ids,
+            captions=captions,
+            pair_mask_fractions=torch.full((pairs.shape[0],), float("nan")),
+            encode_seconds=0.0,
+            peak_allocated_vram_bytes=0,
+            peak_reserved_vram_bytes=0,
+        )
+    )
+    return metrics
 
 
 def _rng_state() -> dict[str, Any]:
