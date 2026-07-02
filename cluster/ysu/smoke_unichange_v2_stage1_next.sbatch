@@ -17,6 +17,7 @@ cd "$CODE_ROOT"
 
 MCI_DATA="${MCI_ROOT:-$RS_PROJECT_ROOT/datasets/processed/LEVIR-MCI}"
 RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/unichange_v2_stage1_next_smoke_${SLURM_JOB_ID}}"
+TEMPORAL_DEPTH="${TEMPORAL_DEPTH:-6}"
 mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
 rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
@@ -26,4 +27,5 @@ PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \
   "$MCI_DATA" "$RUN_DIR" \
   "$RS_PROJECT_ROOT/external/UniverSat" \
   "$RS_PROJECT_ROOT/models/universat-base" \
-  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval"
+  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
+  "$TEMPORAL_DEPTH"

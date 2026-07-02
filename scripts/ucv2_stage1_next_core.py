@@ -74,6 +74,8 @@ class Stage1NextConfig:
     conflict_mask_threshold: float = 0.05
     mask_fraction_boundaries: tuple[float, float, float] = (0.0, 0.01, 0.05)
     negative_queue_size: int = 0
+    similarity_query_chunk_size: int = 0
+    similarity_candidate_chunk_size: int = 0
 
     train_eval_pairs: int = 1024
     train_eval_interval: int = 2

@@ -14,5 +14,6 @@ if __name__ == "__main__":
             Path(sys.argv[3]),
             Path(sys.argv[4]),
             Path(sys.argv[5]),
+            temporal_depth=int(sys.argv[6]) if len(sys.argv) > 6 else 6,
         )
     )

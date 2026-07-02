@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 from types import SimpleNamespace
 
 import torch
@@ -105,3 +109,74 @@ def test_checkpoint_save_roundtrip_records_selection_metadata(tmp_path):
     assert payload["selection_metric"] == "composite"
     assert payload["selection_value"] == 0.7
     model.load_state_dict(payload["model"])
+
+
+def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Path, Path]:
+    smoke = {
+        "real_cluster_smoke_passed": True,
+        "git_commit": "abc123",
+        "steps_completed": 10,
+        "finite_loss": True,
+        "device_type": "cuda",
+        "bf16_active": True,
+        "fake_backbones": False,
+        "train_val_disjoint": True,
+        "frozen_grad_violations": [],
+        "missing_gradients": [],
+        "checkpoint_roundtrip_passed": True,
+        "image_size": 256,
+        "output_grid": 32,
+        "stage1_next": True,
+        "loss": "multi_positive_set_info_nce",
+        "stable_caption_groups": True,
+        "use_direction_embeddings": True,
+        "use_explicit_change_fusion": True,
+        "trainable_temperature": True,
+        "temporal_depth": temporal_depth,
+        "text_adapter_enabled": True,
+        "gpu_name": "NVIDIA H100 80GB HBM3",
+    }
+    memory = {
+        "status": "PASS",
+        "git_commit": "abc123",
+        "stage1_next": True,
+        "loss": "multi_positive_set_info_nce",
+        "stable_caption_groups": True,
+        "use_direction_embeddings": True,
+        "use_explicit_change_fusion": True,
+        "trainable_temperature": True,
+        "temporal_depth": temporal_depth,
+        "text_adapter_enabled": True,
+        "recommended_batch_size": 32,
+    }
+    smoke_path = tmp_path / "smoke.json"
+    memory_path = tmp_path / "memory.json"
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    memory_path.write_text(json.dumps(memory), encoding="utf-8")
+    return smoke_path, memory_path
+
+
+def test_stage1_next_readiness_gate_requires_depth6_reports(tmp_path):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=6)
+    result = subprocess.run(
+        [sys.executable, "scripts/ucv2_stage1_next_readiness_gate.py", str(smoke_path), str(memory_path), "abc123", "1", "32", "6"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "32"
+
+
+def test_stage1_next_readiness_gate_rejects_depth4_reports_for_depth6_training(tmp_path):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=4)
+    result = subprocess.run(
+        [sys.executable, "scripts/ucv2_stage1_next_readiness_gate.py", str(smoke_path), str(memory_path), "abc123", "1", "32", "6"],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "temporal_depth" in result.stderr

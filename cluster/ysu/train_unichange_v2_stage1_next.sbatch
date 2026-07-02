@@ -20,9 +20,10 @@ RUN_DIR="${RUN_DIR:-$RS_PROJECT_ROOT/runs/unichange_v2_stage1_next_train}"
 SMOKE_REPORT="${SMOKE_REPORT:?Set SMOKE_REPORT to the successful Stage-1-next smoke report}"
 MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful Stage-1-next memory report}"
 CURRENT_COMMIT="$(git rev-parse HEAD)"
+TEMPORAL_DEPTH="${TEMPORAL_DEPTH:-6}"
 
 BATCH_SIZE="$($PYTHON "$CODE_ROOT/scripts/ucv2_stage1_next_readiness_gate.py" \
-  "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32)"
+  "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32 "$TEMPORAL_DEPTH")"
 BATCH_SIZE="${BATCH_SIZE_OVERRIDE:-$BATCH_SIZE}"
 if (( BATCH_SIZE < 32 )); then
   echo "One-H100 Stage-1-next training requires actual batch size at least 32" >&2
@@ -39,7 +40,7 @@ ARGS=(
   "$BATCH_SIZE"
   "${EPOCHS:-25}"
   "${NUM_WORKERS:-8}"
-  --temporal-depth "${TEMPORAL_DEPTH:-4}"
+  --temporal-depth "$TEMPORAL_DEPTH"
   --max-captions-per-pair "${MAX_CAPTIONS_PER_PAIR:-2}"
   --caption-frequency-power "${CAPTION_FREQUENCY_POWER:-0.5}"
   --train-eval-pairs "${TRAIN_EVAL_PAIRS:-1024}"

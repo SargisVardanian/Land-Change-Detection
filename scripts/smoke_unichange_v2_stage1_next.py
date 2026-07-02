@@ -9,12 +9,14 @@ from ucv2_stage1_next_smoke_core import run
 
 if __name__ == "__main__":
     output_dir = Path(sys.argv[2])
+    temporal_depth = int(sys.argv[6]) if len(sys.argv) > 6 else 6
     result = run(
         Path(sys.argv[1]),
         output_dir,
         Path(sys.argv[3]),
         Path(sys.argv[4]),
         Path(sys.argv[5]),
+        temporal_depth=temporal_depth,
     )
     report = finalize(output_dir, "cuda")
     required = (
@@ -25,6 +27,8 @@ if __name__ == "__main__":
         and report.get("use_direction_embeddings") is True
         and report.get("use_explicit_change_fusion") is True
         and report.get("trainable_temperature") is True
+        and report.get("temporal_depth") == temporal_depth
+        and report.get("text_adapter_enabled") is True
     )
     if not required:
         raise SystemExit("Stage-1-next smoke report did not pass all feature gates")

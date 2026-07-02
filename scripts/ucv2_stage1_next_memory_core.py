@@ -27,6 +27,7 @@ def run(
     universat_source: Path,
     universat_checkpoint: Path,
     jina_model: Path,
+    temporal_depth: int = 6,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -42,6 +43,7 @@ def run(
         max_steps=2,
         epochs=1,
         num_workers=0,
+        temporal_depth=temporal_depth,
         train_eval_pairs=0,
         train_eval_interval=0,
         checkpoint_interval_steps=0,
@@ -52,7 +54,7 @@ def run(
     optimizer = make_optimizer(model, config)
     rows = []
 
-    for batch_size in (2, 4, 8, 16, 32):
+    for batch_size in (8, 16, 24, 32):
         batch_config = replace(config, batch_size=batch_size)
         loader = make_train_loader(train, batch_config, frequencies, epoch=0)
         torch.cuda.empty_cache()
@@ -122,6 +124,8 @@ def run(
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
+        "temporal_depth": config.temporal_depth,
+        "text_adapter_enabled": config.use_text_adapter,
         "gpu_name": torch.cuda.get_device_name(device),
         "results": rows,
         "recommended_batch_size": max(passed) if passed else None,

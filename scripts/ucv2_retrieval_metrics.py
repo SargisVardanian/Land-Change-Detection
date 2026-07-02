@@ -152,6 +152,25 @@ def _masked_rank_summary(ranks: Tensor, mask: Tensor, prefix: str) -> dict[str, 
     return _rank_summary(ranks[mask], prefix=prefix)
 
 
+def _margin_summary(values: Tensor, prefix: str) -> dict[str, float | int]:
+    if values.numel() == 0:
+        return {
+            f"{prefix}count": 0,
+            f"{prefix}min": 0.0,
+            f"{prefix}mean": 0.0,
+            f"{prefix}p50": 0.0,
+            f"{prefix}p10": 0.0,
+        }
+    values = values.float()
+    return {
+        f"{prefix}count": int(values.numel()),
+        f"{prefix}min": float(values.min().item()),
+        f"{prefix}mean": float(values.mean().item()),
+        f"{prefix}p50": float(torch.quantile(values, 0.5).item()),
+        f"{prefix}p10": float(torch.quantile(values, 0.1).item()),
+    }
+
+
 def _hash_strings(values: list[str]) -> str:
     digest = hashlib.blake2b(digest_size=16)
     for value in values:
@@ -344,6 +363,29 @@ def compute_retrieval_metrics(
     ranks = rank_result.duplicate_aware_ranks.float()
     exact = rank_result.exact_pair_ranks.float()
     frequencies = rank_result.positive_counts
+    ranked_scores = similarities.gather(1, rank_result.ranked_candidate_indices)
+    if ranked_scores.shape[1] > 1:
+        top1_top2_margin = ranked_scores[:, 0] - ranked_scores[:, 1]
+    else:
+        top1_top2_margin = torch.zeros(ranked_scores.shape[0], dtype=torch.float32)
+    positive_scores = similarities.masked_fill(~rank_result.positive_mask, float("-inf"))
+    negative_scores = similarities.masked_fill(rank_result.positive_mask, float("-inf"))
+    best_positive_scores = positive_scores.max(dim=1).values
+    best_negative_scores = negative_scores.max(dim=1).values
+    best_positive_minus_best_negative = best_positive_scores - best_negative_scores
+    best_positive_minus_best_negative = torch.where(
+        torch.isfinite(best_positive_minus_best_negative),
+        best_positive_minus_best_negative,
+        torch.zeros_like(best_positive_minus_best_negative),
+    )
+    optimistic_ranks = (similarities > best_positive_scores[:, None]).sum(dim=1).long() + 1
+    pessimistic_ranks = (similarities >= best_positive_scores[:, None]).sum(dim=1).long()
+    exact_scores = similarities[torch.arange(similarities.shape[0]), corpus.caption_to_pair.long()]
+    exact_tie_count = int(((similarities == exact_scores[:, None]).sum(dim=1) > 1).sum().item())
+    near_tie_counts = {
+        eps: int((top1_top2_margin <= eps).sum().item())
+        for eps in (1e-6, 1e-5, 1e-4)
+    }
     pair_count = int(corpus.pair_embeddings.shape[0])
     caption_count = int(corpus.text_embeddings.shape[0])
 
@@ -367,6 +409,16 @@ def compute_retrieval_metrics(
         "positive_count_min": int(frequencies.min().item()),
         "positive_count_mean": float(frequencies.float().mean().item()),
         "positive_count_max": int(frequencies.max().item()),
+        "exact_tie_count": exact_tie_count,
+        "near_tie_count_eps_1e-6": near_tie_counts[1e-6],
+        "near_tie_count_eps_1e-5": near_tie_counts[1e-5],
+        "near_tie_count_eps_1e-4": near_tie_counts[1e-4],
+        "tie_aware_optimistic_R@1": float((optimistic_ranks <= 1).float().mean().item()),
+        "tie_aware_optimistic_R@5": float((optimistic_ranks <= 5).float().mean().item()),
+        "tie_aware_optimistic_R@10": float((optimistic_ranks <= 10).float().mean().item()),
+        "tie_aware_pessimistic_R@1": float((pessimistic_ranks <= 1).float().mean().item()),
+        "tie_aware_pessimistic_R@5": float((pessimistic_ranks <= 5).float().mean().item()),
+        "tie_aware_pessimistic_R@10": float((pessimistic_ranks <= 10).float().mean().item()),
         "embedding_dim": int(corpus.pair_embeddings.shape[1]),
         "encode_seconds": float(corpus.encode_seconds),
         "pairs_per_second": float(pair_count / max(corpus.encode_seconds, 1e-12)),
@@ -387,6 +439,8 @@ def compute_retrieval_metrics(
         "exact_rank_fingerprint": _hash_tensor(rank_result.exact_pair_ranks.long()),
         "positive_mask_fingerprint": _hash_tensor(rank_result.positive_mask.to(torch.uint8)),
     }
+    metrics.update(_margin_summary(top1_top2_margin, "top1_top2_margin_"))
+    metrics.update(_margin_summary(best_positive_minus_best_negative, "best_positive_minus_best_negative_"))
 
     metrics.update(_masked_rank_summary(ranks, frequencies == 1, "unique_caption_"))
     metrics.update(_masked_rank_summary(ranks, (frequencies >= 2) & (frequencies <= 5), "rare_caption_"))
@@ -426,5 +480,9 @@ def relevance_aware_retrieval_metrics(
     config: base.RetrievalConfig,
 ) -> dict[str, float | int | bool]:
     corpus = collect_retrieval_corpus(model, loader, device, config)
-    metrics, _ = compute_retrieval_metrics(corpus)
+    metrics, _ = compute_retrieval_metrics(
+        corpus,
+        query_chunk_size=int(getattr(config, "similarity_query_chunk_size", 0) or 0),
+        candidate_chunk_size=int(getattr(config, "similarity_candidate_chunk_size", 0) or 0),
+    )
     return metrics

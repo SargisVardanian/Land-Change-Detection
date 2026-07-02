@@ -12,6 +12,7 @@ def main() -> int:
     current_commit = sys.argv[3]
     world_size = int(sys.argv[4])
     minimum_global_batch = int(sys.argv[5])
+    expected_temporal_depth = int(sys.argv[6]) if len(sys.argv) > 6 else 6
     if not smoke_path.exists() or not memory_path.exists():
         raise SystemExit("Missing Stage-1-next smoke or memory report")
     smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
@@ -36,6 +37,8 @@ def main() -> int:
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
+        "temporal_depth": expected_temporal_depth,
+        "text_adapter_enabled": True,
     }
     errors = [
         f"smoke {key}={smoke.get(key)!r}"
@@ -53,6 +56,8 @@ def main() -> int:
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
+        "temporal_depth": expected_temporal_depth,
+        "text_adapter_enabled": True,
     }
     errors.extend(
         f"memory {key}={memory.get(key)!r}"

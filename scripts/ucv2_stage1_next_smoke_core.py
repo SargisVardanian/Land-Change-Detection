@@ -31,6 +31,7 @@ def run(
     universat_source: Path,
     universat_checkpoint: Path,
     jina_model: Path,
+    temporal_depth: int = 6,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -46,6 +47,7 @@ def run(
         max_steps=10,
         epochs=2,
         num_workers=0,
+        temporal_depth=temporal_depth,
         train_eval_pairs=0,
         train_eval_interval=0,
         checkpoint_interval_steps=0,
@@ -150,6 +152,8 @@ def run(
         "use_direction_embeddings": config.use_direction_embeddings,
         "use_explicit_change_fusion": config.use_explicit_change_fusion,
         "trainable_temperature": config.trainable_temperature,
+        "temporal_depth": config.temporal_depth,
+        "text_adapter_enabled": config.use_text_adapter,
         "max_captions_per_pair": config.max_captions_per_pair,
         "fake_backbones": False,
         "samples": {"train": len(train), "validation": len(val)},

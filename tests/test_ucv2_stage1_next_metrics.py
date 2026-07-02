@@ -87,6 +87,10 @@ def test_extended_metrics_report_exact_frequency_and_mask_strata():
     assert metrics["changed_count"] == 1
     assert metrics["disappeared_empty"] is True
     assert metrics["text_to_pair_R@1"] <= metrics["text_to_pair_R@5"] <= metrics["text_to_pair_R@10"]
+    assert metrics["num_queries"] == 3
+    assert metrics["num_candidates"] == 3
+    assert metrics["positive_count_min"] >= 1
+    assert "rank_fingerprint" in metrics
 
 
 def test_repeated_retrieval_metrics_are_deterministic_and_do_not_mutate_inputs():
@@ -160,6 +164,17 @@ def test_tied_similarity_scores_use_stable_pair_id_tiebreaking():
     tied_order = ranks.ranked_candidate_indices[0, :2]
     expected = tied_candidates[torch.argsort(ranks.candidate_tie_keys[tied_candidates], stable=True)]
     assert torch.equal(tied_order, expected)
+
+
+def test_tie_and_margin_diagnostics_are_reported():
+    corpus = _tie_corpus()
+    metrics, _ = compute_retrieval_metrics(corpus)
+    assert metrics["exact_tie_count"] >= 2
+    assert metrics["near_tie_count_eps_1e-6"] >= 2
+    assert metrics["top1_top2_margin_count"] == 4
+    assert "top1_top2_margin_mean" in metrics
+    assert "best_positive_minus_best_negative_mean" in metrics
+    assert metrics["tie_aware_optimistic_R@1"] >= metrics["tie_aware_pessimistic_R@1"]
 
 
 def test_misaligned_retrieval_corpus_is_rejected():
