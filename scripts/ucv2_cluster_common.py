@@ -14,6 +14,14 @@ from land_change_detection.backbones.universat_frame_backend import UniverSatFra
 from land_change_detection.models.retrieval_heads import RetrievalProjectionHead
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder, TemporalChangeEncoderConfig
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
+from land_change_detection.training.rng_state import restore_rng_state
+
+
+# The shared training script restores checkpoints through its module-level
+# helper. Cluster entry points import this module before training, so replace
+# that helper with the implementation that converts map_location-moved RNG
+# tensors back to CPU ByteTensors before calling PyTorch RNG APIs.
+base._restore_rng_state = restore_rng_state
 
 
 def strict_device(name: str) -> torch.device:
