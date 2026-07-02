@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -99,8 +100,11 @@ def _json_ready(value: Any) -> Any:
         return str(value)
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().tolist()
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
     if hasattr(value, "item"):
-        return value.item()
+        item = value.item()
+        return item if not isinstance(item, float) or math.isfinite(item) else None
     return value
 
 
@@ -200,7 +204,10 @@ class _FakeTextEncoder(nn.Module):
 
     def forward(self, texts: list[str], role: str = "document") -> TextFeatures:
         device = self.embedding.weight.device
-        ids = torch.tensor([abs(hash(text)) % 8192 for text in texts], device=device)
+        ids = torch.tensor(
+            [int.from_bytes(hashlib.blake2b(text.encode("utf-8"), digest_size=8).digest(), "big") % 8192 for text in texts],
+            device=device,
+        )
         global_embedding = F.normalize(self.embedding(ids), dim=-1)
         return TextFeatures(
             global_embedding=global_embedding,
@@ -318,12 +325,15 @@ def _gradient_audit(model: UniChangeV2RetrievalModel) -> dict[str, Any]:
         nonzero = any(bool((grad.abs() > 0).any().item()) for grad in grads)
         return {"has_grad": True, "finite": bool(finite), "nonzero": bool(nonzero)}
 
-    return {
+    result = {
         "visual_backbone": stats(model.visual_encoder.image_encoder.parameters()),
         "text_encoder": stats(model.text_encoder.parameters()),
         "temporal_encoder": stats(model.temporal_encoder.parameters()),
         "retrieval_head": stats(model.retrieval_head.parameters()),
     }
+    if getattr(model, "text_adapter", None) is not None:
+        result["text_adapter"] = stats(model.text_adapter.parameters())
+    return result
 
 
 def _parameter_counts(model: UniChangeV2RetrievalModel) -> dict[str, int]:
@@ -340,9 +350,12 @@ def _audit_failures(gradient_audit: dict[str, Any] | None) -> tuple[list[str], l
         for name in ("visual_backbone", "text_encoder")
         if bool(gradient_audit.get(name, {}).get("has_grad", False))
     ]
+    trainable_names = ["temporal_encoder", "retrieval_head"]
+    if "text_adapter" in gradient_audit:
+        trainable_names.append("text_adapter")
     missing_gradients = [
         name
-        for name in ("temporal_encoder", "retrieval_head")
+        for name in trainable_names
         if not (
             bool(gradient_audit.get(name, {}).get("has_grad", False))
             and bool(gradient_audit.get(name, {}).get("finite", False))

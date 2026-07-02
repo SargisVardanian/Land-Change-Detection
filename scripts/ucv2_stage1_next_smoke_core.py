@@ -21,6 +21,7 @@ from ucv2_stage1_next_core import (
     make_optimizer,
     make_train_loader,
     save_checkpoint,
+    trainable_stage1_parameters,
 )
 
 
@@ -102,8 +103,7 @@ def run(
             break
         loss.backward()
         torch.nn.utils.clip_grad_norm_(
-            list(model.temporal_encoder.parameters())
-            + list(model.retrieval_head.parameters()),
+            trainable_stage1_parameters(model),
             config.grad_clip_norm,
         )
         if gradient_audit is None:

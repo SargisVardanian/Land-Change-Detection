@@ -9,7 +9,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 import train_unichange_v2_retrieval as base
-from land_change_detection.models.retrieval_heads import stable_caption_group_ids
+from land_change_detection.models.retrieval_heads import classify_caption_semantics, stable_caption_group_ids
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
 
 
@@ -115,6 +115,7 @@ def _rank_summary(ranks: Tensor, prefix: str = "") -> dict[str, float | int]:
     if ranks.numel() == 0:
         return {
             f"{prefix}count": 0,
+            f"{prefix}empty": True,
             f"{prefix}R@1": 0.0,
             f"{prefix}R@5": 0.0,
             f"{prefix}R@10": 0.0,
@@ -125,6 +126,7 @@ def _rank_summary(ranks: Tensor, prefix: str = "") -> dict[str, float | int]:
     ranks = ranks.float()
     return {
         f"{prefix}count": int(ranks.numel()),
+        f"{prefix}empty": False,
         f"{prefix}R@1": float((ranks <= 1).float().mean().item()),
         f"{prefix}R@5": float((ranks <= 5).float().mean().item()),
         f"{prefix}R@10": float((ranks <= 10).float().mean().item()),
@@ -232,14 +234,22 @@ def compute_retrieval_metrics(corpus: RetrievalCorpus) -> tuple[dict[str, float 
     metrics.update(_masked_rank_summary(exact, (frequencies >= 2) & (frequencies <= 5), "rare_caption_exact_"))
     metrics.update(_masked_rank_summary(exact, frequencies > 5, "frequent_caption_exact_"))
 
+    semantic = [classify_caption_semantics(caption) for caption in corpus.captions]
+    for key in ("no_change", "changed", "appeared", "disappeared"):
+        mask = torch.tensor([bool(item[key]) for item in semantic], dtype=torch.bool)
+        metrics.update(_masked_rank_summary(ranks, mask, f"{key}_"))
+        metrics.update(_masked_rank_summary(exact, mask, f"{key}_exact_"))
+
     if corpus.pair_mask_fractions.numel() == pair_count:
         query_mask_fraction = corpus.pair_mask_fractions[corpus.caption_to_pair]
         finite = torch.isfinite(query_mask_fraction)
+        boundaries = getattr(corpus, "mask_fraction_boundaries", None) or (0.0, 0.01, 0.05)
+        no_change_max, small_max, medium_max = [float(value) for value in boundaries]
         strata = {
-            "mask_no_change_": finite & (query_mask_fraction <= 0.0),
-            "mask_small_change_": finite & (query_mask_fraction > 0.0) & (query_mask_fraction <= 0.01),
-            "mask_medium_change_": finite & (query_mask_fraction > 0.01) & (query_mask_fraction <= 0.05),
-            "mask_large_change_": finite & (query_mask_fraction > 0.05),
+            "mask_no_change_": finite & (query_mask_fraction <= no_change_max),
+            "mask_small_change_": finite & (query_mask_fraction > no_change_max) & (query_mask_fraction <= small_max),
+            "mask_medium_change_": finite & (query_mask_fraction > small_max) & (query_mask_fraction <= medium_max),
+            "mask_large_change_": finite & (query_mask_fraction > medium_max),
         }
         for prefix, mask in strata.items():
             metrics.update(_masked_rank_summary(ranks, mask, prefix))

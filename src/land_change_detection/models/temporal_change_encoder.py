@@ -173,7 +173,13 @@ class TemporalChangeEncoder(nn.Module):
     def forward(self, features: Tensor, temporal_valid_mask: Tensor | None = None) -> TemporalChangeEncoderOutput:
         if features.ndim != 4:
             raise ValueError(f"features must have shape [B,T,N,D], got {tuple(features.shape)}")
-        batch_size, _, spatial_tokens, _ = features.shape
+        batch_size, time_steps, spatial_tokens, _ = features.shape
+        if temporal_valid_mask is not None and tuple(temporal_valid_mask.shape) != (batch_size, time_steps):
+            raise ValueError(
+                f"temporal_valid_mask must have shape {(batch_size, time_steps)}, got {tuple(temporal_valid_mask.shape)}"
+            )
+        if (self.config.use_direction_embeddings or self.config.use_explicit_change_fusion) and time_steps != 2:
+            raise ValueError("Direction-aware Stage-1 temporal encoding requires exactly two timestamps")
         if spatial_tokens != self.config.grid_size * self.config.grid_size:
             raise ValueError(f"Expected {self.config.grid_size * self.config.grid_size} spatial tokens, got {spatial_tokens}.")
         x = self.input_projection(features)

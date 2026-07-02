@@ -17,6 +17,7 @@ from ucv2_stage1_next_core import (
     caption_frequencies,
     make_optimizer,
     make_train_loader,
+    trainable_stage1_parameters,
 )
 
 
@@ -85,8 +86,7 @@ def run(
                     )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
-                    list(model.temporal_encoder.parameters())
-                    + list(model.retrieval_head.parameters()),
+                    trainable_stage1_parameters(model),
                     config.grad_clip_norm,
                 )
                 optimizer.step()

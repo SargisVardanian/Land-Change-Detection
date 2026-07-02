@@ -8,7 +8,7 @@ from torch import Tensor, nn
 
 from land_change_detection.backbones.jina_v5_text import TextFeatures
 from land_change_detection.backbones.sequence_universat import SequenceUniverSatEncoder
-from land_change_detection.models.retrieval_heads import RetrievalProjectionHead
+from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, TextEmbeddingAdapter
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder
 
 
@@ -34,12 +34,14 @@ class UniChangeV2RetrievalModel(nn.Module):
         temporal_encoder: TemporalChangeEncoder,
         text_encoder: nn.Module,
         retrieval_head: RetrievalProjectionHead,
+        text_adapter: TextEmbeddingAdapter | None = None,
     ):
         super().__init__()
         self.visual_encoder = visual_encoder
         self.temporal_encoder = temporal_encoder
         self.text_encoder = text_encoder
         self.retrieval_head = retrieval_head
+        self.text_adapter = text_adapter
         self.freeze_backbones()
 
     def freeze_backbones(self) -> None:
@@ -67,7 +69,10 @@ class UniChangeV2RetrievalModel(nn.Module):
             features = self.text_encoder(captions, role="query")
         if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
             raise TypeError("text_encoder must return an object with global_embedding")
-        return features.global_embedding.detach()
+        embeddings = features.global_embedding.detach()
+        if self.text_adapter is not None:
+            embeddings = self.text_adapter(embeddings)
+        return embeddings
 
     def forward(
         self,

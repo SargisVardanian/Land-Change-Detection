@@ -4,6 +4,7 @@ import hashlib
 import math
 import unicodedata
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -48,8 +49,13 @@ class RetrievalProjectionHead(nn.Module):
         if self.logit_scale is None:
             value = min(float(self.fixed_logit_scale), self.max_logit_scale)
             return self.pair_projection[1].weight.new_tensor(value)
+        # Smooth upper bound keeps gradients alive near the configured maximum.
         max_log_scale = math.log(self.max_logit_scale)
-        return self.logit_scale.clamp(max=max_log_scale).exp()
+        raw = self.logit_scale
+        beta = 10.0
+        lower_bounded = F.softplus(raw * beta) / beta
+        bounded = max_log_scale - F.softplus((max_log_scale - lower_bounded) * beta) / beta
+        return bounded.exp()
 
     def forward(self, pair_embedding: Tensor, text_embedding: Tensor | None = None) -> RetrievalHeadOutput:
         pair = F.normalize(self.pair_projection(pair_embedding), dim=-1)
@@ -60,10 +66,62 @@ class RetrievalProjectionHead(nn.Module):
         return RetrievalHeadOutput(pair_embedding=pair, text_embedding=text, logits=logits)
 
 
+class TextEmbeddingAdapter(nn.Module):
+    """Near-identity residual adapter for frozen text embeddings."""
+
+    def __init__(self, dim: int = 512, hidden_dim: int | None = None, dropout: float = 0.0):
+        super().__init__()
+        hidden = int(hidden_dim or dim)
+        self.norm = nn.LayerNorm(dim)
+        self.adapter = nn.Sequential(
+            nn.Linear(dim, hidden),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden, dim),
+        )
+        nn.init.zeros_(self.adapter[-1].weight)
+        nn.init.zeros_(self.adapter[-1].bias)
+
+    def forward(self, embeddings: Tensor) -> Tensor:
+        adapted = embeddings + self.adapter(self.norm(embeddings))
+        return F.normalize(adapted, dim=-1)
+
+
 def normalize_caption_text(text: str) -> str:
     normalized = unicodedata.normalize("NFKC", text).casefold()
     normalized = "".join(character if character.isalnum() else " " for character in normalized)
     return " ".join(normalized.split())
+
+
+def classify_caption_semantics(text: str) -> dict[str, bool]:
+    """Central lightweight caption semantics for audit strata and filtering."""
+
+    normalized = normalize_caption_text(text)
+    tokens = set(normalized.split())
+    no_change = (
+        "no change" in normalized
+        or "unchanged" in tokens
+        or "without change" in normalized
+        or "same" in tokens
+    )
+    appeared = any(term in tokens for term in ("appeared", "appears", "built", "new", "added", "emerged"))
+    disappeared = any(term in tokens for term in ("disappeared", "disappears", "removed", "lost", "demolished", "gone"))
+    changed = (
+        not no_change
+        and (
+            "change" in tokens
+            or "changed" in tokens
+            or appeared
+            or disappeared
+            or any(term in tokens for term in ("increased", "decreased", "expanded", "reduced"))
+        )
+    )
+    return {
+        "no_change": bool(no_change and not (appeared or disappeared)),
+        "changed": bool(changed or appeared or disappeared),
+        "appeared": bool(appeared),
+        "disappeared": bool(disappeared),
+    }
 
 
 def stable_caption_group_ids(captions: list[str], device: torch.device | str | None = None) -> Tensor:
@@ -102,11 +160,11 @@ def build_caption_positive_mask(
             f"caption_group_ids must have shape {tuple(mapping.shape)}, got {tuple(groups.shape)}"
         )
 
-    _, inverse = torch.unique(groups, sorted=False, return_inverse=True)
-    for group_index in range(int(inverse.max().item()) + 1):
-        group_columns = torch.nonzero(inverse == group_index, as_tuple=False).flatten()
-        relevant_pairs = torch.unique(mapping[group_columns])
-        positives[relevant_pairs[:, None], group_columns[None, :]] = True
+    same_group = groups[:, None] == groups[None, :]
+    caption_pair_matrix = torch.zeros(caption_count, pair_count, dtype=torch.bool, device=mapping.device)
+    caption_pair_matrix[columns, mapping] = True
+    group_relevant_pairs = same_group.float() @ caption_pair_matrix.float()
+    positives |= group_relevant_pairs.T.to(torch.bool)
     return positives
 
 
@@ -188,8 +246,9 @@ def _positive_set_mass_loss(logits: Tensor, positives: Tensor) -> Tensor:
     valid = positives.any(dim=1)
     if not torch.all(valid):
         raise ValueError("Every query must have at least one positive target")
-    positive_logits = logits.masked_fill(~positives, float("-inf"))
-    return (torch.logsumexp(logits, dim=1) - torch.logsumexp(positive_logits, dim=1)).mean()
+    logits32 = logits.float()
+    positive_logits = logits32.masked_fill(~positives, float("-inf"))
+    return (torch.logsumexp(logits32, dim=1) - torch.logsumexp(positive_logits, dim=1)).mean()
 
 
 def multi_positive_set_info_nce(
@@ -202,7 +261,8 @@ def multi_positive_set_info_nce(
     logit_scale: Tensor | float | None = None,
     text_to_pair_weight: float = 0.75,
     pair_to_text_weight: float = 0.25,
-) -> Tensor:
+    return_diagnostics: bool = False,
+) -> Tensor | tuple[Tensor, dict[str, Any]]:
     """Set-mass contrastive objective aligned with duplicate-aware retrieval.
 
     Unlike averaging ``-log p`` over every positive, this objective maximizes
@@ -230,10 +290,53 @@ def multi_positive_set_info_nce(
     )
     pair_to_text = _positive_set_mass_loss(logits, positives)
     text_to_pair = _positive_set_mass_loss(logits.T, positives.T)
-    return (
+    loss = (
         text_to_pair_weight * text_to_pair
         + pair_to_text_weight * pair_to_text
     ) / weight_sum
+    if not return_diagnostics:
+        return loss
+    return loss, {
+        "text_to_pair_loss": float(text_to_pair.detach().cpu()),
+        "pair_to_text_loss": float(pair_to_text.detach().cpu()),
+        "text_to_pair_weight": float(text_to_pair_weight / weight_sum),
+        "pair_to_text_weight": float(pair_to_text_weight / weight_sum),
+        "positive_pairs": int(positives.sum().detach().cpu()),
+        "min_text_positives": int(positives.T.sum(dim=1).min().detach().cpu()),
+        "min_pair_positives": int(positives.sum(dim=1).min().detach().cpu()),
+    }
+
+
+class FalseNegativeSafeEmbeddingQueue:
+    """Detached CPU queue for optional global negatives with caption-group guards."""
+
+    def __init__(self, max_size: int = 0, dim: int | None = None):
+        self.max_size = int(max_size)
+        self.dim = dim
+        self.embeddings = torch.empty(0, dim or 0, dtype=torch.float32)
+        self.group_ids = torch.empty(0, dtype=torch.long)
+
+    def reset(self) -> None:
+        self.embeddings = torch.empty(0, self.dim or 0, dtype=torch.float32)
+        self.group_ids = torch.empty(0, dtype=torch.long)
+
+    def enqueue(self, embeddings: Tensor, group_ids: Tensor) -> None:
+        if self.max_size <= 0 or embeddings.numel() == 0:
+            return
+        detached = F.normalize(embeddings.detach().float().cpu(), dim=-1)
+        groups = group_ids.detach().long().cpu()
+        if self.dim is None:
+            self.dim = int(detached.shape[-1])
+        if detached.shape[-1] != self.dim:
+            raise ValueError(f"Queue embedding dim mismatch: expected {self.dim}, got {detached.shape[-1]}")
+        self.embeddings = torch.cat([self.embeddings.to(detached), detached], dim=0)[-self.max_size :]
+        self.group_ids = torch.cat([self.group_ids, groups], dim=0)[-self.max_size :]
+
+    def safe_negative_mask(self, query_group_ids: Tensor) -> Tensor:
+        if self.group_ids.numel() == 0:
+            return torch.empty(query_group_ids.shape[0], 0, dtype=torch.bool, device=query_group_ids.device)
+        groups = self.group_ids.to(query_group_ids.device)
+        return query_group_ids.long().view(-1, 1) != groups.view(1, -1)
 
 
 def supervised_contrastive_loss(embeddings: Tensor, labels: Tensor, temperature: float = 0.07) -> Tensor:

@@ -11,7 +11,7 @@ from land_change_detection.backbones.jina_v5_text import JinaV5TextConfig, JinaV
 from land_change_detection.backbones.sequence_universat import SequenceUniverSatEncoder
 from land_change_detection.backbones.universat_backend import UniverSatBackendConfig, UniverSatJointBackend
 from land_change_detection.backbones.universat_frame_backend import UniverSatFrameBackend
-from land_change_detection.models.retrieval_heads import RetrievalProjectionHead
+from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, TextEmbeddingAdapter
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder, TemporalChangeEncoderConfig
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
 from land_change_detection.training.rng_state import restore_rng_state
@@ -73,7 +73,12 @@ def build_model(config, device):
         initial_temperature=float(getattr(config, "initial_temperature", 0.07)),
         max_logit_scale=float(getattr(config, "max_logit_scale", 100.0)),
     )
-    return UniChangeV2RetrievalModel(visual, temporal, text, retrieval_head).to(device)
+    text_adapter = (
+        TextEmbeddingAdapter(512, hidden_dim=int(getattr(config, "text_adapter_hidden_dim", 512)))
+        if bool(getattr(config, "use_text_adapter", False))
+        else None
+    )
+    return UniChangeV2RetrievalModel(visual, temporal, text, retrieval_head, text_adapter=text_adapter).to(device)
 
 
 def run_metadata() -> dict:

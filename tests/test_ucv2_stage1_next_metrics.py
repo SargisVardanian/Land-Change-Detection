@@ -20,9 +20,9 @@ def test_extended_metrics_report_exact_frequency_and_mask_strata():
         pair_embeddings=pair_embeddings,
         text_embeddings=text_embeddings,
         caption_to_pair=torch.tensor([0, 2, 1]),
-        caption_group_ids=stable_caption_group_ids(["same", "same", "other"]),
+        caption_group_ids=stable_caption_group_ids(["same", "same", "A new building appeared"]),
         pair_ids=["a", "b", "c"],
-        captions=["same", "same", "other"],
+        captions=["same", "same", "A new building appeared"],
         pair_mask_fractions=torch.tensor([0.0, 0.1, 0.005]),
         encode_seconds=1.0,
         peak_allocated_vram_bytes=0,
@@ -37,3 +37,7 @@ def test_extended_metrics_report_exact_frequency_and_mask_strata():
     assert metrics["mask_no_change_count"] == 1
     assert metrics["mask_small_change_count"] == 1
     assert metrics["mask_large_change_count"] == 1
+    assert metrics["appeared_count"] == 1
+    assert metrics["changed_count"] == 1
+    assert metrics["disappeared_empty"] is True
+    assert metrics["text_to_pair_R@1"] <= metrics["text_to_pair_R@5"] <= metrics["text_to_pair_R@10"]
