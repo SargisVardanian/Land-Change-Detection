@@ -23,23 +23,47 @@ MCI_DATA="${MCI_ROOT:-${RS_PROJECT_ROOT}/datasets/processed/LEVIR-MCI}"
 
 mkdir -p "${RS_PROJECT_ROOT}/logs" "${OUTPUT_DIR}"
 test -f "${CHECKPOINT}"
-test -f "${MANIFEST}"
+if [[ -z "${VAL_MANIFESTS:-}" && -z "${DATASET_CONFIG:-}" ]]; then
+  test -f "${MANIFEST}"
+fi
+
+ARGS=(
+  --data-root "${MCI_DATA}"
+  --checkpoint "${CHECKPOINT}"
+  --output-dir "${OUTPUT_DIR}"
+  --universat-source "${RS_PROJECT_ROOT}/external/UniverSat"
+  --universat-checkpoint "${RS_PROJECT_ROOT}/models/universat-base"
+  --jina-model "${RS_PROJECT_ROOT}/models/jina-v5-text-small-retrieval"
+  --split "${SPLIT:-val}"
+  --batch-size "${BATCH_SIZE:-16}"
+  --num-workers "${NUM_WORKERS:-4}"
+  --top-k "${TOP_K:-5}"
+  --max-queries "${MAX_QUERIES:-48}"
+  --device cuda
+)
+if [[ -n "${DATASET_CONFIG:-}" ]]; then
+  ARGS+=(--dataset-config "${DATASET_CONFIG}")
+elif [[ -n "${VAL_MANIFESTS:-}" ]]; then
+  IFS=':' read -r -a _val_manifests <<< "${VAL_MANIFESTS}"
+  for manifest_path in "${_val_manifests[@]}"; do
+    if [[ -n "${manifest_path}" ]]; then
+      ARGS+=(--val-manifest "${manifest_path}")
+    fi
+  done
+  if [[ -n "${DATASET_WEIGHTS:-}" ]]; then
+    IFS=':' read -r -a _dataset_weights <<< "${DATASET_WEIGHTS}"
+    for weight in "${_dataset_weights[@]}"; do
+      if [[ -n "${weight}" ]]; then
+        ARGS+=(--dataset-weight "${weight}")
+      fi
+    done
+  fi
+else
+  ARGS+=(--manifest "${MANIFEST}")
+fi
 
 PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" \
-  "${CODE_ROOT}/scripts/render_unichange_v2_retrieval.py" \
-  --data-root "${MCI_DATA}" \
-  --checkpoint "${CHECKPOINT}" \
-  --output-dir "${OUTPUT_DIR}" \
-  --manifest "${MANIFEST}" \
-  --universat-source "${RS_PROJECT_ROOT}/external/UniverSat" \
-  --universat-checkpoint "${RS_PROJECT_ROOT}/models/universat-base" \
-  --jina-model "${RS_PROJECT_ROOT}/models/jina-v5-text-small-retrieval" \
-  --split "${SPLIT:-val}" \
-  --batch-size "${BATCH_SIZE:-16}" \
-  --num-workers "${NUM_WORKERS:-4}" \
-  --top-k "${TOP_K:-5}" \
-  --max-queries "${MAX_QUERIES:-48}" \
-  --device cuda
+  "${CODE_ROOT}/scripts/render_unichange_v2_retrieval.py" "${ARGS[@]}"
 
 PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" \
   "${CODE_ROOT}/scripts/plot_unichange_v2_training.py" \

@@ -189,6 +189,10 @@ DATASET_WEIGHTS=levir_mci=0.55:second_cc=0.45
 
 or a `DATASET_CONFIG` JSON with `train_manifests`, `val_manifests`, and `dataset_sampling_weights`.
 
+Mixed evaluation accepts `VAL_MANIFESTS` plus `DATASET_WEIGHTS`, or the same `DATASET_CONFIG`. The evaluation report must include `data_mode`, validation manifest fingerprints, dataset names, validation row counts, combined metrics, and both cross-corpus and within-dataset per-dataset metrics. LEVIR-only evaluation remains the fallback only when no manifest configuration is supplied.
+
+The Stage-1-next readiness gate is data-aware: mixed training requires a mixed smoke report whose manifest fingerprints, dataset names, row counts and weights match the requested training manifests. The memory probe is only an architecture/batch shape validation and reports `memory_data_mode=shape_probe`; it is not evidence that SECOND-CC ingestion was validated.
+
 ## Cluster workflow
 
 Develop in a separate worktree. New code invalidates old smoke/memory reports. Run:

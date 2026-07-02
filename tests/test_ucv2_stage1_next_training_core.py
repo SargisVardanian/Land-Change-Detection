@@ -135,6 +135,8 @@ def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Pa
         "temporal_depth": temporal_depth,
         "text_adapter_enabled": True,
         "gpu_name": "NVIDIA H100 80GB HBM3",
+        "data_mode": "levir_only",
+        "mixed_smoke": False,
     }
     memory = {
         "status": "PASS",
@@ -148,6 +150,7 @@ def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Pa
         "temporal_depth": temporal_depth,
         "text_adapter_enabled": True,
         "recommended_batch_size": 32,
+        "memory_data_mode": "shape_probe",
     }
     smoke_path = tmp_path / "smoke.json"
     memory_path = tmp_path / "memory.json"
@@ -180,3 +183,101 @@ def test_stage1_next_readiness_gate_rejects_depth4_reports_for_depth6_training(t
     )
     assert result.returncode != 0
     assert "temporal_depth" in result.stderr
+
+
+def _manifest(path: Path, dataset: str, count: int) -> None:
+    rows = []
+    for index in range(count):
+        rows.append({"dataset_name": dataset, "pair_id": f"{dataset}:val:{index}", "captions": ["caption"], "split": "val"})
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def _mixed_reports(tmp_path: Path, *, temporal_depth: int = 6):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=temporal_depth)
+    levir = tmp_path / "levir.jsonl"
+    second = tmp_path / "second.jsonl"
+    _manifest(levir, "levir_mci", 2)
+    _manifest(second, "second_cc", 3)
+    import hashlib
+
+    def fp(path: Path) -> str:
+        digest = hashlib.blake2b(digest_size=16)
+        digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+    smoke.update(
+        {
+            "data_mode": "mixed",
+            "mixed_smoke": True,
+            "manifest_fingerprints": {"train": {str(levir): fp(levir), str(second): fp(second)}, "validation": {str(levir): fp(levir), str(second): fp(second)}},
+            "dataset_names": ["levir_mci", "second_cc"],
+            "dataset_weights": {"levir_mci": 0.55, "second_cc": 0.45},
+            "train_row_count": 5,
+            "validation_row_count": 5,
+        }
+    )
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    return smoke_path, memory_path, levir, second
+
+
+def _mixed_gate_args(smoke_path: Path, memory_path: Path, levir: Path, second: Path) -> list[str]:
+    return [
+        sys.executable,
+        "scripts/ucv2_stage1_next_readiness_gate.py",
+        str(smoke_path),
+        str(memory_path),
+        "abc123",
+        "1",
+        "32",
+        "6",
+        "--expected-data-mode",
+        "mixed",
+        "--expected-train-manifest",
+        str(levir),
+        "--expected-train-manifest",
+        str(second),
+        "--expected-val-manifest",
+        str(levir),
+        "--expected-val-manifest",
+        str(second),
+        "--expected-dataset-weight",
+        "levir_mci=0.55",
+        "--expected-dataset-weight",
+        "second_cc=0.45",
+    ]
+
+
+def test_mixed_training_rejects_levir_only_smoke(tmp_path):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=6)
+    levir = tmp_path / "levir.jsonl"
+    second = tmp_path / "second.jsonl"
+    _manifest(levir, "levir_mci", 1)
+    _manifest(second, "second_cc", 1)
+    result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "data_mode" in result.stderr
+
+
+def test_mixed_readiness_rejects_fingerprint_weight_and_row_count_mismatches(tmp_path):
+    smoke_path, memory_path, levir, second = _mixed_reports(tmp_path)
+    smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+    smoke["dataset_weights"] = {"levir_mci": 1.0, "second_cc": 0.0}
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "dataset_weights" in result.stderr
+
+    smoke_path, memory_path, levir, second = _mixed_reports(tmp_path)
+    levir.write_text(levir.read_text(encoding="utf-8") + json.dumps({"dataset_name": "levir_mci", "pair_id": "extra", "split": "val", "captions": ["x"]}) + "\n", encoding="utf-8")
+    result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "manifest_fingerprints" in result.stderr or "row_count" in result.stderr
+
+    smoke_path, memory_path, levir, second = _mixed_reports(tmp_path)
+    smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+    smoke["validation_row_count"] = 4
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "validation_row_count" in result.stderr

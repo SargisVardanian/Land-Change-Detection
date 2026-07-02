@@ -22,8 +22,35 @@ MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful Stage-1-next
 CURRENT_COMMIT="$(git rev-parse HEAD)"
 TEMPORAL_DEPTH="${TEMPORAL_DEPTH:-6}"
 
-BATCH_SIZE="$($PYTHON "$CODE_ROOT/scripts/ucv2_stage1_next_readiness_gate.py" \
-  "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32 "$TEMPORAL_DEPTH")"
+GATE_ARGS=(
+  "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32 "$TEMPORAL_DEPTH"
+)
+append_gate_colon_list() {
+  local flag="$1"
+  local values="$2"
+  local item
+  if [[ -z "$values" ]]; then
+    return 0
+  fi
+  IFS=':' read -r -a _gate_items <<< "$values"
+  for item in "${_gate_items[@]}"; do
+    if [[ -n "$item" ]]; then
+      GATE_ARGS+=("$flag" "$item")
+    fi
+  done
+}
+if [[ -n "${DATASET_CONFIG:-}" ]]; then
+  GATE_ARGS+=(--expected-data-mode mixed --expected-dataset-config "$DATASET_CONFIG")
+elif [[ -n "${TRAIN_MANIFESTS:-}" || -n "${VAL_MANIFESTS:-}" ]]; then
+  GATE_ARGS+=(--expected-data-mode mixed)
+  append_gate_colon_list --expected-train-manifest "${TRAIN_MANIFESTS:-}"
+  append_gate_colon_list --expected-val-manifest "${VAL_MANIFESTS:-}"
+  append_gate_colon_list --expected-dataset-weight "${DATASET_WEIGHTS:-levir_mci=0.55:second_cc=0.45}"
+else
+  GATE_ARGS+=(--expected-data-mode levir_only)
+fi
+
+BATCH_SIZE="$($PYTHON "$CODE_ROOT/scripts/ucv2_stage1_next_readiness_gate.py" "${GATE_ARGS[@]}")"
 BATCH_SIZE="${BATCH_SIZE_OVERRIDE:-$BATCH_SIZE}"
 if (( BATCH_SIZE < 32 )); then
   echo "One-H100 Stage-1-next training requires actual batch size at least 32" >&2

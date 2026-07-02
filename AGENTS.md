@@ -207,6 +207,15 @@ DATASET_WEIGHTS=levir_mci=0.55:second_cc=0.45
 
 Alternatively set `DATASET_CONFIG` to a JSON config containing `train_manifests`, `val_manifests`, and `dataset_sampling_weights`.
 
+Mixed evaluation uses the same validation manifest contract:
+
+```bash
+VAL_MANIFESTS=/path/levir.jsonl:/path/second_cc.jsonl
+DATASET_WEIGHTS=levir_mci=0.55:second_cc=0.45
+```
+
+`evaluate_unichange_v2_stage1_next.sbatch` keeps LEVIR-only compatibility when neither `VAL_MANIFESTS` nor `DATASET_CONFIG` is set. Mixed training readiness must use a mixed smoke report; LEVIR-only smoke is not acceptable for mixed manifest training.
+
 ### Required validation
 
 ```bash

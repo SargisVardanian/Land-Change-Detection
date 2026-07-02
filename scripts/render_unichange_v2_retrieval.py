@@ -16,6 +16,8 @@ from torch.utils.data import DataLoader
 import train_unichange_v2_retrieval as base
 from land_change_detection.data.unichange_mci import UniChangeMciDataset
 from land_change_detection.models.retrieval_heads import normalize_caption_text
+from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
+from land_change_detection.training.temporal_caption_dataset import TemporalCaptionManifestDataset, load_dataset_config, parse_dataset_weights
 from land_change_detection.visualization import mask_rgba_overlay, rgb_absolute_difference
 from ucv2_cluster_common import build_model, strict_device
 from ucv2_retrieval_metrics import collect_retrieval_corpus, compute_retrieval_metrics, compute_retrieval_ranks
@@ -26,7 +28,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
-    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, default=None)
+    parser.add_argument("--val-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--dataset-config", type=Path, default=None)
+    parser.add_argument("--dataset-weight", action="append", default=None)
     parser.add_argument("--universat-source", type=Path, required=True)
     parser.add_argument("--universat-checkpoint", type=Path, required=True)
     parser.add_argument("--jina-model", type=Path, required=True)
@@ -49,10 +54,16 @@ def load_mask(path: str | Path) -> np.ndarray:
         return np.asarray(image.convert("L"))
 
 
+def _sample_paths(sample) -> tuple[str, str, str | None]:
+    if isinstance(sample, dict):
+        return str(sample["t1_path"]), str(sample["t2_path"]), sample.get("mask_path")
+    return str(sample.image_before), str(sample.image_after), str(sample.binary_change_mask)
+
+
 def render_pair(axes, sample, heading: str, score: float | None = None) -> None:
-    t1 = load_rgb(sample.image_before)
-    t2 = load_rgb(sample.image_after)
-    mask = load_mask(sample.binary_change_mask)
+    t1_path, t2_path, mask_path = _sample_paths(sample)
+    t1 = load_rgb(t1_path)
+    t2 = load_rgb(t2_path)
     diff = rgb_absolute_difference(t1, t2)
     axes[0].imshow(t1)
     axes[0].set_title(f"{heading}: T1")
@@ -61,8 +72,11 @@ def render_pair(axes, sample, heading: str, score: float | None = None) -> None:
     axes[2].imshow(diff, cmap="magma")
     axes[2].set_title("RGB difference")
     axes[3].imshow(t2)
-    axes[3].imshow(mask_rgba_overlay(mask))
-    axes[3].set_title("GT mask")
+    if mask_path:
+        axes[3].imshow(mask_rgba_overlay(load_mask(mask_path)))
+        axes[3].set_title("GT mask")
+    else:
+        axes[3].set_title("No binary mask")
     for axis in axes:
         axis.axis("off")
 
@@ -83,6 +97,9 @@ def _checkpoint_config(args: argparse.Namespace, checkpoint: dict) -> SimpleName
             "num_workers": args.num_workers,
             "use_bf16": True,
             "device": args.device,
+            "val_manifests": tuple(str(path) for path in args.val_manifest),
+            "dataset_config": str(args.dataset_config) if args.dataset_config else None,
+            "dataset_sampling_weights": tuple(args.dataset_weight or saved.get("dataset_sampling_weights", ())),
         }
     )
     saved.setdefault("image_size", 256)
@@ -98,19 +115,92 @@ def _checkpoint_config(args: argparse.Namespace, checkpoint: dict) -> SimpleName
     return SimpleNamespace(**saved)
 
 
+def _eval_manifests(args: argparse.Namespace) -> tuple[list[str], dict[str, float]]:
+    _, config_val, config_weights = load_dataset_config(args.dataset_config)
+    manifests = [str(path) for path in (config_val or [str(path) for path in args.val_manifest])]
+    weights = config_weights or parse_dataset_weights(args.dataset_weight)
+    return manifests, weights
+
+
+def _build_eval_dataset(args: argparse.Namespace, config: SimpleNamespace):
+    val_manifests, _ = _eval_manifests(args)
+    if val_manifests:
+        dataset = TemporalCaptionManifestDataset(
+            val_manifests,
+            split=args.split,
+            image_size=int(config.image_size),
+            output_grid=int(config.output_grid),
+        )
+        return dataset, "mixed"
+    dataset = UniChangeMciDataset(
+        args.data_root,
+        split=args.split,
+        image_size=int(config.image_size),
+        output_grid=int(config.output_grid),
+    )
+    return dataset, "levir_only"
+
+
+def _eval_metadata(args: argparse.Namespace, dataset, data_mode: str) -> dict[str, object]:
+    val_manifests, weights = _eval_manifests(args)
+    if val_manifests:
+        dataset_names = sorted(getattr(dataset, "indices_by_dataset", {}).keys())
+        row_counts = {str(name): len(indices) for name, indices in sorted(dataset.indices_by_dataset.items())}
+    else:
+        dataset_names = ["levir_mci"]
+        row_counts = {"levir_mci": len(dataset)}
+        weights = {}
+    return {
+        "data_mode": data_mode,
+        "manifest_fingerprints": {"validation": {path: manifest_file_fingerprint(path) for path in val_manifests}},
+        "dataset_names": dataset_names,
+        "dataset_weights": weights if data_mode == "mixed" else {},
+        "validation_row_counts": row_counts,
+        "validation_row_count": len(dataset),
+    }
+
+
+def _sample_map(dataset) -> dict[str, object]:
+    samples = getattr(dataset, "samples", [])
+    mapping: dict[str, object] = {}
+    for sample in samples:
+        if isinstance(sample, dict):
+            mapping[str(sample["pair_id"])] = sample
+        else:
+            mapping[str(sample.sample_id)] = sample
+    return mapping
+
+
+def _query_items(args: argparse.Namespace, dataset, pair_index: dict[str, int]) -> list[dict[str, object]]:
+    if args.manifest is not None:
+        manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+        return [
+            item
+            for item in manifest.get("items", [])
+            if item.get("pair_id") in pair_index
+        ][: args.max_queries]
+    items: list[dict[str, object]] = []
+    for sample in getattr(dataset, "samples", []):
+        if isinstance(sample, dict):
+            captions = sample.get("captions", [])
+            pair_id = str(sample["pair_id"])
+        else:
+            captions = sample.captions or ([sample.caption] if sample.caption else [])
+            pair_id = str(sample.sample_id)
+        for caption in captions[:1]:
+            if pair_id in pair_index:
+                items.append({"pair_id": pair_id, "query_caption": caption, "stratum": "canonical_manifest"})
+        if len(items) >= args.max_queries:
+            break
+    return items
+
+
 def main() -> int:
     args = parse_args()
     device = strict_device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location=device)
     config = _checkpoint_config(args, checkpoint)
-    image_size = int(config.image_size)
-    output_grid = int(config.output_grid)
-    dataset = UniChangeMciDataset(
-        args.data_root,
-        split=args.split,
-        image_size=image_size,
-        output_grid=output_grid,
-    )
+    dataset, data_mode = _build_eval_dataset(args, config)
     if checkpoint.get("stage1_next"):
         from ucv2_stage1_next_core import make_eval_loader
 
@@ -132,14 +222,8 @@ def main() -> int:
     rank_result = compute_retrieval_ranks(corpus)
 
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
-    sample_by_id = {sample.sample_id: sample for sample in dataset.samples}
-
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
-    query_items = [
-        item
-        for item in manifest.get("items", [])
-        if item.get("pair_id") in pair_index
-    ][: args.max_queries]
+    sample_by_id = _sample_map(dataset)
+    query_items = _query_items(args, dataset, pair_index)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     visuals = args.output_dir / "visuals"
     visuals.mkdir(parents=True, exist_ok=True)
@@ -232,6 +316,7 @@ def main() -> int:
         "checkpoint_epoch": checkpoint.get("epoch", checkpoint.get("epoch_index")),
         "checkpoint_step": checkpoint.get("step"),
         "split": args.split,
+        **_eval_metadata(args, dataset, data_mode),
         "corpus_metrics": metrics,
         "gallery_metrics": gallery_metrics,
         "top_k": args.top_k,

@@ -20,6 +20,7 @@ from land_change_detection.training.temporal_caption_dataset import (
 )
 from prepare_levir_mci_manifest import build_rows as build_levir_rows
 from prepare_second_cc_manifest import build_karpathy_rows, discover_raw_rows
+from render_unichange_v2_retrieval import _build_eval_dataset, _checkpoint_config, _eval_metadata
 from ucv2_retrieval_metrics import RetrievalCorpus, compute_retrieval_metrics
 
 
@@ -242,5 +243,81 @@ def test_per_dataset_metrics_are_query_masks_over_same_rank_tensor() -> None:
     assert metrics["second_cc_cross_R@1"] == 1.0
     assert metrics["levir_mci_within_R@1"] == 1.0
     assert metrics["second_cc_within_R@1"] == 1.0
+    assert "levir_mci_cross_MRR" in metrics
+    assert "second_cc_within_exact_R@10" in metrics
     assert metrics["levir_mci_num_queries"] == 2
     assert metrics["second_cc_num_candidates"] == 2
+
+
+def test_mixed_evaluation_loads_canonical_manifests_and_reports_metadata(tmp_path: Path) -> None:
+    rows = []
+    for dataset in ("levir_mci", "second_cc"):
+        t1 = tmp_path / dataset / "a.png"
+        t2 = tmp_path / dataset / "b.png"
+        _image(t1, (1, 0, 0))
+        _image(t2, (0, 1, 0))
+        rows.append(make_manifest_row(dataset_name=dataset, split="val", original_id="x", t1_path=t1, t2_path=t2, captions=[f"{dataset} caption"]))
+    manifest = tmp_path / "val.jsonl"
+    write_jsonl(manifest, rows)
+    args = type(
+        "Args",
+        (),
+        {
+            "data_root": tmp_path,
+            "output_dir": tmp_path,
+            "universat_source": tmp_path,
+            "universat_checkpoint": tmp_path,
+            "jina_model": tmp_path,
+            "split": "val",
+            "batch_size": 2,
+            "num_workers": 0,
+            "device": "cpu",
+            "val_manifest": [manifest],
+            "dataset_config": None,
+            "dataset_weight": ["levir_mci=0.55", "second_cc=0.45"],
+        },
+    )()
+    config = _checkpoint_config(args, {"config": {"image_size": 4, "output_grid": 4, "temporal_depth": 6}})
+    dataset, data_mode = _build_eval_dataset(args, config)
+    metadata = _eval_metadata(args, dataset, data_mode)
+    assert data_mode == "mixed"
+    assert metadata["dataset_names"] == ["levir_mci", "second_cc"]
+    assert metadata["validation_row_counts"] == {"levir_mci": 1, "second_cc": 1}
+    assert metadata["manifest_fingerprints"]["validation"][str(manifest)]
+
+
+def test_levir_only_evaluation_backward_compatibility_and_depth6_config(tmp_path: Path) -> None:
+    root = tmp_path / "levir"
+    _image(root / "images/train/A/t.png", (1, 1, 1))
+    _image(root / "images/train/B/t.png", (2, 2, 2))
+    _mask(root / "images/train/label/t.png")
+    _image(root / "images/val/A/a.png", (1, 2, 3))
+    _image(root / "images/val/B/a.png", (3, 2, 1))
+    _mask(root / "images/val/label/a.png")
+    (root / "LevirCCcaptions.json").write_text(
+        json.dumps({"images": [{"filename": "a.png", "split": "val", "sentences": [{"raw": "A change occurred."}]}]}),
+        encoding="utf-8",
+    )
+    args = type(
+        "Args",
+        (),
+        {
+            "data_root": root,
+            "output_dir": tmp_path,
+            "universat_source": tmp_path,
+            "universat_checkpoint": tmp_path,
+            "jina_model": tmp_path,
+            "split": "val",
+            "batch_size": 1,
+            "num_workers": 0,
+            "device": "cpu",
+            "val_manifest": [],
+            "dataset_config": None,
+            "dataset_weight": None,
+        },
+    )()
+    config = _checkpoint_config(args, {"config": {"image_size": 4, "output_grid": 4, "temporal_depth": 6}})
+    dataset, data_mode = _build_eval_dataset(args, config)
+    assert data_mode == "levir_only"
+    assert config.temporal_depth == 6
+    assert len(dataset) == 1

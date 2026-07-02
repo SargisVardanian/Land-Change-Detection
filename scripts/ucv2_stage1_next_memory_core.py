@@ -133,6 +133,8 @@ def run(
         "results": rows,
         "recommended_batch_size": max(passed) if passed else None,
         "batch_32_passed": 32 in passed,
+        "memory_data_mode": "shape_probe",
+        "memory_probe_scope": "architecture/batch memory validation only; not a SECOND-CC adapter validation",
         **data_metadata,
     }
     (output_dir / "memory_probe.json").write_text(json.dumps(report, indent=2), encoding="utf-8")

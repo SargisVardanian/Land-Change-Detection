@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 from itertools import cycle
 from pathlib import Path
+from collections import Counter
 
 import torch
 
@@ -88,10 +89,12 @@ def run(
     finite_loss = True
     step = 0
     losses: list[float] = []
+    batch_dataset_counts: Counter[str] = Counter()
     for batch in cycle(train_loader):
         if step >= 10:
             break
         model.train()
+        batch_dataset_counts.update(str(name) for name in batch.get("dataset_names", []))
         batch = base._move_batch(batch, device)
         optimizer.zero_grad(set_to_none=True)
         groups = stable_caption_group_ids(batch["captions"], device=device)
@@ -169,6 +172,9 @@ def run(
         "fake_backbones": False,
         "samples": {"train": len(train), "validation": len(val)},
         **data_metadata,
+        "mixed_smoke": data_metadata["data_mode"] == "mixed",
+        "batch_dataset_counts": dict(sorted(batch_dataset_counts.items())),
+        "sample_counts_by_dataset": {name: len(indices) for name, indices in sorted(getattr(train, "indices_by_dataset", {}).items())},
         "train_val_disjoint": True,
         "steps_completed": step,
         "finite_loss": finite_loss,
