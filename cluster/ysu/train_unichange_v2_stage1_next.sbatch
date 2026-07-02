@@ -31,6 +31,21 @@ if (( BATCH_SIZE < 32 )); then
 fi
 
 mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
+append_colon_list() {
+  local flag="$1"
+  local values="$2"
+  local item
+  if [[ -z "$values" ]]; then
+    return 0
+  fi
+  IFS=':' read -r -a _items <<< "$values"
+  for item in "${_items[@]}"; do
+    if [[ -n "$item" ]]; then
+      ARGS+=("$flag" "$item")
+    fi
+  done
+}
+
 ARGS=(
   "$MCI_DATA"
   "$RUN_DIR"
@@ -48,6 +63,13 @@ ARGS=(
 )
 if [[ -n "${RESUME_CHECKPOINT:-}" ]]; then
   ARGS+=(--resume "$RESUME_CHECKPOINT")
+fi
+if [[ -n "${DATASET_CONFIG:-}" ]]; then
+  ARGS+=(--dataset-config "$DATASET_CONFIG")
+else
+  append_colon_list --train-manifest "${TRAIN_MANIFESTS:-}"
+  append_colon_list --val-manifest "${VAL_MANIFESTS:-}"
+  append_colon_list --dataset-weight "${DATASET_WEIGHTS:-}"
 fi
 
 PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \

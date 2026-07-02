@@ -22,10 +22,25 @@ mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
 rm -rf "$RUN_DIR"
 mkdir -p "$RUN_DIR"
 
-PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \
-  "$CODE_ROOT/scripts/smoke_unichange_v2_stage1_next.py" \
-  "$MCI_DATA" "$RUN_DIR" \
-  "$RS_PROJECT_ROOT/external/UniverSat" \
-  "$RS_PROJECT_ROOT/models/universat-base" \
-  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
+ARGS=(
+  "$MCI_DATA" "$RUN_DIR"
+  "$RS_PROJECT_ROOT/external/UniverSat"
+  "$RS_PROJECT_ROOT/models/universat-base"
+  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval"
   "$TEMPORAL_DEPTH"
+)
+if [[ "${MIXED_SMOKE:-0}" == "1" ]]; then
+  : "${LEVIR_MANIFEST:?Set LEVIR_MANIFEST when MIXED_SMOKE=1}"
+  : "${SECOND_CC_MANIFEST:?Set SECOND_CC_MANIFEST when MIXED_SMOKE=1}"
+  ARGS+=(
+    --train-manifest "$LEVIR_MANIFEST"
+    --train-manifest "$SECOND_CC_MANIFEST"
+    --val-manifest "$LEVIR_MANIFEST"
+    --val-manifest "$SECOND_CC_MANIFEST"
+    --dataset-weight "${LEVIR_WEIGHT:-levir_mci=0.55}"
+    --dataset-weight "${SECOND_CC_WEIGHT:-second_cc=0.45}"
+  )
+fi
+
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \
+  "$CODE_ROOT/scripts/smoke_unichange_v2_stage1_next.py" "${ARGS[@]}"

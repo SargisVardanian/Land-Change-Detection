@@ -6,11 +6,13 @@ from pathlib import Path
 
 from land_change_detection.temporal_caption_manifest import (
     IMAGE_EXTENSIONS,
-    annotation_rows_to_manifest,
     audit_manifest_rows,
     make_manifest_row,
     write_jsonl,
 )
+
+
+OFFICIAL_SPLITS = ("train", "val", "test")
 
 
 def _caption_map(root: Path) -> dict[str, list[str]]:
@@ -90,12 +92,83 @@ def discover_raw_rows(root: Path, split: str) -> list[dict]:
     return rows
 
 
+def _sentence_text(sentence: dict) -> str:
+    for key in ("raw", "caption", "text", "sentence"):
+        value = sentence.get(key)
+        if isinstance(value, str) and value.strip():
+            return " ".join(value.strip().split())
+    tokens = sentence.get("tokens")
+    if isinstance(tokens, list):
+        return " ".join(str(token).strip() for token in tokens if str(token).strip())
+    return ""
+
+
+def _row_split(raw_split: str, restval_policy: str) -> str:
+    value = raw_split.strip()
+    if value in OFFICIAL_SPLITS:
+        return value
+    if value == "restval":
+        if restval_policy == "error":
+            raise ValueError("SECOND-CC JSON contains restval split and --restval-policy=error")
+        return restval_policy
+    raise ValueError(f"Unsupported SECOND-CC split: {raw_split!r}")
+
+
+def build_karpathy_rows(root: Path, annotations: Path, split: str, restval_policy: str) -> list[dict]:
+    payload = json.loads(annotations.read_text(encoding="utf-8"))
+    images = payload.get("images") if isinstance(payload, dict) else None
+    if not isinstance(images, list):
+        raise ValueError("SECOND-CC Karpathy annotations must contain payload['images']")
+    rows: list[dict] = []
+    for image in images:
+        if not isinstance(image, dict):
+            continue
+        filename = str(image.get("filename") or "").strip()
+        raw_split = str(image.get("split") or "").strip()
+        if not filename or not raw_split:
+            raise ValueError("SECOND-CC image rows must include filename and split")
+        selected_split = _row_split(raw_split, restval_policy)
+        if split != "all" and selected_split != split:
+            continue
+        sentences = image.get("sentences")
+        if not isinstance(sentences, list):
+            raise ValueError(f"SECOND-CC image row {filename!r} is missing sentences")
+        captions = [_sentence_text(sentence) for sentence in sentences if isinstance(sentence, dict)]
+        captions = [caption for caption in captions if caption]
+        rows.append(
+            make_manifest_row(
+                dataset_name="second_cc",
+                split=selected_split,
+                original_id=Path(filename).stem,
+                t1_path=root / selected_split / "rgb" / "A" / filename,
+                t2_path=root / selected_split / "rgb" / "B" / filename,
+                captions=captions,
+                caption_source="human",
+                mask_path=None,
+                semantic_t1_path=root / selected_split / "sem" / "A" / filename,
+                semantic_t2_path=root / selected_split / "sem" / "B" / filename,
+                source_metadata={
+                    "dataset": "SECOND-CC",
+                    "annotation_file": str(annotations),
+                    "official_karpathy_schema": True,
+                    "official_split": raw_split,
+                    "restval_policy": restval_policy if raw_split == "restval" else None,
+                    "sentids": [sentence.get("sentid") for sentence in sentences if isinstance(sentence, dict) and sentence.get("sentid") is not None],
+                },
+            )
+        )
+    return rows
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build the canonical temporal-caption manifest for SECOND-CC raw files.")
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--annotations", type=Path, default=None, help="Optional JSON/JSONL/CSV annotations. HDF5 is intentionally unsupported.")
+    parser.add_argument("--annotations", type=Path, default=None, help="SECOND-CC-AUG.json Karpathy annotations. HDF5 is intentionally unsupported.")
     parser.add_argument("--split", choices=("all", "train", "val", "test"), default="all")
+    parser.add_argument("--restval-policy", choices=("train", "val", "test", "error"), default="train")
+    parser.add_argument("--expected-pairs", type=int, default=None)
+    parser.add_argument("--expected-captions", type=int, default=None)
     parser.add_argument("--audit-report", type=Path, default=None)
     return parser.parse_args()
 
@@ -104,13 +177,12 @@ def main() -> int:
     args = parse_args()
     if args.annotations and args.annotations.suffix.casefold() in {".h5", ".hdf5"}:
         raise SystemExit("SECOND-CC HDF5 annotations are not supported; use raw image/caption metadata.")
-    rows = (
-        annotation_rows_to_manifest(dataset_name="second_cc", root=args.root, annotations=args.annotations)
-        if args.annotations
-        else discover_raw_rows(args.root, args.split)
-    )
-    if args.split != "all":
-        rows = [row for row in rows if row["split"] == args.split]
+    rows = build_karpathy_rows(args.root, args.annotations, args.split, args.restval_policy) if args.annotations else discover_raw_rows(args.root, args.split)
+    caption_count = sum(len(row.get("captions", [])) for row in rows)
+    if args.expected_pairs is not None and len(rows) != args.expected_pairs:
+        raise SystemExit(f"Expected {args.expected_pairs} SECOND-CC pairs, found {len(rows)}")
+    if args.expected_captions is not None and caption_count != args.expected_captions:
+        raise SystemExit(f"Expected {args.expected_captions} SECOND-CC captions, found {caption_count}")
     write_jsonl(args.output, rows)
     report = audit_manifest_rows(rows)
     if args.audit_report:

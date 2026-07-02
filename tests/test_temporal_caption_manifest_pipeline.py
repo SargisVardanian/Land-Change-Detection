@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import torch
@@ -17,7 +19,7 @@ from land_change_detection.training.temporal_caption_dataset import (
     TemporalCaptionManifestDataset,
 )
 from prepare_levir_mci_manifest import build_rows as build_levir_rows
-from prepare_second_cc_manifest import discover_raw_rows
+from prepare_second_cc_manifest import build_karpathy_rows, discover_raw_rows
 from ucv2_retrieval_metrics import RetrievalCorpus, compute_retrieval_metrics
 
 
@@ -61,6 +63,80 @@ def test_second_cc_raw_adapter_does_not_need_hdf5(tmp_path: Path) -> None:
     assert rows[0]["mask_path"].endswith("label/s1.png")
     assert rows[0]["semantic_t1_path"].endswith("semantic_A/s1.png")
     assert audit_manifest_rows(rows)["valid"]
+
+
+def test_second_cc_karpathy_manifest_uses_official_layout_and_semantics(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    filename = "000001.png"
+    _image(root / "train/rgb/A" / filename, (1, 0, 0))
+    _image(root / "train/rgb/B" / filename, (0, 1, 0))
+    _mask(root / "train/sem/A" / filename, 1)
+    _mask(root / "train/sem/B" / filename, 2)
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {
+                        "filename": filename,
+                        "split": "train",
+                        "sentences": [
+                            {"tokens": ["a", "road", "appeared"], "raw": "A road appeared."},
+                            {"tokens": ["new", "construction"], "sentid": 42},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows = build_karpathy_rows(root, annotations, "all", "train")
+    assert rows[0]["pair_id"] == "second_cc:train:000001"
+    assert rows[0]["t1_path"].endswith("train/rgb/A/000001.png")
+    assert rows[0]["t2_path"].endswith("train/rgb/B/000001.png")
+    assert rows[0]["mask_path"] is None
+    assert rows[0]["semantic_t1_path"].endswith("train/sem/A/000001.png")
+    assert rows[0]["semantic_t2_path"].endswith("train/sem/B/000001.png")
+    assert rows[0]["captions"] == ["A road appeared.", "new construction"]
+    assert rows[0]["source_metadata"]["official_split"] == "train"
+    assert audit_manifest_rows(rows)["valid"]
+
+
+def test_second_cc_restval_policy_and_expected_count_validation(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    filename = "rest.png"
+    _image(root / "train/rgb/A" / filename, (1, 0, 0))
+    _image(root / "train/rgb/B" / filename, (0, 1, 0))
+    _mask(root / "train/sem/A" / filename, 1)
+    _mask(root / "train/sem/B" / filename, 2)
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps({"images": [{"filename": filename, "split": "restval", "sentences": [{"tokens": ["rest", "caption"]}]}]}),
+        encoding="utf-8",
+    )
+    rows = build_karpathy_rows(root, annotations, "all", "train")
+    assert rows[0]["split"] == "train"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_second_cc_manifest.py",
+            "--root",
+            str(root),
+            "--annotations",
+            str(annotations),
+            "--output",
+            str(tmp_path / "out.jsonl"),
+            "--expected-pairs",
+            "6041",
+            "--expected-captions",
+            "30205",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "Expected 6041 SECOND-CC pairs" in result.stderr
 
 
 def test_rscc_adapter_excludes_model_generated_by_default_and_preserves_license(tmp_path: Path) -> None:
@@ -120,6 +196,30 @@ def test_manifest_dataset_sampler_is_deterministic_and_rotates(tmp_path: Path) -
     assert item.metadata["caption_source"] == "human"
 
 
+def test_manifest_inspection_command_reports_counts_and_fingerprint(tmp_path: Path) -> None:
+    t1 = tmp_path / "a.png"
+    t2 = tmp_path / "b.png"
+    _image(t1, (1, 0, 0))
+    _image(t2, (0, 1, 0))
+    manifest = tmp_path / "inspect.jsonl"
+    write_jsonl(
+        manifest,
+        [make_manifest_row(dataset_name="levir_mci", split="train", original_id="x", t1_path=t1, t2_path=t2, captions=["No change."])],
+    )
+    result = subprocess.run(
+        [sys.executable, "scripts/inspect_temporal_caption_manifest.py", str(manifest)],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["pairs_by_dataset_split"] == {"levir_mci:train": 1}
+    assert payload["captions_by_dataset_split"] == {"levir_mci:train": 1}
+    assert payload["captions_per_pair_distribution"] == {"1": 1}
+    assert payload["fingerprint"]
+
+
 def test_per_dataset_metrics_are_query_masks_over_same_rank_tensor() -> None:
     corpus = RetrievalCorpus(
         pair_embeddings=torch.eye(4, dtype=torch.float32),
@@ -138,5 +238,9 @@ def test_per_dataset_metrics_are_query_masks_over_same_rank_tensor() -> None:
     assert metrics["text_to_pair_R@1"] == 1.0
     assert metrics["levir_mci_R@1"] == 1.0
     assert metrics["second_cc_R@1"] == 1.0
+    assert metrics["levir_mci_cross_R@1"] == 1.0
+    assert metrics["second_cc_cross_R@1"] == 1.0
+    assert metrics["levir_mci_within_R@1"] == 1.0
+    assert metrics["second_cc_within_R@1"] == 1.0
     assert metrics["levir_mci_num_queries"] == 2
     assert metrics["second_cc_num_candidates"] == 2

@@ -14,6 +14,8 @@ from land_change_detection.models.retrieval_heads import (
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_stage1_next_core import (
     Stage1NextConfig,
+    _build_stage1_datasets,
+    _stage1_data_metadata,
     caption_frequencies,
     make_optimizer,
     make_train_loader,
@@ -48,7 +50,8 @@ def run(
         train_eval_interval=0,
         checkpoint_interval_steps=0,
     )
-    train, _ = base._build_datasets(config)
+    train, val = _build_stage1_datasets(config)
+    data_metadata = _stage1_data_metadata(config, train, val)
     frequencies = caption_frequencies(train)
     model = build_model(config, device)
     optimizer = make_optimizer(model, config)
@@ -130,6 +133,7 @@ def run(
         "results": rows,
         "recommended_batch_size": max(passed) if passed else None,
         "batch_32_passed": 32 in passed,
+        **data_metadata,
     }
     (output_dir / "memory_probe.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     return 0 if passed else 1

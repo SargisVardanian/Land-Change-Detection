@@ -171,7 +171,9 @@ PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/prepare_levir_mci_manifes
   --audit-report reports/levir_mci_manifest_audit.json
 
 PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/prepare_second_cc_manifest.py \
-  --root /path/to/SECOND-CC --output manifests/second_cc.jsonl \
+  --root /path/to/SECOND-CC --annotations /path/to/SECOND-CC-AUG.json \
+  --expected-pairs 6041 --expected-captions 30205 \
+  --output manifests/second_cc.jsonl \
   --audit-report reports/second_cc_manifest_audit.json
 
 PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/merge_temporal_caption_manifests.py \
@@ -180,7 +182,7 @@ PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/merge_temporal_caption_ma
   --audit-report reports/stage1_next_mixed_manifest_audit.json
 ```
 
-SECOND-CC must be read from raw image/caption/mask/semantic files through this manifest path, not from HDF5. RSCC is optional and disabled by default; model-generated RSCC captions are excluded unless `--include-model-generated` is explicit, and xBD licensing metadata must remain in `source_metadata`.
+SECOND-CC must be read from the official Karpathy JSON and raw paths `<root>/<split>/rgb/A`, `<root>/<split>/rgb/B`, `<root>/<split>/sem/A`, and `<root>/<split>/sem/B` through this manifest path, not from HDF5. The semantic maps are semantic supervision metadata, not binary masks. RSCC is optional and disabled by default; model-generated RSCC captions are excluded unless `--include-model-generated` is explicit, and xBD licensing metadata must remain in `source_metadata`.
 
 Mixed Stage-1-next training may use repeated manifest arguments and explicit weights:
 
@@ -194,6 +196,16 @@ python scripts/train_unichange_v2_stage1_next.py DATA_ROOT OUT UNIVERSAT CHECKPO
 ```
 
 Validation metrics must include combined metrics and per-dataset query subsets for LEVIR-MCI and SECOND-CC.
+
+On Slurm, mixed training uses colon-separated environment variables:
+
+```bash
+TRAIN_MANIFESTS=/path/levir.jsonl:/path/second_cc.jsonl
+VAL_MANIFESTS=/path/levir.jsonl:/path/second_cc.jsonl
+DATASET_WEIGHTS=levir_mci=0.55:second_cc=0.45
+```
+
+Alternatively set `DATASET_CONFIG` to a JSON config containing `train_manifests`, `val_manifests`, and `dataset_sampling_weights`.
 
 ### Required validation
 

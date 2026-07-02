@@ -142,6 +142,9 @@ python scripts/prepare_levir_mci_manifest.py \
 
 python scripts/prepare_second_cc_manifest.py \
   --root /path/to/SECOND-CC \
+  --annotations /path/to/SECOND-CC-AUG.json \
+  --expected-pairs 6041 \
+  --expected-captions 30205 \
   --output manifests/second_cc.jsonl \
   --audit-report reports/second_cc_manifest_audit.json
 
@@ -172,7 +175,19 @@ python scripts/train_unichange_v2_stage1_next.py DATA_ROOT OUT UNIVERSAT CHECKPO
   --dataset-weight second_cc=0.45
 ```
 
-The dataloader propagates `dataset_name` into every batch. Validation reports combined metrics plus per-dataset query-slice metrics from the same deterministic rank tensor.
+SECOND-CC uses the official raw layout `<root>/<split>/rgb/A/<filename>`, `<root>/<split>/rgb/B/<filename>`, `<root>/<split>/sem/A/<filename>`, and `<root>/<split>/sem/B/<filename>`. `sem/A` and `sem/B` are stored as `semantic_t1_path` and `semantic_t2_path`; they are not binary masks.
+
+The dataloader propagates `dataset_name` into every batch. Validation reports combined metrics plus two per-dataset modes from the same deterministic rank tensor: cross-corpus query-slice metrics and within-dataset query-and-candidate metrics.
+
+Slurm mixed training accepts:
+
+```bash
+TRAIN_MANIFESTS=/path/levir.jsonl:/path/second_cc.jsonl
+VAL_MANIFESTS=/path/levir.jsonl:/path/second_cc.jsonl
+DATASET_WEIGHTS=levir_mci=0.55:second_cc=0.45
+```
+
+or a `DATASET_CONFIG` JSON with `train_manifests`, `val_manifests`, and `dataset_sampling_weights`.
 
 ## Cluster workflow
 

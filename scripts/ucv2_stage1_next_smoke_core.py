@@ -70,12 +70,13 @@ def run(
         },
     )
 
-    from ucv2_stage1_next_core import _build_stage1_datasets
+    from ucv2_stage1_next_core import _build_stage1_datasets, _stage1_data_metadata
 
     train, val = _build_stage1_datasets(config)
     from ucv2_stage1_next_core import _assert_stage1_disjoint
 
     _assert_stage1_disjoint(train, val)
+    data_metadata = _stage1_data_metadata(config, train, val)
     frequencies = caption_frequencies(train)
     train_loader = make_train_loader(train, config, frequencies, epoch=0)
     val_loader = make_eval_loader(val, config)
@@ -167,6 +168,7 @@ def run(
         "max_captions_per_pair": config.max_captions_per_pair,
         "fake_backbones": False,
         "samples": {"train": len(train), "validation": len(val)},
+        **data_metadata,
         "train_val_disjoint": True,
         "steps_completed": step,
         "finite_loss": finite_loss,

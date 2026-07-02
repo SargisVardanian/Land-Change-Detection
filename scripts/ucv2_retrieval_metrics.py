@@ -458,8 +458,42 @@ def compute_retrieval_metrics(
             mask = torch.tensor([name == dataset_name for name in query_dataset_names], dtype=torch.bool)
             metrics.update(_masked_rank_summary(ranks, mask, f"{safe_name}_"))
             metrics.update(_masked_rank_summary(exact, mask, f"{safe_name}_exact_"))
+            metrics.update(_masked_rank_summary(ranks, mask, f"{safe_name}_cross_"))
+            metrics.update(_masked_rank_summary(exact, mask, f"{safe_name}_cross_exact_"))
             metrics[f"{safe_name}_num_queries"] = int(mask.sum().item())
             metrics[f"{safe_name}_num_candidates"] = int(sum(name == dataset_name for name in pair_dataset_names))
+            candidate_indices = [index for index, name in enumerate(pair_dataset_names) if name == dataset_name]
+            query_indices = torch.nonzero(mask, as_tuple=False).flatten()
+            if candidate_indices and query_indices.numel():
+                candidate_tensor = torch.tensor(candidate_indices, dtype=torch.long)
+                local_pairs = corpus.pair_embeddings[candidate_tensor]
+                local_text = corpus.text_embeddings[query_indices]
+                inverse_candidate = {global_index: local_index for local_index, global_index in enumerate(candidate_indices)}
+                local_caption_to_pair = torch.tensor(
+                    [inverse_candidate[int(corpus.caption_to_pair[int(query_index)].item())] for query_index in query_indices],
+                    dtype=torch.long,
+                )
+                local_corpus = RetrievalCorpus(
+                    pair_embeddings=local_pairs,
+                    text_embeddings=local_text,
+                    caption_to_pair=local_caption_to_pair,
+                    caption_group_ids=corpus.caption_group_ids[query_indices],
+                    pair_ids=[corpus.pair_ids[index] for index in candidate_indices],
+                    captions=[corpus.captions[int(index)] for index in query_indices],
+                    pair_mask_fractions=corpus.pair_mask_fractions[candidate_tensor] if corpus.pair_mask_fractions.numel() == len(pair_dataset_names) else torch.empty(0),
+                    encode_seconds=0.0,
+                    peak_allocated_vram_bytes=0,
+                    peak_reserved_vram_bytes=0,
+                    dataset_names=[dataset_name] * len(candidate_indices),
+                )
+                local_ranks = compute_retrieval_ranks(local_corpus)
+                metrics.update(_rank_summary(local_ranks.duplicate_aware_ranks, f"{safe_name}_within_"))
+                metrics.update(_rank_summary(local_ranks.exact_pair_ranks, f"{safe_name}_within_exact_"))
+                metrics[f"{safe_name}_within_num_queries"] = int(query_indices.numel())
+                metrics[f"{safe_name}_within_num_candidates"] = len(candidate_indices)
+            else:
+                metrics.update(_rank_summary(torch.empty(0, dtype=torch.long), f"{safe_name}_within_"))
+                metrics.update(_rank_summary(torch.empty(0, dtype=torch.long), f"{safe_name}_within_exact_"))
 
     metrics.update(_masked_rank_summary(ranks, frequencies == 1, "unique_caption_"))
     metrics.update(_masked_rank_summary(ranks, (frequencies >= 2) & (frequencies <= 5), "rare_caption_"))

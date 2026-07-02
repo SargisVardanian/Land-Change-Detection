@@ -21,6 +21,7 @@ from land_change_detection.models.retrieval_heads import (
     normalize_caption_text,
     stable_caption_group_ids,
 )
+from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import (
     DeterministicWeightedDatasetSampler,
     TemporalCaptionManifestDataset,
@@ -408,6 +409,10 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
     val_manifests = tuple(config_val or config.val_manifests)
     if config_weights:
         object.__setattr__(config, "dataset_sampling_weights", tuple(f"{name}={value}" for name, value in sorted(config_weights.items())))
+    if config_train:
+        object.__setattr__(config, "train_manifests", tuple(config_train))
+    if config_val:
+        object.__setattr__(config, "val_manifests", tuple(config_val))
     if train_manifests or val_manifests:
         if not train_manifests or not val_manifests:
             raise ValueError("Both train and validation manifests are required for manifest-based Stage-1-next training")
@@ -445,6 +450,35 @@ def _assert_stage1_disjoint(train: Dataset, val: Dataset) -> None:
     overlap = ids(train) & ids(val)
     if overlap:
         raise RuntimeError(f"Train/validation pair ID leakage detected: {sorted(overlap)[:10]}")
+
+
+def _stage1_data_metadata(config: Stage1NextConfig, train: Dataset, val: Dataset) -> dict[str, Any]:
+    train_manifests = [str(path) for path in config.train_manifests]
+    val_manifests = [str(path) for path in config.val_manifests]
+    data_mode = "mixed" if train_manifests or val_manifests else "levir_only"
+    weights = parse_dataset_weights(config.dataset_sampling_weights) if data_mode == "mixed" else {}
+    dataset_names: set[str] = set()
+    for dataset in (train, val):
+        mapping = getattr(dataset, "indices_by_dataset", None)
+        if isinstance(mapping, dict):
+            dataset_names.update(str(name) for name in mapping)
+        else:
+            for index in range(min(len(dataset), 64)):
+                item = dataset[index]
+                dataset_names.add(str(getattr(item, "dataset_name", getattr(item, "metadata", {}).get("dataset_name", "levir_mci"))))
+    return {
+        "data_mode": data_mode,
+        "train_manifests": train_manifests,
+        "val_manifests": val_manifests,
+        "manifest_fingerprints": {
+            "train": {path: manifest_file_fingerprint(path) for path in train_manifests},
+            "validation": {path: manifest_file_fingerprint(path) for path in val_manifests},
+        },
+        "dataset_names": sorted(dataset_names),
+        "dataset_weights": weights,
+        "train_row_count": len(train),
+        "validation_row_count": len(val),
+    }
 
 
 def _sample_mask_fraction(sample: Any) -> float:
@@ -603,6 +637,7 @@ def run(
     base._set_seed(config.seed)
     train, val = _build_stage1_datasets(config)
     _assert_stage1_disjoint(train, val)
+    data_metadata = _stage1_data_metadata(config, train, val)
     conflict_counts, conflict_indices = audit_dataset_conflicts(train, config)
     base._write_json(
         output_dir / "reports" / "dataset_conflict_audit.json",
@@ -632,6 +667,7 @@ def run(
                 "caption_rows": int(sum(frequencies.values())),
             },
             "conflict_audit_counts": conflict_counts,
+            **data_metadata,
             **run_metadata(),
         },
     )
@@ -812,6 +848,7 @@ def run(
                 for index, group in enumerate(optimizer.param_groups)
             ],
             "dataset_sizes": {"train": len(train), "validation": len(val)},
+            **data_metadata,
             "caption_group_statistics": {"unique_groups": len(frequencies), "caption_rows": int(sum(frequencies.values()))},
             "conflict_audit_counts": conflict_counts,
             **metrics,
@@ -898,6 +935,7 @@ def run(
                 "step": step,
                 "best_scores": best_scores,
                 "latest_metrics": epoch_record,
+                **data_metadata,
                 **run_metadata(),
             },
         )

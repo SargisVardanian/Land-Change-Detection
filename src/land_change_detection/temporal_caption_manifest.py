@@ -150,6 +150,54 @@ def write_jsonl(path: str | Path, rows: Iterable[dict[str, Any]]) -> None:
             handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
 
 
+def manifest_fingerprint(rows: Iterable[dict[str, Any]]) -> str:
+    digest = hashlib.blake2b(digest_size=16)
+    for row in sorted(rows, key=lambda item: str(item.get("pair_id", ""))):
+        digest.update(stable_json_dumps(row).encode("utf-8"))
+        digest.update(b"\n")
+    return digest.hexdigest()
+
+
+def manifest_file_fingerprint(path: str | Path) -> str:
+    return file_fingerprint(path) or ""
+
+
+def summarize_manifest_rows(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    rows = list(rows)
+    pairs_by_dataset_split: Counter[str] = Counter()
+    captions_by_dataset_split: Counter[str] = Counter()
+    captions_per_pair: Counter[int] = Counter()
+    semantic_coverage: Counter[str] = Counter()
+    dataset_names: set[str] = set()
+    for row in rows:
+        dataset = str(row.get("dataset_name", ""))
+        split = str(row.get("split", ""))
+        key = f"{dataset}:{split}"
+        captions = [caption for caption in row.get("captions", []) if str(caption).strip()]
+        dataset_names.add(dataset)
+        pairs_by_dataset_split[key] += 1
+        captions_by_dataset_split[key] += len(captions)
+        captions_per_pair[len(captions)] += 1
+        if row.get("semantic_t1_path"):
+            semantic_coverage[f"{key}:semantic_t1"] += 1
+        if row.get("semantic_t2_path"):
+            semantic_coverage[f"{key}:semantic_t2"] += 1
+    audit = audit_manifest_rows(rows)
+    return {
+        "row_count": len(rows),
+        "dataset_names": sorted(dataset_names),
+        "pairs_by_dataset_split": dict(sorted(pairs_by_dataset_split.items())),
+        "captions_by_dataset_split": dict(sorted(captions_by_dataset_split.items())),
+        "captions_per_pair_distribution": {str(key): value for key, value in sorted(captions_per_pair.items())},
+        "semantic_map_coverage": dict(sorted(semantic_coverage.items())),
+        "missing_files": [error for error in audit["errors"] if error.get("kind") == "missing_file"],
+        "image_dimension_mismatches": [error for error in audit["errors"] if error.get("kind") == "inconsistent_image_dimensions"],
+        "split_leakage": audit["split_leakage"],
+        "fingerprint": manifest_fingerprint(rows),
+        "valid": audit["valid"],
+    }
+
+
 def _coerce_captions(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
