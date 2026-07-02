@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import unicodedata
 from dataclasses import dataclass
 
@@ -17,13 +18,44 @@ class RetrievalHeadOutput:
 
 
 class RetrievalProjectionHead(nn.Module):
-    def __init__(self, dim: int = 512):
+    def __init__(
+        self,
+        dim: int = 512,
+        *,
+        trainable_temperature: bool = False,
+        initial_temperature: float = 0.07,
+        max_logit_scale: float = 100.0,
+    ):
         super().__init__()
+        if initial_temperature <= 0.0:
+            raise ValueError("initial_temperature must be positive")
+        if max_logit_scale <= 0.0:
+            raise ValueError("max_logit_scale must be positive")
         self.pair_projection = nn.Sequential(nn.LayerNorm(dim), nn.Linear(dim, dim))
+        initial_log_scale = math.log(1.0 / initial_temperature)
+        log_scale = torch.tensor(initial_log_scale, dtype=torch.float32)
+        if trainable_temperature:
+            self.logit_scale: nn.Parameter | None = nn.Parameter(log_scale)
+            self.fixed_logit_scale: float | None = None
+        else:
+            # Keep legacy state_dict compatibility: a non-trainable temperature
+            # is a plain scalar, not a persistent buffer/parameter.
+            self.register_parameter("logit_scale", None)
+            self.fixed_logit_scale = float(1.0 / initial_temperature)
+        self.max_logit_scale = float(max_logit_scale)
+
+    def similarity_scale(self) -> Tensor:
+        if self.logit_scale is None:
+            value = min(float(self.fixed_logit_scale), self.max_logit_scale)
+            return self.pair_projection[1].weight.new_tensor(value)
+        max_log_scale = math.log(self.max_logit_scale)
+        return self.logit_scale.clamp(max=max_log_scale).exp()
 
     def forward(self, pair_embedding: Tensor, text_embedding: Tensor | None = None) -> RetrievalHeadOutput:
         pair = F.normalize(self.pair_projection(pair_embedding), dim=-1)
         text = F.normalize(text_embedding, dim=-1) if text_embedding is not None else None
+        # Keep unscaled logits for backward compatibility. The training objective
+        # consumes ``similarity_scale()`` explicitly.
         logits = pair @ text.T if text is not None else None
         return RetrievalHeadOutput(pair_embedding=pair, text_embedding=text, logits=logits)
 
@@ -102,6 +134,25 @@ def _infer_duplicate_groups_from_embeddings(text_embeddings: Tensor) -> Tensor:
     return group_ids
 
 
+def _scaled_similarity_logits(
+    pair_embeddings: Tensor,
+    text_embeddings: Tensor,
+    *,
+    temperature: float,
+    logit_scale: Tensor | float | None,
+) -> Tensor:
+    pair = F.normalize(pair_embeddings, dim=-1)
+    text = F.normalize(text_embeddings, dim=-1)
+    if logit_scale is None:
+        if temperature <= 0.0:
+            raise ValueError("temperature must be positive")
+        return pair @ text.T / temperature
+    scale = torch.as_tensor(logit_scale, dtype=pair.dtype, device=pair.device)
+    if scale.numel() != 1:
+        raise ValueError("logit_scale must be scalar")
+    return pair @ text.T * scale
+
+
 def multi_positive_symmetric_info_nce(
     pair_embeddings: Tensor,
     text_embeddings: Tensor,
@@ -109,15 +160,18 @@ def multi_positive_symmetric_info_nce(
     caption_group_ids: Tensor | None = None,
     temperature: float = 0.07,
 ) -> Tensor:
-    pair = F.normalize(pair_embeddings, dim=-1)
-    text = F.normalize(text_embeddings, dim=-1)
-    logits = pair @ text.T / temperature
+    logits = _scaled_similarity_logits(
+        pair_embeddings,
+        text_embeddings,
+        temperature=temperature,
+        logit_scale=None,
+    )
     groups = caption_group_ids
     if groups is None:
         groups = _infer_duplicate_groups_from_embeddings(text_embeddings)
     positives = build_caption_positive_mask(
         caption_to_pair,
-        pair_count=pair.shape[0],
+        pair_count=pair_embeddings.shape[0],
         caption_group_ids=groups,
     )
     pair_log_prob = logits.log_softmax(dim=1)
@@ -126,6 +180,60 @@ def multi_positive_symmetric_info_nce(
     text_positives = positives.T
     text_loss = -(text_log_prob.masked_fill(~text_positives, 0.0).sum(dim=1) / text_positives.sum(dim=1).clamp_min(1)).mean()
     return 0.5 * (pair_loss + text_loss)
+
+
+def _positive_set_mass_loss(logits: Tensor, positives: Tensor) -> Tensor:
+    if logits.shape != positives.shape:
+        raise ValueError(f"logits and positives must have the same shape, got {logits.shape} and {positives.shape}")
+    valid = positives.any(dim=1)
+    if not torch.all(valid):
+        raise ValueError("Every query must have at least one positive target")
+    positive_logits = logits.masked_fill(~positives, float("-inf"))
+    return (torch.logsumexp(logits, dim=1) - torch.logsumexp(positive_logits, dim=1)).mean()
+
+
+def multi_positive_set_info_nce(
+    pair_embeddings: Tensor,
+    text_embeddings: Tensor,
+    caption_to_pair: Tensor,
+    caption_group_ids: Tensor,
+    *,
+    temperature: float = 0.07,
+    logit_scale: Tensor | float | None = None,
+    text_to_pair_weight: float = 0.75,
+    pair_to_text_weight: float = 0.25,
+) -> Tensor:
+    """Set-mass contrastive objective aligned with duplicate-aware retrieval.
+
+    Unlike averaging ``-log p`` over every positive, this objective maximizes
+    the probability mass assigned to the positive *set*. It therefore does not
+    impose an artificial ``log(number_of_positives)`` floor when one query has
+    several valid targets.
+    """
+
+    if text_to_pair_weight < 0.0 or pair_to_text_weight < 0.0:
+        raise ValueError("loss direction weights must be non-negative")
+    weight_sum = text_to_pair_weight + pair_to_text_weight
+    if weight_sum <= 0.0:
+        raise ValueError("at least one loss direction weight must be positive")
+
+    logits = _scaled_similarity_logits(
+        pair_embeddings,
+        text_embeddings,
+        temperature=temperature,
+        logit_scale=logit_scale,
+    )
+    positives = build_caption_positive_mask(
+        caption_to_pair,
+        pair_count=pair_embeddings.shape[0],
+        caption_group_ids=caption_group_ids,
+    )
+    pair_to_text = _positive_set_mass_loss(logits, positives)
+    text_to_pair = _positive_set_mass_loss(logits.T, positives.T)
+    return (
+        text_to_pair_weight * text_to_pair
+        + pair_to_text_weight * pair_to_text
+    ) / weight_sum
 
 
 def supervised_contrastive_loss(embeddings: Tensor, labels: Tensor, temperature: float = 0.07) -> Tensor:
