@@ -25,6 +25,7 @@ class RetrievalCorpus:
     encode_seconds: float
     peak_allocated_vram_bytes: int
     peak_reserved_vram_bytes: int
+    dataset_names: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -56,6 +57,7 @@ def collect_retrieval_corpus(
     caption_group_ids_all: list[Tensor] = []
     pair_mask_fractions: list[Tensor] = []
     pair_ids: list[str] = []
+    dataset_names: list[str] = []
     captions: list[str] = []
     pair_offset = 0
 
@@ -68,6 +70,7 @@ def collect_retrieval_corpus(
         for batch in loader:
             batch_pair_ids = [str(pair_id) for pair_id in batch["pair_ids"]]
             pair_ids.extend(batch_pair_ids)
+            dataset_names.extend(str(name) for name in batch.get("dataset_names", ["unknown"] * len(batch_pair_ids)))
             captions.extend(str(caption) for caption in batch["captions"])
             raw_mask_fractions = batch.get("mask_fractions")
             if raw_mask_fractions is None:
@@ -106,6 +109,7 @@ def collect_retrieval_corpus(
             encode_seconds=encode_seconds,
             peak_allocated_vram_bytes=peak_allocated,
             peak_reserved_vram_bytes=peak_reserved,
+            dataset_names=[],
         )
 
     return RetrievalCorpus(
@@ -119,6 +123,7 @@ def collect_retrieval_corpus(
         encode_seconds=encode_seconds,
         peak_allocated_vram_bytes=peak_allocated,
         peak_reserved_vram_bytes=peak_reserved,
+        dataset_names=dataset_names,
     )
 
 
@@ -215,6 +220,8 @@ def _validate_corpus(corpus: RetrievalCorpus) -> None:
         raise ValueError("captions length must match text query count")
     if len(corpus.pair_ids) != pair_count:
         raise ValueError("pair_ids length must match candidate pair count")
+    if corpus.dataset_names is not None and len(corpus.dataset_names) != pair_count:
+        raise ValueError("dataset_names length must match candidate pair count")
     if len(set(corpus.pair_ids)) != len(corpus.pair_ids):
         raise ValueError("pair_ids must be unique for deterministic retrieval ranking")
     if query_count:
@@ -441,6 +448,18 @@ def compute_retrieval_metrics(
     }
     metrics.update(_margin_summary(top1_top2_margin, "top1_top2_margin_"))
     metrics.update(_margin_summary(best_positive_minus_best_negative, "best_positive_minus_best_negative_"))
+
+    if corpus.dataset_names is not None:
+        pair_dataset_names = [str(name) for name in corpus.dataset_names]
+        query_dataset_names = [pair_dataset_names[int(index)] for index in corpus.caption_to_pair.tolist()]
+        metrics["dataset_order_fingerprint"] = _hash_strings(pair_dataset_names)
+        for dataset_name in sorted(set(pair_dataset_names)):
+            safe_name = dataset_name.replace("-", "_").replace(" ", "_")
+            mask = torch.tensor([name == dataset_name for name in query_dataset_names], dtype=torch.bool)
+            metrics.update(_masked_rank_summary(ranks, mask, f"{safe_name}_"))
+            metrics.update(_masked_rank_summary(exact, mask, f"{safe_name}_exact_"))
+            metrics[f"{safe_name}_num_queries"] = int(mask.sum().item())
+            metrics[f"{safe_name}_num_candidates"] = int(sum(name == dataset_name for name in pair_dataset_names))
 
     metrics.update(_masked_rank_summary(ranks, frequencies == 1, "unique_caption_"))
     metrics.update(_masked_rank_summary(ranks, (frequencies >= 2) & (frequencies <= 5), "rare_caption_"))

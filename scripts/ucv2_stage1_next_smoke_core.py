@@ -32,6 +32,9 @@ def run(
     universat_checkpoint: Path,
     jina_model: Path,
     temporal_depth: int = 6,
+    train_manifests: tuple[Path, ...] = (),
+    val_manifests: tuple[Path, ...] = (),
+    dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -52,6 +55,9 @@ def run(
         train_eval_interval=0,
         checkpoint_interval_steps=0,
         smoke=True,
+        train_manifests=tuple(str(path) for path in train_manifests),
+        val_manifests=tuple(str(path) for path in val_manifests),
+        dataset_sampling_weights=dataset_sampling_weights,
     )
     base._set_seed(config.seed)
     base._write_json(
@@ -64,8 +70,12 @@ def run(
         },
     )
 
-    train, val = base._build_datasets(config)
-    base._assert_disjoint(train, val)
+    from ucv2_stage1_next_core import _build_stage1_datasets
+
+    train, val = _build_stage1_datasets(config)
+    from ucv2_stage1_next_core import _assert_stage1_disjoint
+
+    _assert_stage1_disjoint(train, val)
     frequencies = caption_frequencies(train)
     train_loader = make_train_loader(train, config, frequencies, epoch=0)
     val_loader = make_eval_loader(val, config)

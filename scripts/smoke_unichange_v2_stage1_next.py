@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import sys
+import argparse
 from pathlib import Path
 
 from ucv2_cluster_report import finalize
@@ -8,15 +8,29 @@ from ucv2_stage1_next_smoke_core import run
 
 
 if __name__ == "__main__":
-    output_dir = Path(sys.argv[2])
-    temporal_depth = int(sys.argv[6]) if len(sys.argv) > 6 else 6
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("output_dir", type=Path)
+    parser.add_argument("universat_source", type=Path)
+    parser.add_argument("universat_checkpoint", type=Path)
+    parser.add_argument("jina_model", type=Path)
+    parser.add_argument("temporal_depth", type=int, nargs="?", default=6)
+    parser.add_argument("--train-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--val-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--dataset-weight", action="append", default=None)
+    args = parser.parse_args()
+    output_dir = args.output_dir
+    temporal_depth = args.temporal_depth
     result = run(
-        Path(sys.argv[1]),
+        args.data_root,
         output_dir,
-        Path(sys.argv[3]),
-        Path(sys.argv[4]),
-        Path(sys.argv[5]),
+        args.universat_source,
+        args.universat_checkpoint,
+        args.jina_model,
         temporal_depth=temporal_depth,
+        train_manifests=tuple(args.train_manifest),
+        val_manifests=tuple(args.val_manifest),
+        dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
     )
     report = finalize(output_dir, "cuda")
     required = (

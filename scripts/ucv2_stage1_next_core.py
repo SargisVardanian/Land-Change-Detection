@@ -21,6 +21,12 @@ from land_change_detection.models.retrieval_heads import (
     normalize_caption_text,
     stable_caption_group_ids,
 )
+from land_change_detection.training.temporal_caption_dataset import (
+    DeterministicWeightedDatasetSampler,
+    TemporalCaptionManifestDataset,
+    load_dataset_config,
+    parse_dataset_weights,
+)
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 
@@ -54,6 +60,10 @@ class Stage1NextConfig:
     smoke: bool = False
     fake_backbones: bool = False
     synthetic_data: bool = False
+    train_manifests: tuple[str, ...] = ()
+    val_manifests: tuple[str, ...] = ()
+    dataset_config: str | None = None
+    dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45")
 
     temporal_depth: int = 4
     use_direction_embeddings: bool = True
@@ -150,6 +160,7 @@ class FrequencyBalancedCaptionCollator:
             caption_to_pair.extend([pair_index] * len(selected))
         return {
             "pair_ids": [str(item.pair_id) for item in items],
+            "dataset_names": [str(getattr(item, "dataset_name", getattr(item, "metadata", {}).get("dataset_name", "unknown"))) for item in items],
             "images": images,
             "timestamps": torch.tensor([[0.0, 1.0] for _ in items], dtype=torch.float32),
             "temporal_valid_mask": torch.ones(len(items), 2, dtype=torch.bool),
@@ -208,10 +219,17 @@ def make_train_loader(
     epoch: int,
 ) -> DataLoader:
     generator = torch.Generator().manual_seed(config.seed + epoch)
+    weights = parse_dataset_weights(config.dataset_sampling_weights)
+    sampler = None
+    shuffle = True
+    if weights and isinstance(dataset, TemporalCaptionManifestDataset):
+        sampler = DeterministicWeightedDatasetSampler(dataset, weights=weights, seed=config.seed, epoch=epoch)
+        shuffle = False
     return DataLoader(
         dataset,
         batch_size=config.batch_size,
-        shuffle=True,
+        shuffle=shuffle,
+        sampler=sampler,
         generator=generator,
         num_workers=config.num_workers,
         collate_fn=_make_collator(dataset, config, epoch=epoch, training=True, frequencies=frequencies),
@@ -379,6 +397,54 @@ def validate_config(config: Stage1NextConfig) -> None:
         raise ValueError("mask_fraction_boundaries must be sorted")
     if config.conflict_mask_threshold < 0:
         raise ValueError("conflict_mask_threshold must be non-negative")
+    if config.train_manifests and not config.val_manifests:
+        raise ValueError("val_manifests must be provided when train_manifests are used")
+    parse_dataset_weights(config.dataset_sampling_weights)
+
+
+def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
+    config_train, config_val, config_weights = load_dataset_config(config.dataset_config)
+    train_manifests = tuple(config_train or config.train_manifests)
+    val_manifests = tuple(config_val or config.val_manifests)
+    if config_weights:
+        object.__setattr__(config, "dataset_sampling_weights", tuple(f"{name}={value}" for name, value in sorted(config_weights.items())))
+    if train_manifests or val_manifests:
+        if not train_manifests or not val_manifests:
+            raise ValueError("Both train and validation manifests are required for manifest-based Stage-1-next training")
+        train = TemporalCaptionManifestDataset(
+            train_manifests,
+            split=config.train_split,
+            image_size=config.image_size,
+            output_grid=config.output_grid,
+            max_pairs=config.max_train_samples,
+        )
+        val = TemporalCaptionManifestDataset(
+            val_manifests,
+            split=config.val_split,
+            image_size=config.image_size,
+            output_grid=config.output_grid,
+            max_pairs=config.max_val_samples,
+        )
+        return train, val
+    return base._build_datasets(config)
+
+
+def _assert_stage1_disjoint(train: Dataset, val: Dataset) -> None:
+    def ids(dataset: Dataset) -> set[str]:
+        samples = getattr(dataset, "samples", None)
+        if samples is not None:
+            values: set[str] = set()
+            for sample in samples:
+                if isinstance(sample, dict):
+                    values.add(str(sample.get("pair_id")))
+                else:
+                    values.add(str(getattr(sample, "sample_id", getattr(sample, "pair_id", ""))))
+            return values
+        return {str(getattr(dataset[index], "pair_id")) for index in range(len(dataset))}
+
+    overlap = ids(train) & ids(val)
+    if overlap:
+        raise RuntimeError(f"Train/validation pair ID leakage detected: {sorted(overlap)[:10]}")
 
 
 def _sample_mask_fraction(sample: Any) -> float:
@@ -506,6 +572,10 @@ def run(
     train_eval_pairs: int = 1024,
     train_eval_interval: int = 2,
     enable_conflict_filtering: bool = False,
+    train_manifests: tuple[Path, ...] = (),
+    val_manifests: tuple[Path, ...] = (),
+    dataset_config: Path | None = None,
+    dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -524,11 +594,15 @@ def run(
         train_eval_pairs=train_eval_pairs,
         train_eval_interval=train_eval_interval,
         enable_conflict_filtering=enable_conflict_filtering,
+        train_manifests=tuple(str(path) for path in train_manifests),
+        val_manifests=tuple(str(path) for path in val_manifests),
+        dataset_config=str(dataset_config) if dataset_config else None,
+        dataset_sampling_weights=dataset_sampling_weights,
     )
     validate_config(config)
     base._set_seed(config.seed)
-    train, val = base._build_datasets(config)
-    base._assert_disjoint(train, val)
+    train, val = _build_stage1_datasets(config)
+    _assert_stage1_disjoint(train, val)
     conflict_counts, conflict_indices = audit_dataset_conflicts(train, config)
     base._write_json(
         output_dir / "reports" / "dataset_conflict_audit.json",

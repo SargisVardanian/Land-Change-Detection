@@ -155,6 +155,46 @@ The new path must preserve the baseline scripts and add a separate feature-gated
 
 Do not add encoder depth merely because aggregate R@1 plateaus. First diagnose directionality, objective mismatch, caption duplication, label noise and the train/validation gap.
 
+### Multi-dataset Stage-1-next manifests
+
+Stage-1-next supports one canonical JSONL temporal-caption manifest for LEVIR-MCI, SECOND-CC and optional RSCC adapters. Each row must contain:
+
+`schema_version`, `dataset_name`, namespaced `pair_id`, `original_id`, `split`, `t1_path`, `t2_path`, `captions`, `normalized_caption_groups`, `caption_source`, `time_order`, nullable `mask_path`, nullable `semantic_t1_path`, nullable `semantic_t2_path`, nullable `sensor`, nullable `spatial_resolution`, `image_width`, `image_height`, `source_metadata` and `preprocessing_fingerprint`.
+
+Pair IDs are namespaced as `levir_mci:<split>:<original_id>`, `second_cc:<split>:<original_id>` and `rscc:<split>:<original_id>`. Official train/val/test splits must be preserved; do not randomly re-split these datasets. Manifest building must not resize, recompress or otherwise destructively preprocess imagery. Runtime transforms own resizing.
+
+Preprocessing commands:
+
+```bash
+PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/prepare_levir_mci_manifest.py \
+  --root /path/to/LEVIR-MCI --output manifests/levir_mci.jsonl \
+  --audit-report reports/levir_mci_manifest_audit.json
+
+PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/prepare_second_cc_manifest.py \
+  --root /path/to/SECOND-CC --output manifests/second_cc.jsonl \
+  --audit-report reports/second_cc_manifest_audit.json
+
+PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/merge_temporal_caption_manifests.py \
+  --manifest manifests/levir_mci.jsonl --manifest manifests/second_cc.jsonl \
+  --output manifests/stage1_next_mixed.jsonl \
+  --audit-report reports/stage1_next_mixed_manifest_audit.json
+```
+
+SECOND-CC must be read from raw image/caption/mask/semantic files through this manifest path, not from HDF5. RSCC is optional and disabled by default; model-generated RSCC captions are excluded unless `--include-model-generated` is explicit, and xBD licensing metadata must remain in `source_metadata`.
+
+Mixed Stage-1-next training may use repeated manifest arguments and explicit weights:
+
+```bash
+python scripts/train_unichange_v2_stage1_next.py DATA_ROOT OUT UNIVERSAT CHECKPOINT JINA 32 25 8 \
+  --temporal-depth 6 \
+  --train-manifest manifests/stage1_next_mixed.jsonl \
+  --val-manifest manifests/stage1_next_mixed.jsonl \
+  --dataset-weight levir_mci=0.55 \
+  --dataset-weight second_cc=0.45
+```
+
+Validation metrics must include combined metrics and per-dataset query subsets for LEVIR-MCI and SECOND-CC.
+
 ### Required validation
 
 ```bash

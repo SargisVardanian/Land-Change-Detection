@@ -23,6 +23,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--train-eval-pairs", type=int, default=1024)
     parser.add_argument("--train-eval-interval", type=int, default=2)
     parser.add_argument("--enable-conflict-filtering", action="store_true")
+    parser.add_argument("--train-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--val-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--dataset-config", type=Path, default=None)
+    parser.add_argument("--dataset-weight", action="append", default=None)
     return parser.parse_args()
 
 
@@ -45,5 +49,9 @@ if __name__ == "__main__":
             train_eval_pairs=args.train_eval_pairs,
             train_eval_interval=args.train_eval_interval,
             enable_conflict_filtering=args.enable_conflict_filtering,
+            train_manifests=tuple(args.train_manifest),
+            val_manifests=tuple(args.val_manifest),
+            dataset_config=args.dataset_config,
+            dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
         )
     )
