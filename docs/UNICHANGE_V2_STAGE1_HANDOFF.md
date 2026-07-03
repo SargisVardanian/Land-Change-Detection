@@ -172,7 +172,7 @@ source_metadata
 preprocessing_fingerprint
 ```
 
-The manifest scripts preserve official train/val/test splits and never resize or recompress images. SECOND-CC is intentionally loaded from raw files or JSON/JSONL/CSV annotations, not from HDF5. RSCC support is adapter-only and not part of the default training mix; default RSCC policy is `human_subset_only`, model-generated RSCC captions require explicit opt-in and remain identified by `caption_source`.
+The manifest scripts preserve official train/val/test splits and never resize or recompress images. SECOND-CC is intentionally loaded from raw files or JSON/JSONL/CSV annotations, not from HDF5. RSCC support is adapter-only and not part of the default training mix. The default RSCC policy is `qvq_ground_truth_only`: the official 988-pair RSCC/xBD QvQ-Max subset is benchmark ground truth, but those captions are `caption_source=model_generated`, not human annotation. Rows preserve `caption_generator="QvQ-Max"`, `benchmark_ground_truth=true`, `benchmark_subset="rscc_xbd_988"`, `training_default_enabled=false`, `license_family="xBD"` and `research_only=true`, and default to `split="test"` unless an explicit authoritative split is present.
 
 Commands:
 
@@ -195,9 +195,9 @@ python scripts/prepare_second_cc_manifest.py \
 python scripts/prepare_rscc_manifest.py \
   --root /path/to/RSCC \
   --annotations /path/to/RSCC_qvq.jsonl \
-  --caption-policy human_subset_only \
-  --expected-pairs EXPECTED \
-  --output manifests/rscc_human.jsonl \
+  --caption-policy qvq_ground_truth_only \
+  --expected-pairs 988 \
+  --output manifests/rscc_qvq_ground_truth.jsonl \
   --audit-report reports/rscc_manifest_audit.json
 
 python scripts/audit_temporal_caption_manifest.py \

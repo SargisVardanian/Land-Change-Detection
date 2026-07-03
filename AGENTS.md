@@ -210,7 +210,7 @@ PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/merge_temporal_caption_ma
 
 SECOND-CC must be read from the official Karpathy JSON and raw paths `<root>/<split>/rgb/A`, `<root>/<split>/rgb/B`, `<root>/<split>/sem/A`, and `<root>/<split>/sem/B` through this manifest path, not from HDF5. The semantic maps are semantic supervision metadata, not binary masks.
 
-RSCC is optional and disabled by default. Use `scripts/prepare_rscc_manifest.py` with `--caption-policy human_subset_only|model_generated_only|all`; the default is `human_subset_only`. Preserve `caption_source`, event/disaster metadata and xBD license metadata. Do not classify generated full-RSCC captions as human.
+RSCC is optional and disabled by default. Use `scripts/prepare_rscc_manifest.py` with `--caption-policy qvq_ground_truth_only|model_generated_only|all`; the default is `qvq_ground_truth_only`. The official 988-pair RSCC/xBD QvQ-Max subset is benchmark ground truth, but its captions are still `caption_source=model_generated`, not human annotation. Preserve `source_metadata.caption_generator="QvQ-Max"`, `benchmark_ground_truth=true`, `benchmark_subset="rscc_xbd_988"`, `training_default_enabled=false`, `license_family="xBD"` and `research_only=true`. QvQ rows default to `split="test"` unless an explicit authoritative split is present. Do not classify generated full-RSCC captions as human, and keep them distinguishable from QvQ-Max benchmark rows.
 
 ChangeChat is optional and disabled by default. `scripts/prepare_changechat_retrieval_manifest.py` may extract declarative retrieval descriptions from captioning, localization, quantification and GPT-assisted description fields, but must not use bare questions as retrieval captions.
 

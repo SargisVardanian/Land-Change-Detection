@@ -9,15 +9,15 @@ from typing import Any
 from land_change_detection.temporal_caption_manifest import audit_manifest_rows, make_manifest_row, write_jsonl
 
 
-GENERATED_MARKERS = {"model", "generated", "model_generated", "gpt", "chatgpt", "assistant", "synthetic"}
-HUMAN_MARKERS = {"human", "human_subset", "annotator", "expert", "manual"}
+GENERATED_MARKERS = {"model", "generated", "model_generated", "gpt", "chatgpt", "assistant", "synthetic", "qvq", "qvq-max", "qvq_max"}
+QVQ_GENERATORS = {"qvq-max", "qvq_max", "qvq max", "qvqmax"}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build an official RSCC/xBD temporal-caption retrieval manifest.")
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--annotations", type=Path, required=True)
-    parser.add_argument("--caption-policy", choices=("human_subset_only", "model_generated_only", "all"), default="human_subset_only")
+    parser.add_argument("--caption-policy", choices=("qvq_ground_truth_only", "model_generated_only", "all"), default="qvq_ground_truth_only")
     parser.add_argument("--expected-pairs", type=int, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--audit-report", type=Path, required=True)
@@ -43,15 +43,28 @@ def _pick(row: dict[str, Any], *keys: str) -> Any:
     return None
 
 
-def _caption_source(row: dict[str, Any]) -> str:
+def _is_qvq_ground_truth(row: dict[str, Any], annotations: Path) -> bool:
+    generator = str(_pick(row, "caption_generator", "generator", "model", "source_model") or "").casefold()
+    source = str(_pick(row, "caption_source", "source", "provenance", "caption_provenance", "answer_source") or "").casefold()
+    subset = str(_pick(row, "benchmark_subset", "subset_name", "dataset_subset") or "").casefold()
+    return bool(
+        row.get("benchmark_ground_truth")
+        or "qvq" in annotations.stem.casefold()
+        or generator in QVQ_GENERATORS
+        or "qvq" in source
+        or subset == "rscc_xbd_988"
+    )
+
+
+def _caption_kind(row: dict[str, Any], annotations: Path) -> str:
+    if _is_qvq_ground_truth(row, annotations):
+        return "qvq_ground_truth"
     raw = str(_pick(row, "caption_source", "source", "provenance", "caption_provenance", "answer_source") or "").casefold()
-    if raw in HUMAN_MARKERS or bool(row.get("human_subset")):
-        return "human"
     if raw in GENERATED_MARKERS or any(marker in raw for marker in GENERATED_MARKERS):
-        return "model_generated"
+        return "full_model_generated"
     if bool(row.get("is_generated")) or bool(row.get("generated")):
-        return "model_generated"
-    return "human" if bool(row.get("is_human", True)) else "model_generated"
+        return "full_model_generated"
+    return "full_model_generated"
 
 
 def _captions(row: dict[str, Any]) -> list[str]:
@@ -72,7 +85,7 @@ def _captions(row: dict[str, Any]) -> list[str]:
 
 
 def _split(row: dict[str, Any]) -> str:
-    value = str(_pick(row, "split", "subset", "partition") or "train").casefold()
+    value = str(_pick(row, "split", "subset", "partition") or "test").casefold()
     mapping = {"valid": "val", "validation": "val", "dev": "val"}
     value = mapping.get(value, value)
     if value not in {"train", "val", "test"}:
@@ -112,17 +125,45 @@ def build_rows(root: Path, annotations: Path, caption_policy: str) -> list[dict[
     captions_by_key: defaultdict[tuple[str, str, str], list[str]] = defaultdict(list)
     source_by_key: defaultdict[tuple[str, str, str], set[str]] = defaultdict(set)
     for row in _jsonl_rows(annotations):
-        source = _caption_source(row)
-        if caption_policy == "human_subset_only" and source != "human":
+        kind = _caption_kind(row, annotations)
+        if caption_policy == "qvq_ground_truth_only" and kind != "qvq_ground_truth":
             continue
-        if caption_policy == "model_generated_only" and source != "model_generated":
+        if caption_policy == "model_generated_only" and kind == "qvq_ground_truth":
             continue
         split = _split(row)
         original_id = str(_pick(row, "original_id", "pair_id", "sample_id", "image_id", "id", "xbd_id") or "").strip()
         if not original_id:
             raise ValueError("RSCC row missing original id")
         before, after = _find_xbd_pair(root, row, split)
-        key = (split, original_id, source if caption_policy != "all" else "mixed")
+        key = (split, original_id, kind)
+        metadata = {
+            "dataset": "RSCC",
+            "annotation_file": str(annotations),
+            "event": _pick(row, "event", "event_type"),
+            "disaster": _pick(row, "disaster", "disaster_name", "hazard"),
+            "license_family": "xBD",
+            "caption_policy": caption_policy,
+            "caption_kind": kind,
+        }
+        if kind == "qvq_ground_truth":
+            metadata.update(
+                {
+                    "caption_generator": "QvQ-Max",
+                    "benchmark_ground_truth": True,
+                    "benchmark_subset": "rscc_xbd_988",
+                    "training_default_enabled": False,
+                    "research_only": True,
+                }
+            )
+        else:
+            metadata.update(
+                {
+                    "caption_generator": _pick(row, "caption_generator", "generator", "model", "source_model") or "model_generated",
+                    "benchmark_ground_truth": False,
+                    "training_default_enabled": False,
+                    "research_only": True,
+                }
+            )
         grouped.setdefault(
             key,
             {
@@ -130,28 +171,17 @@ def build_rows(root: Path, annotations: Path, caption_policy: str) -> list[dict[
                 "original_id": original_id,
                 "before": before,
                 "after": after,
-                "metadata": {
-                    "dataset": "RSCC",
-                    "annotation_file": str(annotations),
-                    "event": _pick(row, "event", "event_type"),
-                    "disaster": _pick(row, "disaster", "disaster_name", "hazard"),
-                    "license_family": _pick(row, "license", "license_family") or "xBD",
-                    "caption_policy": caption_policy,
-                },
+                "metadata": metadata,
             },
         )
         captions_by_key[key].extend(_captions(row))
-        source_by_key[key].add(source)
+        source_by_key[key].add(kind)
 
     manifest_rows: list[dict[str, Any]] = []
     for key, payload in sorted(grouped.items()):
         captions = list(dict.fromkeys(captions_by_key[key]))
         if not captions:
             continue
-        sources = source_by_key[key]
-        caption_source = "model_generated" if sources == {"model_generated"} else "human"
-        if "model_generated" in sources and "human" in sources:
-            caption_source = "semantic_template"
         row = make_manifest_row(
             dataset_name="rscc",
             split=payload["split"],
@@ -159,8 +189,8 @@ def build_rows(root: Path, annotations: Path, caption_policy: str) -> list[dict[
             t1_path=payload["before"],
             t2_path=payload["after"],
             captions=captions,
-            caption_source=caption_source,
-            source_metadata=payload["metadata"] | {"caption_sources_observed": sorted(sources)},
+            caption_source="model_generated",
+            source_metadata=payload["metadata"] | {"caption_sources_observed": sorted(source_by_key[key])},
         )
         manifest_rows.append(row)
     return manifest_rows
