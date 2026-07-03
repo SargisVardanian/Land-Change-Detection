@@ -116,7 +116,7 @@ def _checkpoint_config(args: argparse.Namespace, checkpoint: dict) -> SimpleName
 
 
 def _eval_manifests(args: argparse.Namespace) -> tuple[list[str], dict[str, float]]:
-    _, config_val, config_weights = load_dataset_config(args.dataset_config)
+    _, config_val, config_weights, _ = load_dataset_config(args.dataset_config)
     manifests = [str(path) for path in (config_val or [str(path) for path in args.val_manifest])]
     weights = config_weights or parse_dataset_weights(args.dataset_weight)
     return manifests, weights

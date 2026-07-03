@@ -10,7 +10,7 @@ import torch
 
 import train_unichange_v2_retrieval as base
 from land_change_detection.models.retrieval_heads import (
-    multi_positive_set_info_nce,
+    semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
 from ucv2_cluster_common import build_model, strict_device
@@ -35,7 +35,9 @@ def run(
     temporal_depth: int = 6,
     train_manifests: tuple[Path, ...] = (),
     val_manifests: tuple[Path, ...] = (),
+    dataset_config: Path | None = None,
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
+    text_max_length: int = 256,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -58,7 +60,9 @@ def run(
         smoke=True,
         train_manifests=tuple(str(path) for path in train_manifests),
         val_manifests=tuple(str(path) for path in val_manifests),
+        dataset_config=str(dataset_config) if dataset_config else None,
         dataset_sampling_weights=dataset_sampling_weights,
+        text_max_length=text_max_length,
     )
     base._set_seed(config.seed)
     base._write_json(
@@ -66,7 +70,7 @@ def run(
         asdict(config)
         | {
             "stage1_next": True,
-            "loss": "multi_positive_set_info_nce",
+            "loss": "semantic_soft_target_text_to_pair",
             "stable_caption_groups": True,
         },
     )
@@ -105,14 +109,19 @@ def run(
                 batch["caption_to_pair"],
                 batch["temporal_valid_mask"],
             )
-            loss = multi_positive_set_info_nce(
+            loss = semantic_text_to_pair_set_loss(
                 output.pair_embedding,
                 output.text_embedding,
+                output.teacher_text_embedding,
+                batch["captions"],
                 batch["caption_to_pair"],
                 groups,
                 logit_scale=model.retrieval_head.similarity_scale(),
                 text_to_pair_weight=config.text_to_pair_weight,
                 pair_to_text_weight=config.pair_to_text_weight,
+                semantic_soft_target_weight=config.semantic_soft_target_weight,
+                semantic_teacher_top_k=config.semantic_teacher_top_k,
+                semantic_teacher_temperature=config.semantic_teacher_temperature,
             )
         if not torch.isfinite(loss):
             finite_loss = False
@@ -161,13 +170,17 @@ def run(
         "cluster_ready": False,
         "cluster_ready_requires": "Slurm COMPLETED/0:0 and cluster report finalization.",
         "stage1_next": True,
-        "loss": "multi_positive_set_info_nce",
+        "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
         "use_direction_embeddings": config.use_direction_embeddings,
         "use_explicit_change_fusion": config.use_explicit_change_fusion,
         "trainable_temperature": config.trainable_temperature,
         "temporal_depth": config.temporal_depth,
         "text_adapter_enabled": config.use_text_adapter,
+        "text_max_length": config.text_max_length,
+        "semantic_soft_target_weight": config.semantic_soft_target_weight,
+        "semantic_teacher_top_k": config.semantic_teacher_top_k,
+        "semantic_teacher_temperature": config.semantic_teacher_temperature,
         "max_captions_per_pair": config.max_captions_per_pair,
         "fake_backbones": False,
         "samples": {"train": len(train), "validation": len(val)},

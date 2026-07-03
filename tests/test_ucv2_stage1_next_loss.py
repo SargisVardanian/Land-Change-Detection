@@ -7,9 +7,12 @@ from land_change_detection.models.retrieval_heads import (
     RetrievalProjectionHead,
     TextEmbeddingAdapter,
     build_caption_positive_mask,
+    caption_detail_score,
     classify_caption_semantics,
     multi_positive_set_info_nce,
     multi_positive_symmetric_info_nce,
+    semantic_teacher_relevance_matrix,
+    semantic_text_to_pair_set_loss,
     normalize_caption_text,
     stable_caption_group_ids,
 )
@@ -135,3 +138,71 @@ def test_caption_semantic_classifier_is_centralized():
     assert classify_caption_semantics("A new building appeared")["appeared"]
     assert classify_caption_semantics("The building disappeared")["disappeared"]
     assert classify_caption_semantics("No change has occurred.")["no_change"]
+
+
+def test_semantic_paraphrases_receive_soft_relevance_and_exact_groups_are_hard():
+    teacher = torch.nn.functional.normalize(
+        torch.tensor([[1.0, 0.0], [0.98, 0.02], [0.0, 1.0]]),
+        dim=-1,
+    )
+    captions = ["A new building appeared", "New buildings were constructed", "The road disappeared"]
+    mapping = torch.tensor([0, 1, 2])
+    groups = stable_caption_group_ids(captions)
+    relevance = semantic_teacher_relevance_matrix(teacher, captions, mapping, groups, pair_count=3, top_k=2)
+    assert relevance[0, 0].item() == 1.0
+    assert relevance[0, 1].item() > 0.9
+    assert relevance[0, 2].item() == 0.0
+
+
+def test_exact_normalized_caption_groups_remain_semantic_hard_positives():
+    teacher = torch.nn.functional.normalize(torch.tensor([[1.0, 0.0], [0.0, 1.0]]), dim=-1)
+    captions = ["No change has occurred.", "no change has occurred"]
+    relevance = semantic_teacher_relevance_matrix(
+        teacher,
+        captions,
+        torch.tensor([0, 1]),
+        stable_caption_group_ids(captions),
+        pair_count=2,
+        top_k=1,
+    )
+    assert relevance.tolist() == [[1.0, 1.0], [1.0, 1.0]]
+
+
+def test_opposite_directions_receive_zero_semantic_relevance():
+    teacher = torch.nn.functional.normalize(torch.tensor([[1.0, 0.0], [1.0, 0.01]]), dim=-1)
+    captions = ["A building appeared", "A building was demolished"]
+    relevance = semantic_teacher_relevance_matrix(
+        teacher,
+        captions,
+        torch.tensor([0, 1]),
+        stable_caption_group_ids(captions),
+        pair_count=2,
+        top_k=2,
+    )
+    assert relevance[0, 1].item() == 0.0
+    assert relevance[1, 0].item() == 0.0
+
+
+def test_semantic_soft_target_loss_is_detached_and_finite():
+    pair = torch.nn.functional.normalize(torch.eye(3), dim=-1).requires_grad_(True)
+    text = torch.nn.functional.normalize(torch.eye(3), dim=-1)
+    teacher = text.detach().clone().requires_grad_(True)
+    captions = ["A new building appeared", "New buildings were constructed", "No change"]
+    loss = semantic_text_to_pair_set_loss(
+        pair,
+        text,
+        teacher,
+        captions,
+        torch.tensor([0, 1, 2]),
+        stable_caption_group_ids(captions),
+    )
+    assert torch.isfinite(loss)
+    loss.backward()
+    assert pair.grad is not None
+    assert teacher.grad is None
+
+
+def test_caption_detail_score_prefers_direction_object_count_location_without_length_domination():
+    detailed = "Two new buildings appeared in the upper left corner"
+    long_vague = "change " * 80
+    assert caption_detail_score(detailed) > caption_detail_score(long_vague)

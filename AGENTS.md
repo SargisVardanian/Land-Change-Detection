@@ -134,7 +134,7 @@ Any code change makes those reports stale. Run Stage-1-next smoke and memory pro
 | 7 | 3.3277 | 0.5148 | 0.5547 | 0.5877 | 0.5413 | 68.99 | 0.0104 |
 | 8 | 3.2898 | 0.5163 | 0.5565 | 0.5905 | 0.5422 | 64.78 | 0.0111 |
 
-Interpret duplicate-aware metrics carefully. A generic normalized caption can make many pairs relevant. Exact-pair retrieval remains much harder.
+Interpret exact-pair metrics strictly as diagnostics. Stage-1-next now targets semantic text-to-pair process retrieval: a query should retrieve all scenes with matching change processes, while detailed queries should prefer object type, direction, count, scale and location details.
 
 ### Stage-1-next requirements
 
@@ -143,15 +143,41 @@ The new path must preserve the baseline scripts and add a separate feature-gated
 1. before/after direction embeddings;
 2. explicit change fusion using `F1`, `F2`, `F2-F1`, `abs(F2-F1)` and `F1*F2`;
 3. stable normalized caption groups during training and evaluation;
-4. set-mass multi-positive InfoNCE;
-5. text-to-pair weighted more strongly than pair-to-text;
-6. frequency-balanced sampling of at most two captions per pair during training, with all captions retained for validation;
+4. set-mass multi-positive InfoNCE blended with detached semantic soft targets from frozen pre-adapter Jina text embeddings;
+5. text-to-pair weighted more strongly than pair-to-text, with pair-to-text kept only as the existing 0.25 regularizer;
+6. detail-aware sampling of at most two captions per pair during training: one slot prefers the most detailed caption and one slot uses deterministic rare-caption/rotation logic, with all captions retained for validation;
 7. bounded trainable CLIP-style temperature;
 8. no weight decay for biases, normalization parameters, direction/global tokens and logit scale;
 9. logged pre-clip gradient norms and clipping frequency;
-10. several best-checkpoint criteria;
-11. exact, caption-frequency and mask-size-stratified metrics;
-12. a periodic fixed train-subset evaluation.
+10. semantic best-checkpoint criteria only;
+11. semantic recall/nDCG, detailed/directional/location/count query metrics, exact diagnostics, caption-frequency and mask-size-stratified metrics;
+12. a periodic fixed train-subset evaluation;
+13. configurable Jina `text_max_length`, default `256` for semantic Stage-1-next experiments.
+
+Do not add a pair-to-pair projection head, loss, sampler or checkpoint metric in Stage-1-next. Exact-pair metrics remain diagnostics only: `exact_pair_R@1/R@5/R@10`, `exact_pair_MRR` and exact ranks. They must not drive best scores, checkpoint filenames, composite score or readiness success criteria.
+
+Stage-1-next checkpoint selection is:
+
+- `best_semantic_r1.pt`
+- `best_semantic_r5.pt`
+- `best_semantic_ndcg10.pt`
+- `best_detailed_r5.pt`
+- `best_macro_semantic.pt`
+- `best_composite.pt`
+- `best_retrieval.pt` as the `best_composite.pt` alias
+- `last_retrieval.pt`
+
+Composite score:
+
+```text
+0.30 * macro semantic R@1
++ 0.25 * macro semantic R@5
++ 0.20 * macro semantic R@10
++ 0.15 * macro semantic nDCG@10
++ 0.10 * detailed-query R@5
+```
+
+Early stopping monitors `composite` with default patience `4` validation epochs and minimum improvement `0.002`. Always preserve `last_retrieval.pt`.
 
 Do not add encoder depth merely because aggregate R@1 plateaus. First diagnose directionality, objective mismatch, caption duplication, label noise and the train/validation gap.
 
@@ -182,7 +208,11 @@ PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/merge_temporal_caption_ma
   --audit-report reports/stage1_next_mixed_manifest_audit.json
 ```
 
-SECOND-CC must be read from the official Karpathy JSON and raw paths `<root>/<split>/rgb/A`, `<root>/<split>/rgb/B`, `<root>/<split>/sem/A`, and `<root>/<split>/sem/B` through this manifest path, not from HDF5. The semantic maps are semantic supervision metadata, not binary masks. RSCC is optional and disabled by default; model-generated RSCC captions are excluded unless `--include-model-generated` is explicit, and xBD licensing metadata must remain in `source_metadata`.
+SECOND-CC must be read from the official Karpathy JSON and raw paths `<root>/<split>/rgb/A`, `<root>/<split>/rgb/B`, `<root>/<split>/sem/A`, and `<root>/<split>/sem/B` through this manifest path, not from HDF5. The semantic maps are semantic supervision metadata, not binary masks.
+
+RSCC is optional and disabled by default. Use `scripts/prepare_rscc_manifest.py` with `--caption-policy human_subset_only|model_generated_only|all`; the default is `human_subset_only`. Preserve `caption_source`, event/disaster metadata and xBD license metadata. Do not classify generated full-RSCC captions as human.
+
+ChangeChat is optional and disabled by default. `scripts/prepare_changechat_retrieval_manifest.py` may extract declarative retrieval descriptions from captioning, localization, quantification and GPT-assisted description fields, but must not use bare questions as retrieval captions.
 
 Mixed Stage-1-next training may use repeated manifest arguments and explicit weights:
 
@@ -205,7 +235,7 @@ VAL_MANIFESTS=/path/levir.jsonl:/path/second_cc.jsonl
 DATASET_WEIGHTS=levir_mci=0.55:second_cc=0.45
 ```
 
-Alternatively set `DATASET_CONFIG` to a JSON config containing `train_manifests`, `val_manifests`, and `dataset_sampling_weights`.
+Alternatively set `DATASET_CONFIG` to a JSON config containing `train_manifests`, `val_manifests`, `dataset_sampling_weights`, `allowed_caption_sources`, `semantic_soft_target_weight`, `semantic_teacher_top_k` and `semantic_teacher_temperature`.
 
 Mixed evaluation uses the same validation manifest contract:
 
@@ -228,6 +258,6 @@ PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" \
 bash -n cluster/ysu/*.sbatch
 ```
 
-Then run exact-commit Stage-1-next smoke and memory probes. Require Slurm `COMPLETED 0:0`, valid reports, real H100/BF16, 10 finite steps, correct gradients, checkpoint roundtrip and a physical local batch of at least 32.
+Then run exact-commit Stage-1-next smoke and memory probes. Require Slurm `COMPLETED 0:0`, valid reports, real H100/BF16, 10 finite steps, correct gradients, checkpoint roundtrip, `text_max_length=256` for the semantic experiment and a physical local batch of at least 32.
 
 Never claim training, evaluation or a cluster gate succeeded without user-provided Slurm state and report contents.

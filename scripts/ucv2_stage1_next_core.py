@@ -16,9 +16,10 @@ from torch.utils.data import DataLoader, Dataset, Subset
 
 import train_unichange_v2_retrieval as base
 from land_change_detection.models.retrieval_heads import (
+    caption_detail_score,
     classify_caption_semantics,
-    multi_positive_set_info_nce,
     normalize_caption_text,
+    semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
@@ -65,6 +66,7 @@ class Stage1NextConfig:
     val_manifests: tuple[str, ...] = ()
     dataset_config: str | None = None
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45")
+    allowed_caption_sources: tuple[str, ...] = ()
 
     temporal_depth: int = 4
     use_direction_embeddings: bool = True
@@ -77,9 +79,13 @@ class Stage1NextConfig:
     caption_frequency_power: float = 0.5
     text_to_pair_weight: float = 0.75
     pair_to_text_weight: float = 0.25
+    semantic_soft_target_weight: float = 0.25
+    semantic_teacher_top_k: int = 8
+    semantic_teacher_temperature: float = 0.05
     use_text_adapter: bool = True
     text_adapter_hidden_dim: int = 512
     text_adapter_lr: float = 2e-5
+    text_max_length: int = 256
     caption_sampling_seed: int | None = None
     enable_conflict_filtering: bool = False
     conflict_mask_threshold: float = 0.05
@@ -91,6 +97,8 @@ class Stage1NextConfig:
     train_eval_pairs: int = 1024
     train_eval_interval: int = 2
     checkpoint_interval_steps: int = 500
+    early_stopping_patience: int = 4
+    early_stopping_min_improvement: float = 0.002
 
 
 class FrequencyBalancedCaptionCollator:
@@ -121,6 +129,8 @@ class FrequencyBalancedCaptionCollator:
             return captions
         if limit >= len(captions):
             return captions
+        detail_scores = [caption_detail_score(caption) for caption in captions]
+        detail_index = max(range(len(captions)), key=lambda index: (detail_scores[index], -index))
         weights = torch.tensor(
             [
                 max(self.caption_frequencies.get(normalize_caption_text(caption), 1), 1)
@@ -134,8 +144,11 @@ class FrequencyBalancedCaptionCollator:
         # are covered within a bounded number of epochs, then fill remaining
         # slots with deterministic rare-caption-weighted sampling.
         rotation_index = self.epoch % len(captions)
+        if rotation_index == detail_index and len(captions) > 1:
+            rotation_index = (rotation_index + 1) % len(captions)
         weights[rotation_index] = 0.0
-        remaining = max(limit - 1, 0)
+        weights[detail_index] = 0.0
+        remaining = max(limit - 2, 0)
         sampled: list[int] = []
         if remaining:
             if float(weights.sum().item()) <= 0.0:
@@ -143,7 +156,7 @@ class FrequencyBalancedCaptionCollator:
                 sampled = candidates[:remaining]
             else:
                 sampled = torch.multinomial(weights, num_samples=remaining, replacement=False, generator=generator).tolist()
-        indices = [rotation_index, *sampled]
+        indices = [detail_index, rotation_index, *sampled]
         return [captions[index] for index in sorted(indices)]
 
     def __call__(self, items: list[Any]) -> dict[str, Any]:
@@ -392,6 +405,18 @@ def validate_config(config: Stage1NextConfig) -> None:
         raise ValueError("text_adapter_lr must be positive")
     if config.text_to_pair_weight < 0 or config.pair_to_text_weight < 0:
         raise ValueError("loss direction weights must be non-negative")
+    if not 0.0 <= config.semantic_soft_target_weight <= 1.0:
+        raise ValueError("semantic_soft_target_weight must be in [0, 1]")
+    if config.semantic_teacher_top_k <= 0:
+        raise ValueError("semantic_teacher_top_k must be positive")
+    if config.semantic_teacher_temperature <= 0:
+        raise ValueError("semantic_teacher_temperature must be positive")
+    if config.text_max_length <= 0:
+        raise ValueError("text_max_length must be positive")
+    if config.early_stopping_patience < 0:
+        raise ValueError("early_stopping_patience must be non-negative")
+    if config.early_stopping_min_improvement < 0:
+        raise ValueError("early_stopping_min_improvement must be non-negative")
     if config.text_to_pair_weight + config.pair_to_text_weight <= 0:
         raise ValueError("at least one loss direction weight must be positive")
     if sorted(config.mask_fraction_boundaries) != list(config.mask_fraction_boundaries):
@@ -404,11 +429,15 @@ def validate_config(config: Stage1NextConfig) -> None:
 
 
 def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
-    config_train, config_val, config_weights = load_dataset_config(config.dataset_config)
+    config_train, config_val, config_weights, config_options = load_dataset_config(config.dataset_config)
     train_manifests = tuple(config_train or config.train_manifests)
     val_manifests = tuple(config_val or config.val_manifests)
     if config_weights:
         object.__setattr__(config, "dataset_sampling_weights", tuple(f"{name}={value}" for name, value in sorted(config_weights.items())))
+    for key in ("allowed_caption_sources", "semantic_soft_target_weight", "semantic_teacher_top_k", "semantic_teacher_temperature"):
+        if key in config_options:
+            value = config_options[key]
+            object.__setattr__(config, key, tuple(value) if key == "allowed_caption_sources" else value)
     if config_train:
         object.__setattr__(config, "train_manifests", tuple(config_train))
     if config_val:
@@ -422,6 +451,7 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
             image_size=config.image_size,
             output_grid=config.output_grid,
             max_pairs=config.max_train_samples,
+            allowed_caption_sources=set(config.allowed_caption_sources) if config.allowed_caption_sources else None,
         )
         val = TemporalCaptionManifestDataset(
             val_manifests,
@@ -429,6 +459,7 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
             image_size=config.image_size,
             output_grid=config.output_grid,
             max_pairs=config.max_val_samples,
+            allowed_caption_sources=set(config.allowed_caption_sources) if config.allowed_caption_sources else None,
         )
         return train, val
     return base._build_datasets(config)
@@ -536,21 +567,22 @@ def audit_dataset_conflicts(dataset: Dataset, config: Stage1NextConfig) -> tuple
 
 def composite_score(metrics: dict[str, Any]) -> float:
     score = (
-        0.35 * float(metrics.get("text_to_pair_R@1", 0.0))
-        + 0.25 * float(metrics.get("text_to_pair_R@5", 0.0))
-        + 0.20 * float(metrics.get("text_to_pair_R@10", 0.0))
-        + 0.20 * float(metrics.get("MRR", 0.0))
+        0.30 * float(metrics.get("macro_semantic_recall@1", metrics.get("semantic_recall@1", 0.0)))
+        + 0.25 * float(metrics.get("macro_semantic_recall@5", metrics.get("semantic_recall@5", 0.0)))
+        + 0.20 * float(metrics.get("macro_semantic_recall@10", metrics.get("semantic_recall@10", 0.0)))
+        + 0.15 * float(metrics.get("macro_semantic_nDCG@10", metrics.get("semantic_nDCG@10", 0.0)))
+        + 0.10 * float(metrics.get("detailed_query_R@5", 0.0))
     )
     return float(score)
 
 
 def _selection_scores(metrics: dict[str, Any]) -> dict[str, float]:
     return {
-        "r1": float(metrics.get("text_to_pair_R@1", 0.0)),
-        "mrr": float(metrics.get("MRR", 0.0)),
-        "r10": float(metrics.get("text_to_pair_R@10", 0.0)),
-        "exact_r10": float(metrics.get("exact_pair_R@10", 0.0)),
-        "unique_r5": float(metrics.get("unique_caption_R@5", 0.0)),
+        "semantic_r1": float(metrics.get("macro_semantic_recall@1", metrics.get("semantic_recall@1", 0.0))),
+        "semantic_r5": float(metrics.get("macro_semantic_recall@5", metrics.get("semantic_recall@5", 0.0))),
+        "semantic_ndcg10": float(metrics.get("macro_semantic_nDCG@10", metrics.get("semantic_nDCG@10", 0.0))),
+        "detailed_r5": float(metrics.get("detailed_query_R@5", 0.0)),
+        "macro_semantic": float(metrics.get("macro_semantic_mean", 0.0)),
         "composite": composite_score(metrics),
     }
 
@@ -570,6 +602,10 @@ def _critical_resume_config(config: Stage1NextConfig) -> dict[str, Any]:
         "pair_to_text_weight",
         "use_text_adapter",
         "text_adapter_hidden_dim",
+        "text_max_length",
+        "semantic_soft_target_weight",
+        "semantic_teacher_top_k",
+        "semantic_teacher_temperature",
         "train_eval_pairs",
         "train_eval_interval",
     )
@@ -610,6 +646,9 @@ def run(
     val_manifests: tuple[Path, ...] = (),
     dataset_config: Path | None = None,
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
+    text_max_length: int = 256,
+    early_stopping_patience: int = 4,
+    early_stopping_min_improvement: float = 0.002,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -632,6 +671,9 @@ def run(
         val_manifests=tuple(str(path) for path in val_manifests),
         dataset_config=str(dataset_config) if dataset_config else None,
         dataset_sampling_weights=dataset_sampling_weights,
+        text_max_length=text_max_length,
+        early_stopping_patience=early_stopping_patience,
+        early_stopping_min_improvement=early_stopping_min_improvement,
     )
     validate_config(config)
     base._set_seed(config.seed)
@@ -658,7 +700,7 @@ def run(
         asdict(config)
         | {
             "stage1_next": True,
-            "loss": "multi_positive_set_info_nce",
+            "loss": "semantic_soft_target_text_to_pair",
             "stable_caption_groups": True,
             "resume": str(resume) if resume else None,
             "history_schema": 3,
@@ -689,12 +731,20 @@ def run(
     resume_batch = 0
     step = 0
     best_scores = {
-        "r1": -1.0,
-        "mrr": -1.0,
-        "r10": -1.0,
-        "exact_r10": -1.0,
-        "unique_r5": -1.0,
+        "semantic_r1": -1.0,
+        "semantic_r5": -1.0,
+        "semantic_ndcg10": -1.0,
+        "detailed_r5": -1.0,
+        "macro_semantic": -1.0,
         "composite": -1.0,
+    }
+    checkpoint_names = {
+        "semantic_r1": "best_semantic_r1.pt",
+        "semantic_r5": "best_semantic_r5.pt",
+        "semantic_ndcg10": "best_semantic_ndcg10.pt",
+        "detailed_r5": "best_detailed_r5.pt",
+        "macro_semantic": "best_macro_semantic.pt",
+        "composite": "best_composite.pt",
     }
     if resume:
         payload = torch.load(resume, map_location=device)
@@ -711,6 +761,7 @@ def run(
         best_scores.update({key: float(value) for key, value in payload.get("best_scores", {}).items()})
 
     history_path = output_dir / "metrics_history.jsonl"
+    epochs_since_composite = 0
     for epoch in range(start_epoch, config.epochs):
         train_loader = make_train_loader(train, config, frequencies, epoch)
         torch.cuda.reset_peak_memory_stats(device)
@@ -736,14 +787,19 @@ def run(
                     batch["caption_to_pair"],
                     batch["temporal_valid_mask"],
                 )
-                loss, loss_diagnostics = multi_positive_set_info_nce(
+                loss, loss_diagnostics = semantic_text_to_pair_set_loss(
                     output.pair_embedding,
                     output.text_embedding,
+                    output.teacher_text_embedding,
+                    batch["captions"],
                     batch["caption_to_pair"],
                     caption_groups,
                     logit_scale=model.retrieval_head.similarity_scale(),
                     text_to_pair_weight=config.text_to_pair_weight,
                     pair_to_text_weight=config.pair_to_text_weight,
+                    semantic_soft_target_weight=config.semantic_soft_target_weight,
+                    semantic_teacher_top_k=config.semantic_teacher_top_k,
+                    semantic_teacher_temperature=config.semantic_teacher_temperature,
                     return_diagnostics=True,
                 )
             if not torch.isfinite(loss):
@@ -859,11 +915,13 @@ def run(
         base._write_json(output_dir / "latest_metrics.json", epoch_record)
 
         selection = _selection_scores(epoch_record)
+        composite_improved = selection["composite"] > best_scores["composite"] + config.early_stopping_min_improvement
         for name, score in selection.items():
-            if score > best_scores[name]:
+            if score > best_scores[name] + (config.early_stopping_min_improvement if name == "composite" else 0.0):
                 best_scores[name] = score
+                checkpoint_name = checkpoint_names[name]
                 save_checkpoint(
-                    output_dir / f"best_{name}.pt",
+                    output_dir / checkpoint_name,
                     model,
                     optimizer,
                     scheduler,
@@ -882,7 +940,7 @@ def run(
                         "record_type": "checkpoint_event",
                         "epoch": epoch + 1,
                         "step": step,
-                        "checkpoint": f"best_{name}.pt",
+                        "checkpoint": checkpoint_name,
                         "selection_metric": name,
                         "selection_value": score,
                     },
@@ -940,6 +998,20 @@ def run(
             },
         )
         resume_batch = 0
+        epochs_since_composite = 0 if composite_improved else epochs_since_composite + 1
+        if config.early_stopping_patience and epochs_since_composite >= config.early_stopping_patience:
+            _append_history(
+                history_path,
+                {
+                    "record_type": "early_stopping",
+                    "epoch": epoch + 1,
+                    "step": step,
+                    "metric": "composite",
+                    "patience": config.early_stopping_patience,
+                    "minimum_improvement": config.early_stopping_min_improvement,
+                },
+            )
+            break
         if config.max_steps is not None and step >= config.max_steps:
             break
 

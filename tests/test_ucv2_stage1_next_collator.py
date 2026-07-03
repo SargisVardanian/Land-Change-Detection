@@ -56,6 +56,31 @@ def test_caption_sampling_rotates_to_cover_all_captions():
     assert seen == set(item.captions)
 
 
+def test_detail_aware_caption_sampling_keeps_most_detailed_slot():
+    item = SimpleNamespace(
+        pair_id="detail-pair",
+        t1=torch.zeros(3, 4, 4),
+        t2=torch.ones(3, 4, 4),
+        captions=[
+            "change",
+            "new buildings",
+            "Three new buildings appeared in the upper left corner",
+        ],
+        mask=torch.zeros(4, 4),
+    )
+    collator = FrequencyBalancedCaptionCollator(
+        {caption: 1 for caption in item.captions},
+        max_captions_per_pair=2,
+        frequency_power=0.5,
+        seed=7,
+        epoch=0,
+        training=True,
+    )
+    captions = collator([item])["captions"]
+    assert "Three new buildings appeared in the upper left corner" in captions
+    assert len(captions) == 2
+
+
 def test_validation_collator_keeps_all_captions():
     item = SimpleNamespace(
         pair_id="p",

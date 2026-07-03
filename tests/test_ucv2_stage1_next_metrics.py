@@ -39,6 +39,17 @@ def _tie_corpus() -> RetrievalCorpus:
         encode_seconds=1.0,
         peak_allocated_vram_bytes=0,
         peak_reserved_vram_bytes=0,
+        teacher_text_embeddings=F.normalize(
+            torch.tensor(
+                [
+                    [1.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [0.5, 0.5],
+                ]
+            ),
+            dim=-1,
+        ),
     )
 
 
@@ -105,8 +116,32 @@ def test_repeated_retrieval_metrics_are_deterministic_and_do_not_mutate_inputs()
     assert torch.equal(first_ranks.duplicate_aware_ranks, second_ranks.duplicate_aware_ranks)
     assert torch.equal(first_ranks.exact_pair_ranks, second_ranks.exact_pair_ranks)
     assert _stable_metric_subset(first_metrics) == _stable_metric_subset(second_metrics)
+    assert first_metrics["semantic_recall@5"] == second_metrics["semantic_recall@5"]
+    assert first_metrics["semantic_nDCG@10"] == second_metrics["semantic_nDCG@10"]
     assert torch.equal(corpus.pair_embeddings, before_pairs)
     assert torch.equal(corpus.text_embeddings, before_texts)
+
+
+def test_semantic_retrieval_metrics_find_paraphrase_processes():
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.tensor([[0.0, 1.0], [1.0, 0.0], [0.9, 0.1]]), dim=-1),
+        text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]]), dim=-1),
+        teacher_text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.98, 0.02], [0.0, 1.0]]), dim=-1),
+        caption_to_pair=torch.tensor([0, 1, 2]),
+        caption_group_ids=stable_caption_group_ids(["A new building appeared", "New buildings were constructed", "No change"]),
+        pair_ids=["appeared-a", "appeared-b", "no-change"],
+        captions=["A new building appeared", "New buildings were constructed", "No change"],
+        pair_mask_fractions=torch.tensor([0.1, 0.1, 0.0]),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        dataset_names=["levir_mci", "second_cc", "rscc"],
+    )
+    metrics, _ = compute_retrieval_metrics(corpus)
+    assert metrics["semantic_recall@5"] == 1.0
+    assert metrics["semantic_nDCG@10"] > 0.0
+    assert metrics["detailed_query_R@5"] == 1.0
+    assert "macro_semantic_recall@5" in metrics
 
 
 def test_chunked_retrieval_matches_full_matrix_for_multiple_chunk_sizes():

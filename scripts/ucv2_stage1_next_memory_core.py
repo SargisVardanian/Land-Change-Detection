@@ -8,7 +8,7 @@ import torch
 
 import train_unichange_v2_retrieval as base
 from land_change_detection.models.retrieval_heads import (
-    multi_positive_set_info_nce,
+    semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
 from ucv2_cluster_common import build_model, run_metadata, strict_device
@@ -30,6 +30,7 @@ def run(
     universat_checkpoint: Path,
     jina_model: Path,
     temporal_depth: int = 6,
+    text_max_length: int = 256,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -49,6 +50,7 @@ def run(
         train_eval_pairs=0,
         train_eval_interval=0,
         checkpoint_interval_steps=0,
+        text_max_length=text_max_length,
     )
     train, val = _build_stage1_datasets(config)
     data_metadata = _stage1_data_metadata(config, train, val)
@@ -80,14 +82,19 @@ def run(
                         batch["caption_to_pair"],
                         batch["temporal_valid_mask"],
                     )
-                    loss = multi_positive_set_info_nce(
+                    loss = semantic_text_to_pair_set_loss(
                         output.pair_embedding,
                         output.text_embedding,
+                        output.teacher_text_embedding,
+                        batch["captions"],
                         batch["caption_to_pair"],
                         groups,
                         logit_scale=model.retrieval_head.similarity_scale(),
                         text_to_pair_weight=config.text_to_pair_weight,
                         pair_to_text_weight=config.pair_to_text_weight,
+                        semantic_soft_target_weight=config.semantic_soft_target_weight,
+                        semantic_teacher_top_k=config.semantic_teacher_top_k,
+                        semantic_teacher_temperature=config.semantic_teacher_temperature,
                     )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -122,13 +129,17 @@ def run(
         **run_metadata(),
         "status": "PASS" if passed else "FAIL",
         "stage1_next": True,
-        "loss": "multi_positive_set_info_nce",
+        "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
         "temporal_depth": config.temporal_depth,
         "text_adapter_enabled": config.use_text_adapter,
+        "text_max_length": config.text_max_length,
+        "semantic_soft_target_weight": config.semantic_soft_target_weight,
+        "semantic_teacher_top_k": config.semantic_teacher_top_k,
+        "semantic_teacher_temperature": config.semantic_teacher_temperature,
         "gpu_name": torch.cuda.get_device_name(device),
         "results": rows,
         "recommended_batch_size": max(passed) if passed else None,

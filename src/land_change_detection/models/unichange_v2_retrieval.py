@@ -16,6 +16,7 @@ from land_change_detection.models.temporal_change_encoder import TemporalChangeE
 class UniChangeV2RetrievalOutput:
     pair_embedding: Tensor
     text_embedding: Tensor
+    teacher_text_embedding: Tensor
     logits: Tensor
     visual_metadata: dict[str, Any]
 
@@ -64,14 +65,17 @@ class UniChangeV2RetrievalModel(nn.Module):
         projected = self.retrieval_head(temporal.pair_embedding)
         return projected.pair_embedding, visual.metadata
 
-    def encode_texts(self, captions: list[str]) -> Tensor:
+    def encode_texts(self, captions: list[str], *, return_teacher: bool = False) -> Tensor | tuple[Tensor, Tensor]:
         with torch.no_grad():
             features = self.text_encoder(captions, role="query")
         if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
             raise TypeError("text_encoder must return an object with global_embedding")
-        embeddings = features.global_embedding.detach()
+        teacher_embeddings = features.global_embedding.detach()
+        embeddings = teacher_embeddings
         if self.text_adapter is not None:
             embeddings = self.text_adapter(embeddings)
+        if return_teacher:
+            return embeddings, teacher_embeddings
         return embeddings
 
     def forward(
@@ -82,11 +86,14 @@ class UniChangeV2RetrievalModel(nn.Module):
         temporal_valid_mask: Tensor | None = None,
     ) -> UniChangeV2RetrievalOutput:
         pair_embedding, metadata = self.encode_pairs(images, temporal_valid_mask=temporal_valid_mask)
-        text_embedding = self.encode_texts(captions).to(pair_embedding.device)
+        text_embedding, teacher_text_embedding = self.encode_texts(captions, return_teacher=True)
+        text_embedding = text_embedding.to(pair_embedding.device)
+        teacher_text_embedding = teacher_text_embedding.to(pair_embedding.device)
         logits = pair_embedding @ text_embedding.T
         return UniChangeV2RetrievalOutput(
             pair_embedding=pair_embedding,
             text_embedding=text_embedding,
+            teacher_text_embedding=teacher_text_embedding,
             logits=logits,
             visual_metadata=metadata,
         )

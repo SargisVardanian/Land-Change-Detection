@@ -21,9 +21,11 @@ SMOKE_REPORT="${SMOKE_REPORT:?Set SMOKE_REPORT to the successful Stage-1-next sm
 MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful Stage-1-next memory report}"
 CURRENT_COMMIT="$(git rev-parse HEAD)"
 TEMPORAL_DEPTH="${TEMPORAL_DEPTH:-6}"
+TEXT_MAX_LENGTH="${TEXT_MAX_LENGTH:-256}"
 
 GATE_ARGS=(
   "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32 "$TEMPORAL_DEPTH"
+  --expected-text-max-length "$TEXT_MAX_LENGTH"
 )
 append_gate_colon_list() {
   local flag="$1"
@@ -87,6 +89,9 @@ ARGS=(
   --caption-frequency-power "${CAPTION_FREQUENCY_POWER:-0.5}"
   --train-eval-pairs "${TRAIN_EVAL_PAIRS:-1024}"
   --train-eval-interval "${TRAIN_EVAL_INTERVAL:-2}"
+  --text-max-length "$TEXT_MAX_LENGTH"
+  --early-stopping-patience "${EARLY_STOPPING_PATIENCE:-4}"
+  --early-stopping-min-improvement "${EARLY_STOPPING_MIN_IMPROVEMENT:-0.002}"
 )
 if [[ -n "${RESUME_CHECKPOINT:-}" ]]; then
   ARGS+=(--resume "$RESUME_CHECKPOINT")

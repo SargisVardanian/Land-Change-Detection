@@ -27,6 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--val-manifest", type=Path, action="append", default=[])
     parser.add_argument("--dataset-config", type=Path, default=None)
     parser.add_argument("--dataset-weight", action="append", default=None)
+    parser.add_argument("--text-max-length", type=int, default=256)
+    parser.add_argument("--early-stopping-patience", type=int, default=4)
+    parser.add_argument("--early-stopping-min-improvement", type=float, default=0.002)
     return parser.parse_args()
 
 
@@ -53,5 +56,8 @@ if __name__ == "__main__":
             val_manifests=tuple(args.val_manifest),
             dataset_config=args.dataset_config,
             dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
+            text_max_length=args.text_max_length,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_improvement=args.early_stopping_min_improvement,
         )
     )

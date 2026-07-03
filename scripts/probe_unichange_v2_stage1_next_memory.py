@@ -1,19 +1,29 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+import argparse
 
 from ucv2_stage1_next_memory_core import run
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data_root", type=Path)
+    parser.add_argument("output_dir", type=Path)
+    parser.add_argument("universat_source", type=Path)
+    parser.add_argument("universat_checkpoint", type=Path)
+    parser.add_argument("jina_model", type=Path)
+    parser.add_argument("temporal_depth", type=int, nargs="?", default=6)
+    parser.add_argument("--text-max-length", type=int, default=256)
+    args = parser.parse_args()
     raise SystemExit(
         run(
-            Path(sys.argv[1]),
-            Path(sys.argv[2]),
-            Path(sys.argv[3]),
-            Path(sys.argv[4]),
-            Path(sys.argv[5]),
-            temporal_depth=int(sys.argv[6]) if len(sys.argv) > 6 else 6,
+            args.data_root,
+            args.output_dir,
+            args.universat_source,
+            args.universat_checkpoint,
+            args.jina_model,
+            temporal_depth=args.temporal_depth,
+            text_max_length=args.text_max_length,
         )
     )

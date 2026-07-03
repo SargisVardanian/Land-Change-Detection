@@ -9,7 +9,11 @@ from torch import Tensor
 from torch.utils.data import DataLoader
 
 import train_unichange_v2_retrieval as base
-from land_change_detection.models.retrieval_heads import classify_caption_semantics, stable_caption_group_ids
+from land_change_detection.models.retrieval_heads import (
+    classify_caption_semantics,
+    semantic_teacher_relevance_matrix,
+    stable_caption_group_ids,
+)
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
 
 
@@ -26,6 +30,7 @@ class RetrievalCorpus:
     peak_allocated_vram_bytes: int
     peak_reserved_vram_bytes: int
     dataset_names: list[str] | None = None
+    teacher_text_embeddings: Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +58,7 @@ def collect_retrieval_corpus(
     model.eval()
     pair_embeddings: list[Tensor] = []
     text_embeddings: list[Tensor] = []
+    teacher_text_embeddings: list[Tensor] = []
     caption_to_pair_all: list[Tensor] = []
     caption_group_ids_all: list[Tensor] = []
     pair_mask_fractions: list[Tensor] = []
@@ -87,6 +93,7 @@ def collect_retrieval_corpus(
                 )
             pair_embeddings.append(output.pair_embedding.float().cpu())
             text_embeddings.append(output.text_embedding.float().cpu())
+            teacher_text_embeddings.append(output.teacher_text_embedding.float().cpu())
             caption_to_pair_all.append(batch["caption_to_pair"].cpu() + pair_offset)
             caption_group_ids_all.append(stable_caption_group_ids(batch["captions"]).cpu())
             pair_offset += output.pair_embedding.shape[0]
@@ -110,6 +117,7 @@ def collect_retrieval_corpus(
             peak_allocated_vram_bytes=peak_allocated,
             peak_reserved_vram_bytes=peak_reserved,
             dataset_names=[],
+            teacher_text_embeddings=None,
         )
 
     return RetrievalCorpus(
@@ -124,6 +132,7 @@ def collect_retrieval_corpus(
         peak_allocated_vram_bytes=peak_allocated,
         peak_reserved_vram_bytes=peak_reserved,
         dataset_names=dataset_names,
+        teacher_text_embeddings=torch.cat(teacher_text_embeddings),
     )
 
 
@@ -155,6 +164,57 @@ def _rank_summary(ranks: Tensor, prefix: str = "") -> dict[str, float | int]:
 def _masked_rank_summary(ranks: Tensor, mask: Tensor, prefix: str) -> dict[str, float | int]:
     mask = mask.to(dtype=torch.bool)
     return _rank_summary(ranks[mask], prefix=prefix)
+
+
+def _semantic_retrieval_summary(similarities: Tensor, relevance: Tensor, *, prefix: str = "") -> dict[str, float | int | bool]:
+    if similarities.numel() == 0 or relevance.numel() == 0:
+        return {
+            f"{prefix}semantic_recall@1": 0.0,
+            f"{prefix}semantic_recall@5": 0.0,
+            f"{prefix}semantic_recall@10": 0.0,
+            f"{prefix}semantic_nDCG@5": 0.0,
+            f"{prefix}semantic_nDCG@10": 0.0,
+            f"{prefix}semantic_query_count": 0,
+            f"{prefix}semantic_empty": True,
+        }
+    positives = relevance > 0
+    valid = positives.any(dim=1)
+    if not bool(valid.any()):
+        return {
+            f"{prefix}semantic_recall@1": 0.0,
+            f"{prefix}semantic_recall@5": 0.0,
+            f"{prefix}semantic_recall@10": 0.0,
+            f"{prefix}semantic_nDCG@5": 0.0,
+            f"{prefix}semantic_nDCG@10": 0.0,
+            f"{prefix}semantic_query_count": 0,
+            f"{prefix}semantic_empty": True,
+        }
+    sims = similarities[valid]
+    rel = relevance[valid].float()
+    ranked = torch.argsort(sims, dim=1, descending=True, stable=True)
+    gathered_positive = positives[valid].gather(1, ranked)
+    result: dict[str, float | int | bool] = {
+        f"{prefix}semantic_query_count": int(valid.sum().item()),
+        f"{prefix}semantic_empty": False,
+    }
+    for k in (1, 5, 10):
+        kk = min(k, gathered_positive.shape[1])
+        result[f"{prefix}semantic_recall@{k}"] = float(gathered_positive[:, :kk].any(dim=1).float().mean().item())
+    gains = rel.gather(1, ranked)
+    discounts = 1.0 / torch.log2(torch.arange(rel.shape[1], dtype=torch.float32, device=rel.device) + 2.0)
+    ideal = torch.sort(rel, dim=1, descending=True).values
+    for k in (5, 10):
+        kk = min(k, rel.shape[1])
+        dcg = (gains[:, :kk] * discounts[:kk]).sum(dim=1)
+        idcg = (ideal[:, :kk] * discounts[:kk]).sum(dim=1).clamp_min(1e-12)
+        result[f"{prefix}semantic_nDCG@{k}"] = float((dcg / idcg).mean().item())
+    return result
+
+
+def _semantic_ranks(similarities: Tensor, relevance: Tensor) -> Tensor:
+    positives = relevance > 0
+    best_positive = similarities.masked_fill(~positives, float("-inf")).max(dim=1).values
+    return (similarities > best_positive[:, None]).sum(dim=1).long() + 1
 
 
 def _margin_summary(values: Tensor, prefix: str) -> dict[str, float | int]:
@@ -355,6 +415,11 @@ def compute_retrieval_metrics(
             "peak_allocated_vram_bytes": corpus.peak_allocated_vram_bytes,
             "peak_reserved_vram_bytes": corpus.peak_reserved_vram_bytes,
             "duplicate_aware": True,
+            "semantic_recall@1": 0.0,
+            "semantic_recall@5": 0.0,
+            "semantic_recall@10": 0.0,
+            "semantic_nDCG@5": 0.0,
+            "semantic_nDCG@10": 0.0,
         }
         return empty_metrics, torch.empty(0, 0)
 
@@ -409,6 +474,7 @@ def compute_retrieval_metrics(
         "exact_pair_MRR": float((1.0 / exact).mean().item()),
         "exact_pair_median_rank": float(exact.median().item()),
         "exact_pair_mean_rank": float(exact.mean().item()),
+        "exact_pair_ranks": [int(value) for value in exact.long().tolist()],
         "pair_count": pair_count,
         "caption_count": caption_count,
         "num_queries": caption_count,
@@ -449,25 +515,56 @@ def compute_retrieval_metrics(
     metrics.update(_margin_summary(top1_top2_margin, "top1_top2_margin_"))
     metrics.update(_margin_summary(best_positive_minus_best_negative, "best_positive_minus_best_negative_"))
 
+    teacher_embeddings = corpus.teacher_text_embeddings if corpus.teacher_text_embeddings is not None else corpus.text_embeddings
+    semantic_relevance = semantic_teacher_relevance_matrix(
+        teacher_embeddings,
+        corpus.captions,
+        corpus.caption_to_pair.long(),
+        corpus.caption_group_ids.long(),
+        pair_count=pair_count,
+        top_k=0,
+    )
+    semantic_ranks = _semantic_ranks(similarities, semantic_relevance).float()
+    metrics.update(_semantic_retrieval_summary(similarities, semantic_relevance))
+
     if corpus.dataset_names is not None:
         pair_dataset_names = [str(name) for name in corpus.dataset_names]
         query_dataset_names = [pair_dataset_names[int(index)] for index in corpus.caption_to_pair.tolist()]
         metrics["dataset_order_fingerprint"] = _hash_strings(pair_dataset_names)
+        macro_values: dict[str, list[float]] = {
+            "semantic_recall@1": [],
+            "semantic_recall@5": [],
+            "semantic_recall@10": [],
+            "semantic_nDCG@10": [],
+        }
         for dataset_name in sorted(set(pair_dataset_names)):
             safe_name = dataset_name.replace("-", "_").replace(" ", "_")
             mask = torch.tensor([name == dataset_name for name in query_dataset_names], dtype=torch.bool)
             metrics.update(_masked_rank_summary(ranks, mask, f"{safe_name}_"))
             metrics.update(_masked_rank_summary(exact, mask, f"{safe_name}_exact_"))
             metrics.update(_masked_rank_summary(ranks, mask, f"{safe_name}_cross_"))
+            metrics.update(_masked_rank_summary(semantic_ranks, mask, f"{safe_name}_cross_semantic_"))
             metrics.update(_masked_rank_summary(exact, mask, f"{safe_name}_cross_exact_"))
+            cross_semantic = _semantic_retrieval_summary(similarities[mask], semantic_relevance[mask], prefix=f"{safe_name}_cross_")
+            metrics.update(cross_semantic)
+            for key in macro_values:
+                prefixed = f"{safe_name}_cross_{key}"
+                if prefixed in cross_semantic and not bool(cross_semantic.get(f"{safe_name}_cross_semantic_empty", False)):
+                    macro_values[key].append(float(cross_semantic[prefixed]))
             metrics[f"{safe_name}_num_queries"] = int(mask.sum().item())
             metrics[f"{safe_name}_num_candidates"] = int(sum(name == dataset_name for name in pair_dataset_names))
             candidate_indices = [index for index, name in enumerate(pair_dataset_names) if name == dataset_name]
             query_indices = torch.nonzero(mask, as_tuple=False).flatten()
             if candidate_indices and query_indices.numel():
                 candidate_tensor = torch.tensor(candidate_indices, dtype=torch.long)
+                candidate_set = {int(index) for index in candidate_indices}
+                query_keep = [int(index) for index in query_indices.tolist() if int(corpus.caption_to_pair[int(index)].item()) in candidate_set]
+                query_indices = torch.tensor(query_keep, dtype=torch.long)
+            if candidate_indices and query_indices.numel():
+                candidate_tensor = torch.tensor(candidate_indices, dtype=torch.long)
                 local_pairs = corpus.pair_embeddings[candidate_tensor]
                 local_text = corpus.text_embeddings[query_indices]
+                local_teacher = teacher_embeddings[query_indices]
                 inverse_candidate = {global_index: local_index for local_index, global_index in enumerate(candidate_indices)}
                 local_caption_to_pair = torch.tensor(
                     [inverse_candidate[int(corpus.caption_to_pair[int(query_index)].item())] for query_index in query_indices],
@@ -485,15 +582,39 @@ def compute_retrieval_metrics(
                     peak_allocated_vram_bytes=0,
                     peak_reserved_vram_bytes=0,
                     dataset_names=[dataset_name] * len(candidate_indices),
+                    teacher_text_embeddings=local_teacher,
                 )
                 local_ranks = compute_retrieval_ranks(local_corpus)
                 metrics.update(_rank_summary(local_ranks.duplicate_aware_ranks, f"{safe_name}_within_"))
                 metrics.update(_rank_summary(local_ranks.exact_pair_ranks, f"{safe_name}_within_exact_"))
+                local_similarities = similarity_matrix(local_corpus)
+                local_relevance = semantic_teacher_relevance_matrix(
+                    local_teacher,
+                    local_corpus.captions,
+                    local_corpus.caption_to_pair,
+                    local_corpus.caption_group_ids,
+                    pair_count=local_pairs.shape[0],
+                    top_k=0,
+                )
+                metrics.update(_semantic_retrieval_summary(local_similarities, local_relevance, prefix=f"{safe_name}_within_"))
                 metrics[f"{safe_name}_within_num_queries"] = int(query_indices.numel())
                 metrics[f"{safe_name}_within_num_candidates"] = len(candidate_indices)
             else:
                 metrics.update(_rank_summary(torch.empty(0, dtype=torch.long), f"{safe_name}_within_"))
                 metrics.update(_rank_summary(torch.empty(0, dtype=torch.long), f"{safe_name}_within_exact_"))
+                metrics.update(_semantic_retrieval_summary(torch.empty(0, 0), torch.empty(0, 0), prefix=f"{safe_name}_within_"))
+        for key, values in macro_values.items():
+            macro_key = "macro_" + key.replace("@", "_at_") if False else f"macro_{key}"
+            metrics[macro_key] = float(sum(values) / len(values)) if values else 0.0
+        metrics["macro_semantic_mean"] = float(
+            (
+                float(metrics.get("macro_semantic_recall@1", 0.0))
+                + float(metrics.get("macro_semantic_recall@5", 0.0))
+                + float(metrics.get("macro_semantic_recall@10", 0.0))
+                + float(metrics.get("macro_semantic_nDCG@10", 0.0))
+            )
+            / 4.0
+        )
 
     metrics.update(_masked_rank_summary(ranks, frequencies == 1, "unique_caption_"))
     metrics.update(_masked_rank_summary(ranks, (frequencies >= 2) & (frequencies <= 5), "rare_caption_"))
@@ -503,10 +624,25 @@ def compute_retrieval_metrics(
     metrics.update(_masked_rank_summary(exact, frequencies > 5, "frequent_caption_exact_"))
 
     semantic = [classify_caption_semantics(caption) for caption in corpus.captions]
-    for key in ("no_change", "changed", "appeared", "disappeared"):
+    for key in ("no_change", "changed", "appeared", "constructed", "added", "disappeared", "demolished", "removed", "increased", "expanded", "decreased", "reduced"):
         mask = torch.tensor([bool(item[key]) for item in semantic], dtype=torch.bool)
         metrics.update(_masked_rank_summary(ranks, mask, f"{key}_"))
         metrics.update(_masked_rank_summary(exact, mask, f"{key}_exact_"))
+        metrics.update(_masked_rank_summary(semantic_ranks, mask, f"{key}_semantic_"))
+    query_slices = {
+        "detailed_query_": torch.tensor([bool(item["has_detail"]) for item in semantic], dtype=torch.bool),
+        "directional_query_": torch.tensor([
+            bool(item["appeared"] or item["constructed"] or item["added"] or item["disappeared"] or item["demolished"] or item["removed"] or item["increased"] or item["expanded"] or item["decreased"] or item["reduced"])
+            for item in semantic
+        ], dtype=torch.bool),
+        "location_query_": torch.tensor([bool(item["has_location"]) for item in semantic], dtype=torch.bool),
+        "count_query_": torch.tensor([bool(item["has_count"]) for item in semantic], dtype=torch.bool),
+    }
+    for prefix, mask in query_slices.items():
+        summary = _masked_rank_summary(semantic_ranks, mask, prefix)
+        metrics[f"{prefix}R@5"] = summary[f"{prefix}R@5"]
+        metrics[f"{prefix}R@10"] = summary[f"{prefix}R@10"]
+        metrics[f"{prefix}count"] = summary[f"{prefix}count"]
 
     if corpus.pair_mask_fractions.numel() == pair_count:
         query_mask_fraction = corpus.pair_mask_fractions[corpus.caption_to_pair]

@@ -47,7 +47,7 @@ def build_model(config, device):
     text = JinaV5TextEncoder(
         JinaV5TextConfig(
             model_path=config.jina_model,
-            max_length=96,
+            max_length=int(getattr(config, "text_max_length", 96)),
             global_projection_mode="matryoshka_truncate",
             freeze=True,
         )

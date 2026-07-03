@@ -17,7 +17,9 @@ if __name__ == "__main__":
     parser.add_argument("temporal_depth", type=int, nargs="?", default=6)
     parser.add_argument("--train-manifest", type=Path, action="append", default=[])
     parser.add_argument("--val-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--dataset-config", type=Path, default=None)
     parser.add_argument("--dataset-weight", action="append", default=None)
+    parser.add_argument("--text-max-length", type=int, default=256)
     args = parser.parse_args()
     output_dir = args.output_dir
     temporal_depth = args.temporal_depth
@@ -30,19 +32,22 @@ if __name__ == "__main__":
         temporal_depth=temporal_depth,
         train_manifests=tuple(args.train_manifest),
         val_manifests=tuple(args.val_manifest),
+        dataset_config=args.dataset_config,
         dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
+        text_max_length=args.text_max_length,
     )
     report = finalize(output_dir, "cuda")
     required = (
         report.get("real_cluster_smoke_passed")
         and report.get("stage1_next") is True
-        and report.get("loss") == "multi_positive_set_info_nce"
+        and report.get("loss") == "semantic_soft_target_text_to_pair"
         and report.get("stable_caption_groups") is True
         and report.get("use_direction_embeddings") is True
         and report.get("use_explicit_change_fusion") is True
         and report.get("trainable_temperature") is True
         and report.get("temporal_depth") == temporal_depth
         and report.get("text_adapter_enabled") is True
+        and report.get("text_max_length") == args.text_max_length
     )
     if not required:
         raise SystemExit("Stage-1-next smoke report did not pass all feature gates")

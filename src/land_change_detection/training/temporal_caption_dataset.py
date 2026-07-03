@@ -183,12 +183,22 @@ def parse_dataset_weights(values: Sequence[str] | dict[str, float] | None) -> di
     return weights
 
 
-def load_dataset_config(path: str | Path | None) -> tuple[list[str], list[str], dict[str, float]]:
+def load_dataset_config(path: str | Path | None) -> tuple[list[str], list[str], dict[str, float], dict[str, Any]]:
     if path is None:
-        return [], [], {}
+        return [], [], {}, {}
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    options: dict[str, Any] = {}
+    for key in (
+        "allowed_caption_sources",
+        "semantic_soft_target_weight",
+        "semantic_teacher_top_k",
+        "semantic_teacher_temperature",
+    ):
+        if key in payload:
+            options[key] = payload[key]
     return (
         [str(item) for item in payload.get("train_manifests", [])],
         [str(item) for item in payload.get("val_manifests", [])],
         {str(key): float(value) for key, value in payload.get("dataset_sampling_weights", {}).items()},
+        options,
     )

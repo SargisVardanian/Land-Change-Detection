@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-val-manifest", action="append", default=[])
     parser.add_argument("--expected-dataset-weight", action="append", default=[])
     parser.add_argument("--expected-dataset-config", type=Path, default=None)
+    parser.add_argument("--expected-text-max-length", type=int, default=256)
     return parser.parse_args()
 
 
@@ -102,13 +103,14 @@ def main() -> int:
         "image_size": 256,
         "output_grid": 32,
         "stage1_next": True,
-        "loss": "multi_positive_set_info_nce",
+        "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
         "temporal_depth": expected_temporal_depth,
         "text_adapter_enabled": True,
+        "text_max_length": args.expected_text_max_length,
     }
     errors = [
         f"smoke {key}={smoke.get(key)!r}"
@@ -132,13 +134,14 @@ def main() -> int:
         "status": "PASS",
         "git_commit": current_commit,
         "stage1_next": True,
-        "loss": "multi_positive_set_info_nce",
+        "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
         "temporal_depth": expected_temporal_depth,
         "text_adapter_enabled": True,
+        "text_max_length": args.expected_text_max_length,
     }
     errors.extend(
         f"memory {key}={memory.get(key)!r}"

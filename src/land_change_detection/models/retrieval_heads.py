@@ -93,35 +93,126 @@ def normalize_caption_text(text: str) -> str:
     return " ".join(normalized.split())
 
 
-def classify_caption_semantics(text: str) -> dict[str, bool]:
-    """Central lightweight caption semantics for audit strata and filtering."""
+_APPEARED_TERMS = {"appeared", "appears", "emerged", "new"}
+_CONSTRUCTED_TERMS = {"built", "constructed", "developed", "created", "erected"}
+_ADDED_TERMS = {"added", "addition", "installed"}
+_DISAPPEARED_TERMS = {"disappeared", "disappears", "gone", "lost", "vanished"}
+_DEMOLISHED_TERMS = {"demolished", "destroyed", "collapsed", "razed"}
+_REMOVED_TERMS = {"removed", "cleared", "erased"}
+_INCREASED_TERMS = {"increased", "increase", "grew", "grown", "growth", "more"}
+_EXPANDED_TERMS = {"expanded", "expansion", "extended", "larger", "widened"}
+_DECREASED_TERMS = {"decreased", "decrease", "declined", "less", "shrank", "shrunk"}
+_REDUCED_TERMS = {"reduced", "reduction", "smaller", "contracted", "narrowed"}
+_OBJECT_TERMS = {
+    "building", "buildings", "house", "houses", "road", "roads", "water", "river", "lake",
+    "field", "fields", "crop", "crops", "farmland", "forest", "trees", "vegetation",
+    "urban", "construction", "bareland", "bare", "soil", "greenhouse", "greenhouses",
+}
+_COUNT_TERMS = {"one", "two", "three", "four", "five", "several", "many", "multiple", "few", "single", "double"}
+_LOCATION_TERMS = {
+    "left", "right", "top", "bottom", "upper", "lower", "center", "central", "middle",
+    "north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest",
+    "corner", "edge", "boundary", "near", "around", "beside",
+}
+_SIZE_TERMS = {"small", "large", "tiny", "major", "minor", "significant", "slight", "wide", "narrow", "dense", "sparse"}
+
+
+def classify_caption_semantics(text: str) -> dict[str, Any]:
+    """Central lightweight caption semantics for sampling, audit strata and filtering."""
 
     normalized = normalize_caption_text(text)
     tokens = set(normalized.split())
+    has_digit_count = any(token.isdigit() for token in tokens)
+    appeared = bool(tokens & _APPEARED_TERMS)
+    constructed = bool(tokens & _CONSTRUCTED_TERMS)
+    added = bool(tokens & _ADDED_TERMS)
+    disappeared = bool(tokens & _DISAPPEARED_TERMS)
+    demolished = bool(tokens & _DEMOLISHED_TERMS)
+    removed = bool(tokens & _REMOVED_TERMS)
+    increased = bool(tokens & _INCREASED_TERMS)
+    expanded = bool(tokens & _EXPANDED_TERMS)
+    decreased = bool(tokens & _DECREASED_TERMS)
+    reduced = bool(tokens & _REDUCED_TERMS)
+    positive_direction = appeared or constructed or added or increased or expanded
+    negative_direction = disappeared or demolished or removed or decreased or reduced
     no_change = (
         "no change" in normalized
         or "unchanged" in tokens
         or "without change" in normalized
         or "same" in tokens
     )
-    appeared = any(term in tokens for term in ("appeared", "appears", "built", "new", "added", "emerged"))
-    disappeared = any(term in tokens for term in ("disappeared", "disappears", "removed", "lost", "demolished", "gone"))
     changed = (
         not no_change
         and (
             "change" in tokens
             or "changed" in tokens
-            or appeared
-            or disappeared
-            or any(term in tokens for term in ("increased", "decreased", "expanded", "reduced"))
+            or positive_direction
+            or negative_direction
         )
     )
+    object_terms = sorted(tokens & _OBJECT_TERMS)
+    count_terms = sorted((tokens & _COUNT_TERMS) | {token for token in tokens if token.isdigit()})
+    location_terms = sorted(tokens & _LOCATION_TERMS)
+    size_terms = sorted(tokens & _SIZE_TERMS)
     return {
-        "no_change": bool(no_change and not (appeared or disappeared)),
-        "changed": bool(changed or appeared or disappeared),
-        "appeared": bool(appeared),
-        "disappeared": bool(disappeared),
+        "no_change": bool(no_change and not (positive_direction or negative_direction)),
+        "changed": bool(changed or positive_direction or negative_direction),
+        "appeared": appeared,
+        "constructed": constructed,
+        "added": added,
+        "disappeared": disappeared,
+        "demolished": demolished,
+        "removed": removed,
+        "increased": increased,
+        "expanded": expanded,
+        "decreased": decreased,
+        "reduced": reduced,
+        "object_terms": object_terms,
+        "has_object": bool(object_terms),
+        "count_terms": count_terms,
+        "has_count": bool(count_terms or has_digit_count),
+        "location_terms": location_terms,
+        "has_location": bool(location_terms),
+        "size_terms": size_terms,
+        "has_size": bool(size_terms),
+        "has_detail": bool(object_terms or count_terms or location_terms or size_terms),
     }
+
+
+def semantic_direction_contradicts(query: dict[str, Any], candidate: dict[str, Any]) -> bool:
+    if query["no_change"] and candidate["changed"]:
+        return True
+    if query["changed"] and candidate["no_change"]:
+        return True
+    query_add = query["appeared"] or query["constructed"] or query["added"]
+    cand_add = candidate["appeared"] or candidate["constructed"] or candidate["added"]
+    query_remove = query["disappeared"] or query["demolished"] or query["removed"]
+    cand_remove = candidate["disappeared"] or candidate["demolished"] or candidate["removed"]
+    query_inc = query["increased"] or query["expanded"]
+    cand_inc = candidate["increased"] or candidate["expanded"]
+    query_dec = query["decreased"] or query["reduced"]
+    cand_dec = candidate["decreased"] or candidate["reduced"]
+    return bool((query_add and cand_remove) or (query_remove and cand_add) or (query_inc and cand_dec) or (query_dec and cand_inc))
+
+
+def caption_detail_score(text: str) -> float:
+    normalized = normalize_caption_text(text)
+    tokens = normalized.split()
+    semantics = classify_caption_semantics(text)
+    length_score = min(len(tokens), 24) / 24.0
+    direction_score = float(
+        semantics["appeared"] or semantics["constructed"] or semantics["added"]
+        or semantics["disappeared"] or semantics["demolished"] or semantics["removed"]
+        or semantics["increased"] or semantics["expanded"] or semantics["decreased"] or semantics["reduced"]
+    )
+    return float(
+        length_score
+        + 0.8 * direction_score
+        + 0.7 * float(semantics["has_object"])
+        + 0.6 * float(semantics["has_count"])
+        + 0.6 * float(semantics["has_location"])
+        + 0.4 * float(semantics["has_size"])
+    )
 
 
 def stable_caption_group_ids(captions: list[str], device: torch.device | str | None = None) -> Tensor:
@@ -166,6 +257,79 @@ def build_caption_positive_mask(
     group_relevant_pairs = same_group.float() @ caption_pair_matrix.float()
     positives |= group_relevant_pairs.T.to(torch.bool)
     return positives
+
+
+def semantic_teacher_relevance_matrix(
+    teacher_text_embeddings: Tensor,
+    captions: list[str],
+    caption_to_pair: Tensor,
+    caption_group_ids: Tensor,
+    *,
+    pair_count: int,
+    top_k: int = 8,
+) -> Tensor:
+    mapping = caption_to_pair.long()
+    if teacher_text_embeddings.ndim != 2:
+        raise ValueError("teacher_text_embeddings must be rank-2")
+    if teacher_text_embeddings.shape[0] != mapping.numel() or len(captions) != mapping.numel():
+        raise ValueError("teacher embeddings, captions and caption_to_pair must be aligned")
+    if mapping.numel() == 0:
+        raise ValueError("At least one caption is required")
+    if int(mapping.min().item()) < 0 or int(mapping.max().item()) >= pair_count:
+        raise ValueError("caption_to_pair contains an out-of-range pair index")
+    device = teacher_text_embeddings.device
+    teacher = F.normalize(teacher_text_embeddings.detach().float(), dim=-1)
+    caption_sim = teacher @ teacher.T
+    query_count = mapping.numel()
+    relevance = torch.full((query_count, pair_count), float("-inf"), device=device)
+    for pair_index in range(pair_count):
+        members = torch.nonzero(mapping == pair_index, as_tuple=False).flatten()
+        if members.numel():
+            relevance[:, pair_index] = caption_sim[:, members].max(dim=1).values
+    positives = build_caption_positive_mask(mapping, pair_count=pair_count, caption_group_ids=caption_group_ids).T
+    relevance = relevance.masked_fill(positives.to(device), 1.0)
+
+    semantics = [classify_caption_semantics(caption) for caption in captions]
+    pair_semantics: list[list[dict[str, Any]]] = []
+    for pair_index in range(pair_count):
+        members = torch.nonzero(mapping == pair_index, as_tuple=False).flatten().tolist()
+        pair_semantics.append([semantics[index] for index in members])
+    for query_index, query_semantics in enumerate(semantics):
+        for pair_index, candidate_semantics in enumerate(pair_semantics):
+            if bool(positives[query_index, pair_index]):
+                continue
+            if any(semantic_direction_contradicts(query_semantics, candidate) for candidate in candidate_semantics):
+                relevance[query_index, pair_index] = 0.0
+
+    relevance = torch.clamp(relevance, min=0.0, max=1.0)
+    if top_k > 0 and pair_count > top_k:
+        keep = positives.to(device).clone()
+        for query_index in range(query_count):
+            remaining = max(int(top_k) - int(keep[query_index].sum().item()), 0)
+            if remaining > 0:
+                masked = relevance[query_index].masked_fill(keep[query_index], float("-inf"))
+                keep[query_index, torch.topk(masked, k=min(remaining, pair_count)).indices] = True
+        relevance = relevance.masked_fill(~keep, 0.0)
+    relevance = relevance.masked_fill(positives.to(device), 1.0)
+    return relevance.detach()
+
+
+def semantic_soft_target_loss(
+    logits_text_to_pair: Tensor,
+    relevance: Tensor,
+    *,
+    teacher_temperature: float = 0.05,
+) -> Tensor:
+    if logits_text_to_pair.shape != relevance.shape:
+        raise ValueError(f"logits and relevance must share shape, got {logits_text_to_pair.shape} and {relevance.shape}")
+    if teacher_temperature <= 0:
+        raise ValueError("teacher_temperature must be positive")
+    masked = relevance.float().masked_fill(relevance <= 0, float("-inf")) / teacher_temperature
+    targets = masked.softmax(dim=1).detach()
+    if not torch.isfinite(targets).all():
+        raise ValueError("semantic teacher targets contain non-finite values")
+    log_probs = logits_text_to_pair.float().log_softmax(dim=1)
+    return -(targets * log_probs).sum(dim=1).mean()
 
 
 def _infer_duplicate_groups_from_embeddings(text_embeddings: Tensor) -> Tensor:
@@ -299,6 +463,71 @@ def multi_positive_set_info_nce(
     return loss, {
         "text_to_pair_loss": float(text_to_pair.detach().cpu()),
         "pair_to_text_loss": float(pair_to_text.detach().cpu()),
+        "text_to_pair_weight": float(text_to_pair_weight / weight_sum),
+        "pair_to_text_weight": float(pair_to_text_weight / weight_sum),
+        "positive_pairs": int(positives.sum().detach().cpu()),
+        "min_text_positives": int(positives.T.sum(dim=1).min().detach().cpu()),
+        "min_pair_positives": int(positives.sum(dim=1).min().detach().cpu()),
+    }
+
+
+def semantic_text_to_pair_set_loss(
+    pair_embeddings: Tensor,
+    text_embeddings: Tensor,
+    teacher_text_embeddings: Tensor,
+    captions: list[str],
+    caption_to_pair: Tensor,
+    caption_group_ids: Tensor,
+    *,
+    temperature: float = 0.07,
+    logit_scale: Tensor | float | None = None,
+    text_to_pair_weight: float = 0.75,
+    pair_to_text_weight: float = 0.25,
+    semantic_soft_target_weight: float = 0.25,
+    semantic_teacher_top_k: int = 8,
+    semantic_teacher_temperature: float = 0.05,
+    return_diagnostics: bool = False,
+) -> Tensor | tuple[Tensor, dict[str, Any]]:
+    if not 0.0 <= semantic_soft_target_weight <= 1.0:
+        raise ValueError("semantic_soft_target_weight must be in [0, 1]")
+    logits = _scaled_similarity_logits(pair_embeddings, text_embeddings, temperature=temperature, logit_scale=logit_scale)
+    positives = build_caption_positive_mask(
+        caption_to_pair,
+        pair_count=pair_embeddings.shape[0],
+        caption_group_ids=caption_group_ids,
+    )
+    set_text_to_pair = _positive_set_mass_loss(logits.T, positives.T)
+    pair_to_text = _positive_set_mass_loss(logits, positives)
+    relevance = semantic_teacher_relevance_matrix(
+        teacher_text_embeddings,
+        captions,
+        caption_to_pair,
+        caption_group_ids,
+        pair_count=pair_embeddings.shape[0],
+        top_k=semantic_teacher_top_k,
+    ).to(logits.device)
+    soft_loss = semantic_soft_target_loss(
+        logits.T,
+        relevance,
+        teacher_temperature=semantic_teacher_temperature,
+    )
+    text_to_pair = (1.0 - semantic_soft_target_weight) * set_text_to_pair + semantic_soft_target_weight * soft_loss
+    weight_sum = text_to_pair_weight + pair_to_text_weight
+    if weight_sum <= 0.0:
+        raise ValueError("at least one loss direction weight must be positive")
+    loss = (text_to_pair_weight * text_to_pair + pair_to_text_weight * pair_to_text) / weight_sum
+    if not return_diagnostics:
+        return loss
+    return loss, {
+        "text_to_pair_loss": float(text_to_pair.detach().cpu()),
+        "text_to_pair_set_mass_loss": float(set_text_to_pair.detach().cpu()),
+        "semantic_soft_target_loss": float(soft_loss.detach().cpu()),
+        "pair_to_text_loss": float(pair_to_text.detach().cpu()),
+        "semantic_soft_target_weight": float(semantic_soft_target_weight),
+        "semantic_teacher_top_k": int(semantic_teacher_top_k),
+        "semantic_teacher_temperature": float(semantic_teacher_temperature),
+        "teacher_positive_pairs": int((relevance > 0).sum().detach().cpu()),
+        "teacher_target_min_positives": int((relevance > 0).sum(dim=1).min().detach().cpu()),
         "text_to_pair_weight": float(text_to_pair_weight / weight_sum),
         "pair_to_text_weight": float(pair_to_text_weight / weight_sum),
         "positive_pairs": int(positives.sum().detach().cpu()),

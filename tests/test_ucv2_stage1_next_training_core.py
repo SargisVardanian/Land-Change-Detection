@@ -16,6 +16,7 @@ from ucv2_stage1_next_core import (
     composite_score,
     make_optimizer,
     save_checkpoint,
+    _selection_scores,
 )
 
 
@@ -75,8 +76,16 @@ def test_conflict_audit_rules_and_optional_filter_indices():
 
 
 def test_composite_score_uses_documented_weights():
-    metrics = {"text_to_pair_R@1": 1.0, "text_to_pair_R@5": 0.8, "text_to_pair_R@10": 0.6, "MRR": 0.5}
-    assert composite_score(metrics) == 0.35 + 0.25 * 0.8 + 0.20 * 0.6 + 0.20 * 0.5
+    metrics = {
+        "macro_semantic_recall@1": 1.0,
+        "macro_semantic_recall@5": 0.8,
+        "macro_semantic_recall@10": 0.6,
+        "macro_semantic_nDCG@10": 0.5,
+        "detailed_query_R@5": 0.4,
+        "exact_pair_R@10": 1.0,
+    }
+    assert composite_score(metrics) == 0.30 + 0.25 * 0.8 + 0.20 * 0.6 + 0.15 * 0.5 + 0.10 * 0.4
+    assert "exact_r10" not in _selection_scores(metrics)
 
 
 def test_checkpoint_save_roundtrip_records_selection_metadata(tmp_path):
@@ -111,6 +120,17 @@ def test_checkpoint_save_roundtrip_records_selection_metadata(tmp_path):
     model.load_state_dict(payload["model"])
 
 
+def test_stage1_next_does_not_introduce_pair_to_pair_or_exact_selection_modules():
+    root = Path(__file__).resolve().parents[1]
+    stage1_text = (root / "scripts" / "ucv2_stage1_next_core.py").read_text(encoding="utf-8")
+    retrieval_head_text = (root / "src" / "land_change_detection" / "models" / "retrieval_heads.py").read_text(encoding="utf-8")
+    assert "pair_to_pair" not in stage1_text
+    assert "pair-to-pair" not in stage1_text
+    assert "best_exact_r10" not in stage1_text
+    assert "exact_r10" not in stage1_text
+    assert "pair_to_pair" not in retrieval_head_text
+
+
 def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Path, Path]:
     smoke = {
         "real_cluster_smoke_passed": True,
@@ -127,13 +147,14 @@ def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Pa
         "image_size": 256,
         "output_grid": 32,
         "stage1_next": True,
-        "loss": "multi_positive_set_info_nce",
+        "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
         "temporal_depth": temporal_depth,
         "text_adapter_enabled": True,
+        "text_max_length": 256,
         "gpu_name": "NVIDIA H100 80GB HBM3",
         "data_mode": "levir_only",
         "mixed_smoke": False,
@@ -142,13 +163,14 @@ def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Pa
         "status": "PASS",
         "git_commit": "abc123",
         "stage1_next": True,
-        "loss": "multi_positive_set_info_nce",
+        "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
         "use_direction_embeddings": True,
         "use_explicit_change_fusion": True,
         "trainable_temperature": True,
         "temporal_depth": temporal_depth,
         "text_adapter_enabled": True,
+        "text_max_length": 256,
         "recommended_batch_size": 32,
         "memory_data_mode": "shape_probe",
     }
@@ -183,6 +205,33 @@ def test_stage1_next_readiness_gate_rejects_depth4_reports_for_depth6_training(t
     )
     assert result.returncode != 0
     assert "temporal_depth" in result.stderr
+
+
+def test_stage1_next_readiness_gate_rejects_text_max_length_mismatch(tmp_path):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=6)
+    smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+    smoke["text_max_length"] = 96
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/ucv2_stage1_next_readiness_gate.py",
+            str(smoke_path),
+            str(memory_path),
+            "abc123",
+            "1",
+            "32",
+            "6",
+            "--expected-text-max-length",
+            "256",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "text_max_length" in result.stderr
 
 
 def _manifest(path: Path, dataset: str, count: int) -> None:
@@ -281,3 +330,71 @@ def test_mixed_readiness_rejects_fingerprint_weight_and_row_count_mismatches(tmp
     result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
     assert result.returncode != 0
     assert "validation_row_count" in result.stderr
+
+
+def test_three_dataset_mixed_readiness_accepts_matching_reports(tmp_path):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=6)
+    manifests = [
+        (tmp_path / "levir.jsonl", "levir_mci", 2, 0.4),
+        (tmp_path / "second.jsonl", "second_cc", 3, 0.35),
+        (tmp_path / "rscc.jsonl", "rscc", 4, 0.25),
+    ]
+    import hashlib
+
+    def fp(path: Path) -> str:
+        digest = hashlib.blake2b(digest_size=16)
+        digest.update(path.read_bytes())
+        return digest.hexdigest()
+
+    for path, dataset, count, _ in manifests:
+        _manifest(path, dataset, count)
+    smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+    smoke.update(
+        {
+            "data_mode": "mixed",
+            "mixed_smoke": True,
+            "manifest_fingerprints": {
+                "train": {str(path): fp(path) for path, _, _, _ in manifests},
+                "validation": {str(path): fp(path) for path, _, _, _ in manifests},
+            },
+            "dataset_names": ["levir_mci", "rscc", "second_cc"],
+            "dataset_weights": {dataset: weight for _, dataset, _, weight in manifests},
+            "train_row_count": 9,
+            "validation_row_count": 9,
+        }
+    )
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    config = tmp_path / "dataset_config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "train_manifests": [str(path) for path, _, _, _ in manifests],
+                "val_manifests": [str(path) for path, _, _, _ in manifests],
+                "dataset_sampling_weights": {dataset: weight for _, dataset, _, weight in manifests},
+                "semantic_soft_target_weight": 0.25,
+                "semantic_teacher_top_k": 8,
+                "semantic_teacher_temperature": 0.05,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/ucv2_stage1_next_readiness_gate.py",
+            str(smoke_path),
+            str(memory_path),
+            "abc123",
+            "1",
+            "32",
+            "6",
+            "--expected-data-mode",
+            "mixed",
+            "--expected-dataset-config",
+            str(config),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
