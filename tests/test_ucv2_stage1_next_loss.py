@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import pytest
 
 from land_change_detection.models.retrieval_heads import (
     FalseNegativeSafeEmbeddingQueue,
@@ -11,6 +12,7 @@ from land_change_detection.models.retrieval_heads import (
     classify_caption_semantics,
     multi_positive_set_info_nce,
     multi_positive_symmetric_info_nce,
+    semantic_direction_contradicts,
     semantic_teacher_relevance_matrix,
     semantic_text_to_pair_set_loss,
     normalize_caption_text,
@@ -138,6 +140,142 @@ def test_caption_semantic_classifier_is_centralized():
     assert classify_caption_semantics("A new building appeared")["appeared"]
     assert classify_caption_semantics("The building disappeared")["disappeared"]
     assert classify_caption_semantics("No change has occurred.")["no_change"]
+
+
+@pytest.mark.parametrize(
+    "caption",
+    [
+        "no change",
+        "no changes",
+        "no significant change",
+        "no significant changes",
+        "no noticeable change",
+        "no visible change",
+        "no substantial change",
+        "no major change",
+        "no meaningful change",
+        "without change",
+        "without any change",
+        "remained unchanged",
+        "remains unchanged",
+        "stayed unchanged",
+        "stays unchanged",
+        "remained the same",
+        "remains the same",
+        "stayed the same",
+        "no difference",
+        "no differences",
+        "no changes occurred",
+        "no change occurred",
+        "No significant change occurred.",
+    ],
+)
+def test_no_change_phrases_are_negation_aware(caption):
+    semantics = classify_caption_semantics(caption)
+    assert semantics["no_change"] is True
+    assert semantics["changed"] is False
+
+
+@pytest.mark.parametrize(
+    ("caption", "key"),
+    [
+        ("no new buildings appeared", "appeared"),
+        ("no buildings were constructed", "constructed"),
+        ("no structures were demolished", "demolished"),
+        ("buildings did not appear", "appeared"),
+        ("the area did not expand", "expanded"),
+        ("vegetation has not decreased", "decreased"),
+    ],
+)
+def test_negated_direction_terms_are_false_and_no_change(caption, key):
+    semantics = classify_caption_semantics(caption)
+    assert semantics[key] is False
+    assert semantics["no_change"] is True
+    assert semantics["changed"] is False
+
+
+@pytest.mark.parametrize(
+    ("caption", "key"),
+    [
+        ("two buildings appeared", "appeared"),
+        ("several structures were demolished", "demolished"),
+        ("vegetation decreased", "decreased"),
+    ],
+)
+def test_non_negated_direction_terms_remain_changed(caption, key):
+    semantics = classify_caption_semantics(caption)
+    assert semantics[key] is True
+    assert semantics["changed"] is True
+    assert semantics["no_change"] is False
+
+
+def test_cluster_regression_no_significant_change_occurred():
+    semantics = classify_caption_semantics("No significant change occurred.")
+    assert semantics["no_change"] is True
+    assert semantics["changed"] is False
+
+
+def test_structures_demolished_southern_area_regression():
+    semantics = classify_caption_semantics("Several structures were demolished in the southern area.")
+    assert semantics["demolished"] is True
+    assert semantics["changed"] is True
+    assert semantics["has_object"] is True
+    assert "structures" in semantics["object_terms"]
+    assert semantics["has_location"] is True
+    assert "southern" in semantics["location_terms"]
+
+
+@pytest.mark.parametrize(
+    "object_phrase",
+    [
+        "structure",
+        "structures",
+        "facility",
+        "facilities",
+        "settlement",
+        "settlements",
+        "parking",
+        "parking lot",
+        "parking_lot",
+        "bridge",
+        "bridges",
+    ],
+)
+def test_expanded_object_terms_are_detected(object_phrase):
+    semantics = classify_caption_semantics(f"A new {object_phrase} appeared.")
+    assert semantics["has_object"] is True
+
+
+@pytest.mark.parametrize(
+    "location",
+    [
+        "northern",
+        "southern",
+        "eastern",
+        "western",
+        "northeastern",
+        "northwestern",
+        "southeastern",
+        "southwestern",
+    ],
+)
+def test_directional_location_adjectives_are_detected(location):
+    semantics = classify_caption_semantics(f"A building appeared in the {location} area.")
+    assert semantics["has_location"] is True
+    assert location in semantics["location_terms"]
+
+
+@pytest.mark.parametrize("caption", ["no change", "no significant changes", "remained unchanged"])
+def test_no_change_implies_not_changed_invariant(caption):
+    semantics = classify_caption_semantics(caption)
+    assert not (semantics["no_change"] and semantics["changed"])
+
+
+def test_semantic_direction_contradicts_no_change_and_changed_symmetrically():
+    no_change = classify_caption_semantics("No significant change occurred.")
+    changed = classify_caption_semantics("Two buildings appeared.")
+    assert semantic_direction_contradicts(no_change, changed) is True
+    assert semantic_direction_contradicts(changed, no_change) is True
 
 
 def test_semantic_paraphrases_receive_soft_relevance_and_exact_groups_are_hard():

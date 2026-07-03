@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import re
 import unicodedata
 from dataclasses import dataclass
 from typing import Any
@@ -93,53 +94,102 @@ def normalize_caption_text(text: str) -> str:
     return " ".join(normalized.split())
 
 
-_APPEARED_TERMS = {"appeared", "appears", "emerged", "new"}
-_CONSTRUCTED_TERMS = {"built", "constructed", "developed", "created", "erected"}
+_APPEARED_TERMS = {"appear", "appeared", "appears", "emerge", "emerged", "emerges", "new"}
+_CONSTRUCTED_TERMS = {"build", "built", "construct", "constructed", "constructs", "developed", "created", "erected"}
 _ADDED_TERMS = {"added", "addition", "installed"}
-_DISAPPEARED_TERMS = {"disappeared", "disappears", "gone", "lost", "vanished"}
-_DEMOLISHED_TERMS = {"demolished", "destroyed", "collapsed", "razed"}
+_DISAPPEARED_TERMS = {"disappear", "disappeared", "disappears", "gone", "lost", "vanished"}
+_DEMOLISHED_TERMS = {"demolish", "demolished", "demolishes", "destroyed", "collapsed", "razed"}
 _REMOVED_TERMS = {"removed", "cleared", "erased"}
 _INCREASED_TERMS = {"increased", "increase", "grew", "grown", "growth", "more"}
-_EXPANDED_TERMS = {"expanded", "expansion", "extended", "larger", "widened"}
+_EXPANDED_TERMS = {"expand", "expanded", "expands", "expansion", "extended", "larger", "widened"}
 _DECREASED_TERMS = {"decreased", "decrease", "declined", "less", "shrank", "shrunk"}
 _REDUCED_TERMS = {"reduced", "reduction", "smaller", "contracted", "narrowed"}
 _OBJECT_TERMS = {
     "building", "buildings", "house", "houses", "road", "roads", "water", "river", "lake",
     "field", "fields", "crop", "crops", "farmland", "forest", "trees", "vegetation",
     "urban", "construction", "bareland", "bare", "soil", "greenhouse", "greenhouses",
+    "structure", "structures", "facility", "facilities", "settlement", "settlements",
+    "parking", "lot", "bridge", "bridges",
 }
 _COUNT_TERMS = {"one", "two", "three", "four", "five", "several", "many", "multiple", "few", "single", "double"}
 _LOCATION_TERMS = {
     "left", "right", "top", "bottom", "upper", "lower", "center", "central", "middle",
     "north", "south", "east", "west", "northeast", "northwest", "southeast", "southwest",
+    "northern", "southern", "eastern", "western", "northeastern", "northwestern", "southeastern", "southwestern",
     "corner", "edge", "boundary", "near", "around", "beside",
 }
 _SIZE_TERMS = {"small", "large", "tiny", "major", "minor", "significant", "slight", "wide", "narrow", "dense", "sparse"}
+_CHANGE_MODIFIERS = r"(?:any|significant|noticeable|visible|substantial|major|meaningful|temporal|notable|obvious|clear|material)"
+_NO_CHANGE_PATTERNS = (
+    re.compile(rf"\bno\s+(?:{_CHANGE_MODIFIERS}\s+){{0,3}}changes?\b"),
+    re.compile(rf"\bwithout\s+(?:any\s+)?(?:{_CHANGE_MODIFIERS}\s+){{0,3}}changes?\b"),
+    re.compile(r"\b(?:remained|remains|stayed|stays)\s+unchanged\b"),
+    re.compile(r"\b(?:remained|remains|stayed|stays)\s+the\s+same\b"),
+    re.compile(r"\bno\s+differences?\b"),
+)
+_NEGATION_TERMS = {"no", "not", "never", "without"}
+
+
+def _is_negated(tokens: list[str], index: int, *, window: int = 4) -> bool:
+    start = max(0, index - window)
+    previous = tokens[start:index]
+    if any(token in _NEGATION_TERMS for token in previous):
+        return True
+    return index >= 1 and tokens[index - 1].endswith("nt")
+
+
+def _has_active_term(tokens: list[str], terms: set[str]) -> bool:
+    return any(token in terms and not _is_negated(tokens, index) for index, token in enumerate(tokens))
+
+
+def _has_negated_term(tokens: list[str], terms: set[str]) -> bool:
+    return any(token in terms and _is_negated(tokens, index) for index, token in enumerate(tokens))
+
+
+def _has_no_change_phrase(normalized: str) -> bool:
+    return any(pattern.search(normalized) for pattern in _NO_CHANGE_PATTERNS)
 
 
 def classify_caption_semantics(text: str) -> dict[str, Any]:
     """Central lightweight caption semantics for sampling, audit strata and filtering."""
 
     normalized = normalize_caption_text(text)
-    tokens = set(normalized.split())
+    token_list = normalized.split()
+    tokens = set(token_list)
     has_digit_count = any(token.isdigit() for token in tokens)
-    appeared = bool(tokens & _APPEARED_TERMS)
-    constructed = bool(tokens & _CONSTRUCTED_TERMS)
-    added = bool(tokens & _ADDED_TERMS)
-    disappeared = bool(tokens & _DISAPPEARED_TERMS)
-    demolished = bool(tokens & _DEMOLISHED_TERMS)
-    removed = bool(tokens & _REMOVED_TERMS)
-    increased = bool(tokens & _INCREASED_TERMS)
-    expanded = bool(tokens & _EXPANDED_TERMS)
-    decreased = bool(tokens & _DECREASED_TERMS)
-    reduced = bool(tokens & _REDUCED_TERMS)
+    appeared = _has_active_term(token_list, _APPEARED_TERMS)
+    constructed = _has_active_term(token_list, _CONSTRUCTED_TERMS)
+    added = _has_active_term(token_list, _ADDED_TERMS)
+    disappeared = _has_active_term(token_list, _DISAPPEARED_TERMS)
+    demolished = _has_active_term(token_list, _DEMOLISHED_TERMS)
+    removed = _has_active_term(token_list, _REMOVED_TERMS)
+    increased = _has_active_term(token_list, _INCREASED_TERMS)
+    expanded = _has_active_term(token_list, _EXPANDED_TERMS)
+    decreased = _has_active_term(token_list, _DECREASED_TERMS)
+    reduced = _has_active_term(token_list, _REDUCED_TERMS)
     positive_direction = appeared or constructed or added or increased or expanded
     negative_direction = disappeared or demolished or removed or decreased or reduced
+    negated_direction = any(
+        _has_negated_term(token_list, terms)
+        for terms in (
+            _APPEARED_TERMS,
+            _CONSTRUCTED_TERMS,
+            _ADDED_TERMS,
+            _DISAPPEARED_TERMS,
+            _DEMOLISHED_TERMS,
+            _REMOVED_TERMS,
+            _INCREASED_TERMS,
+            _EXPANDED_TERMS,
+            _DECREASED_TERMS,
+            _REDUCED_TERMS,
+        )
+    )
     no_change = (
-        "no change" in normalized
+        _has_no_change_phrase(normalized)
         or "unchanged" in tokens
         or "without change" in normalized
         or "same" in tokens
+        or (negated_direction and not (positive_direction or negative_direction))
     )
     changed = (
         not no_change
@@ -156,7 +206,7 @@ def classify_caption_semantics(text: str) -> dict[str, Any]:
     size_terms = sorted(tokens & _SIZE_TERMS)
     return {
         "no_change": bool(no_change and not (positive_direction or negative_direction)),
-        "changed": bool(changed or positive_direction or negative_direction),
+        "changed": bool((changed or positive_direction or negative_direction) and not (no_change and not (positive_direction or negative_direction))),
         "appeared": appeared,
         "constructed": constructed,
         "added": added,
