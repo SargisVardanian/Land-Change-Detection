@@ -7,11 +7,13 @@ from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import torch
 from torch import nn
 
 from ucv2_stage1_next_core import (
     Stage1NextConfig,
+    _mixed_subset_coverage_details,
     audit_dataset_conflicts,
     composite_score,
     make_optimizer,
@@ -232,6 +234,39 @@ def test_stage1_next_readiness_gate_rejects_text_max_length_mismatch(tmp_path):
     )
     assert result.returncode != 0
     assert "text_max_length" in result.stderr
+
+
+def test_mixed_subset_coverage_details_passes_when_smoke_subset_keeps_weighted_datasets():
+    dataset = SimpleNamespace(
+        indices_by_dataset={"levir_mci": list(range(10)), "second_cc": list(range(10, 20))},
+        selection_metadata={"available_counts_by_dataset": {"levir_mci": 100, "second_cc": 100}, "omitted_datasets": []},
+    )
+    details = _mixed_subset_coverage_details(
+        dataset,
+        configured_weights={"levir_mci": 0.55, "second_cc": 0.45},
+        max_pairs=20,
+        subset_name="train",
+    )
+    assert details["sample_counts_by_dataset"] == {"levir_mci": 10, "second_cc": 10}
+    assert details["configured_positive_sampling_weights"] == {"levir_mci": 0.55, "second_cc": 0.45}
+    assert details["mixed_subset_coverage_passed"] is True
+
+
+def test_mixed_subset_coverage_details_fails_early_when_positive_weight_dataset_is_omitted():
+    dataset = SimpleNamespace(
+        indices_by_dataset={"levir_mci": [0]},
+        selection_metadata={
+            "available_counts_by_dataset": {"levir_mci": 100, "second_cc": 100},
+            "omitted_datasets": ["second_cc"],
+        },
+    )
+    with pytest.raises(ValueError, match="Mixed-smoke coverage error"):
+        _mixed_subset_coverage_details(
+            dataset,
+            configured_weights={"levir_mci": 0.55, "second_cc": 0.45},
+            max_pairs=1,
+            subset_name="train",
+        )
 
 
 def _manifest(path: Path, dataset: str, count: int) -> None:

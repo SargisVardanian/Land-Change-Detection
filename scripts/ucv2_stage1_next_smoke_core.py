@@ -13,10 +13,13 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
+from land_change_detection.training.temporal_caption_dataset import parse_dataset_weights
 from ucv2_cluster_common import build_model, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 from ucv2_stage1_next_core import (
     Stage1NextConfig,
+    _dataset_index_counts,
+    _mixed_subset_coverage_details,
     caption_frequencies,
     make_eval_loader,
     make_optimizer,
@@ -82,6 +85,17 @@ def run(
 
     _assert_stage1_disjoint(train, val)
     data_metadata = _stage1_data_metadata(config, train, val)
+    configured_dataset_weights = {name: value for name, value in sorted(parse_dataset_weights(config.dataset_sampling_weights).items()) if float(value) > 0.0}
+    train_sample_counts = _dataset_index_counts(train)
+    validation_sample_counts = _dataset_index_counts(val)
+    mixed_subset_coverage = {"mixed_subset_coverage_passed": data_metadata["data_mode"] != "mixed"}
+    if data_metadata["data_mode"] == "mixed":
+        mixed_subset_coverage = _mixed_subset_coverage_details(
+            train,
+            configured_weights=configured_dataset_weights,
+            max_pairs=config.max_train_samples,
+            subset_name="train",
+        )
     frequencies = caption_frequencies(train)
     train_loader = make_train_loader(train, config, frequencies, epoch=0)
     val_loader = make_eval_loader(val, config)
@@ -187,7 +201,12 @@ def run(
         **data_metadata,
         "mixed_smoke": data_metadata["data_mode"] == "mixed",
         "batch_dataset_counts": dict(sorted(batch_dataset_counts.items())),
-        "sample_counts_by_dataset": {name: len(indices) for name, indices in sorted(getattr(train, "indices_by_dataset", {}).items())},
+        "sample_counts_by_dataset": train_sample_counts,
+        "validation_sample_counts_by_dataset": validation_sample_counts,
+        "configured_dataset_weights": configured_dataset_weights,
+        "requested_max_train_samples": config.max_train_samples,
+        "requested_max_val_samples": config.max_val_samples,
+        **mixed_subset_coverage,
         "train_val_disjoint": True,
         "steps_completed": step,
         "finite_loss": finite_loss,

@@ -5,6 +5,7 @@ import json
 import math
 from collections import defaultdict
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
@@ -67,14 +68,27 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                     continue
                 rows.append(row)
         rows = sorted(rows, key=lambda row: str(row["pair_id"]))
+        self.selection_metadata: dict[str, Any] = {
+            "requested_max_pairs": max_pairs,
+            "omitted_datasets": [],
+            "selected_counts_by_dataset": {},
+            "available_counts_by_dataset": {},
+            "selection_mode": "full" if max_pairs is None else "truncated",
+        }
         if max_pairs is not None:
-            rows = rows[: max(0, max_pairs)]
+            if max_pairs < 0:
+                raise ValueError("max_pairs must be non-negative")
+            rows, selection_metadata = _select_manifest_rows(rows, max_pairs)
+            self.selection_metadata.update(selection_metadata)
         self.samples = rows
         self.image_size = image_size
         self.output_grid = output_grid
         self.indices_by_dataset: dict[str, list[int]] = defaultdict(list)
         for index, row in enumerate(rows):
             self.indices_by_dataset[str(row["dataset_name"])].append(index)
+        self.selection_metadata["selected_counts_by_dataset"] = {
+            name: len(indices) for name, indices in sorted(self.indices_by_dataset.items())
+        }
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -114,6 +128,106 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
 def _stable_seed(seed: int, epoch: int, label: str) -> int:
     payload = f"{seed}:{epoch}:{label}".encode("utf-8")
     return int.from_bytes(hashlib.blake2b(payload, digest_size=8).digest(), "big") & 0x7FFF_FFFF_FFFF_FFFF
+
+
+def _group_rows_by_dataset(rows: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        grouped[str(row["dataset_name"])].append(row)
+    return {name: sorted(items, key=lambda item: str(item["pair_id"])) for name, items in grouped.items()}
+
+
+def _deterministic_dataset_priority(grouped: dict[str, list[dict[str, Any]]]) -> list[str]:
+    return sorted(grouped, key=lambda name: (-len(grouped[name]), name))
+
+
+def _allocate_multidataset_quotas(counts: dict[str, int], target_total: int) -> dict[str, int]:
+    if target_total <= 0 or not counts:
+        return {name: 0 for name in sorted(counts)}
+    dataset_names = sorted(counts)
+    if len(dataset_names) == 1:
+        name = dataset_names[0]
+        return {name: min(target_total, counts[name])}
+    if target_total < len(dataset_names):
+        quotas = {name: 0 for name in dataset_names}
+        for name in _deterministic_dataset_priority({name: [None] * counts[name] for name in dataset_names})[:target_total]:
+            quotas[name] = 1
+        return quotas
+
+    quotas = {name: 1 for name in dataset_names}
+    remaining = target_total - len(dataset_names)
+    residual_capacity = {name: counts[name] - 1 for name in dataset_names}
+    available_remaining = sum(max(capacity, 0) for capacity in residual_capacity.values())
+    if remaining <= 0 or available_remaining <= 0:
+        return quotas
+
+    floor_additions: dict[str, int] = {name: 0 for name in dataset_names}
+    remainders: list[tuple[Fraction, int, str]] = []
+    for name in dataset_names:
+        capacity = max(residual_capacity[name], 0)
+        if capacity == 0:
+            remainders.append((Fraction(0, 1), 0, name))
+            continue
+        share = Fraction(remaining * capacity, available_remaining)
+        floor_value = min(int(share), capacity)
+        floor_additions[name] = floor_value
+        remainders.append((share - floor_value, capacity, name))
+
+    quotas = {name: quotas[name] + floor_additions[name] for name in dataset_names}
+    slots_left = remaining - sum(floor_additions.values())
+    for _, _, name in sorted(remainders, key=lambda item: (-item[0], -item[1], item[2])):
+        if slots_left <= 0:
+            break
+        if quotas[name] >= counts[name]:
+            continue
+        quotas[name] += 1
+        slots_left -= 1
+
+    while slots_left > 0:
+        progress = False
+        for name in _deterministic_dataset_priority({name: [None] * counts[name] for name in dataset_names}):
+            if quotas[name] >= counts[name]:
+                continue
+            quotas[name] += 1
+            slots_left -= 1
+            progress = True
+            if slots_left == 0:
+                break
+        if not progress:
+            break
+    return quotas
+
+
+def _select_manifest_rows(rows: Sequence[dict[str, Any]], max_pairs: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    target_total = min(max_pairs, len(rows))
+    grouped = _group_rows_by_dataset(rows)
+    counts = {name: len(items) for name, items in sorted(grouped.items())}
+    metadata: dict[str, Any] = {
+        "requested_max_pairs": max_pairs,
+        "available_counts_by_dataset": counts,
+        "omitted_datasets": [],
+        "selection_mode": "single_dataset" if len(grouped) <= 1 else "multidataset_stratified",
+    }
+    if target_total == 0 or not rows:
+        metadata["omitted_datasets"] = sorted(grouped)
+        return [], metadata
+    if len(grouped) <= 1:
+        return list(rows[:target_total]), metadata
+
+    quotas = _allocate_multidataset_quotas(counts, target_total)
+    selected: list[dict[str, Any]] = []
+    for name in sorted(grouped):
+        selected.extend(grouped[name][: quotas.get(name, 0)])
+    selected = sorted(selected, key=lambda row: (str(row["dataset_name"]), str(row["pair_id"])))
+    if len(selected) != target_total:
+        raise RuntimeError(
+            f"Deterministic max_pairs selection produced {len(selected)} rows, expected {target_total}"
+        )
+    pair_ids = [str(row["pair_id"]) for row in selected]
+    if len(pair_ids) != len(set(pair_ids)):
+        raise RuntimeError("Deterministic max_pairs selection produced duplicate pair IDs")
+    metadata["omitted_datasets"] = sorted(name for name in grouped if quotas.get(name, 0) <= 0)
+    return selected, metadata
 
 
 class DeterministicWeightedDatasetSampler(Sampler[int]):

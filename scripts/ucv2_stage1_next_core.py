@@ -512,6 +512,49 @@ def _stage1_data_metadata(config: Stage1NextConfig, train: Dataset, val: Dataset
     }
 
 
+def _dataset_index_counts(dataset: Dataset) -> dict[str, int]:
+    mapping = getattr(dataset, "indices_by_dataset", None)
+    if isinstance(mapping, dict):
+        return {str(name): len(indices) for name, indices in sorted(mapping.items())}
+    counts: Counter[str] = Counter()
+    for index in range(len(dataset)):
+        item = dataset[index]
+        counts[str(getattr(item, "dataset_name", getattr(item, "metadata", {}).get("dataset_name", "unknown")))] += 1
+    return dict(sorted(counts.items()))
+
+
+def _mixed_subset_coverage_details(
+    dataset: Dataset,
+    *,
+    configured_weights: dict[str, float],
+    max_pairs: int | None,
+    subset_name: str,
+) -> dict[str, Any]:
+    positive_weights = {str(name): float(value) for name, value in sorted(configured_weights.items()) if float(value) > 0.0}
+    selected_counts = _dataset_index_counts(dataset)
+    available_counts = dict(sorted(getattr(dataset, "selection_metadata", {}).get("available_counts_by_dataset", {}).items()))
+    omitted_datasets = list(getattr(dataset, "selection_metadata", {}).get("omitted_datasets", []))
+    missing_weighted = [name for name in positive_weights if selected_counts.get(name, 0) <= 0]
+    passed = not missing_weighted
+    details = {
+        "subset_name": subset_name,
+        "requested_max_pairs": max_pairs,
+        "sample_counts_by_dataset": selected_counts,
+        "configured_positive_sampling_weights": positive_weights,
+        "available_counts_by_dataset": available_counts,
+        "omitted_datasets": omitted_datasets,
+        "missing_weighted_datasets": missing_weighted,
+        "mixed_subset_coverage_passed": passed,
+    }
+    if not passed:
+        raise ValueError(
+            f"Mixed-smoke coverage error for {subset_name}: max_pairs={max_pairs} omitted positively weighted datasets "
+            f"{missing_weighted}; selected_counts_by_dataset={selected_counts}; configured_positive_sampling_weights={positive_weights}; "
+            f"omitted_datasets={omitted_datasets}"
+        )
+    return details
+
+
 def _sample_mask_fraction(sample: Any) -> float:
     mask = getattr(sample, "mask", None)
     if mask is not None:

@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 from PIL import Image
 
@@ -32,6 +33,30 @@ def _image(path: Path, color: tuple[int, int, int]) -> None:
 def _mask(path: Path, value: int = 255) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("L", (4, 5), value).save(path)
+
+
+def _write_manifest_rows(tmp_path: Path, split: str, counts: dict[str, int]) -> Path:
+    rows = []
+    for dataset_name, count in counts.items():
+        for index in range(count):
+            stem = f"{dataset_name}_{split}_{index:03d}"
+            t1 = tmp_path / dataset_name / split / f"{stem}_a.png"
+            t2 = tmp_path / dataset_name / split / f"{stem}_b.png"
+            _image(t1, (index % 255, 0, 0))
+            _image(t2, (0, index % 255, 0))
+            rows.append(
+                make_manifest_row(
+                    dataset_name=dataset_name,
+                    split=split,
+                    original_id=stem,
+                    t1_path=t1,
+                    t2_path=t2,
+                    captions=[f"{dataset_name} caption {index}"],
+                )
+            )
+    manifest = tmp_path / f"{split}_mixed.jsonl"
+    write_jsonl(manifest, rows)
+    return manifest
 
 
 def test_levir_mci_manifest_preserves_splits_and_namespaces(tmp_path: Path) -> None:
@@ -514,6 +539,73 @@ def test_manifest_dataset_sampler_is_deterministic_and_rotates(tmp_path: Path) -
     item = dataset[first[0]]
     assert item.dataset_name in {"levir_mci", "second_cc"}
     assert item.metadata["caption_source"] == "human"
+
+
+def test_manifest_dataset_max_pairs_stratified_preserves_mixed_train_coverage(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "train", {"levir_mci": 100, "second_cc": 100})
+    dataset = TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=20)
+    again = TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=20)
+    assert len(dataset) == 20
+    assert len(again) == 20
+    assert dataset.indices_by_dataset.keys() == {"levir_mci", "second_cc"}
+    assert {name: len(indices) for name, indices in dataset.indices_by_dataset.items()} == {"levir_mci": 10, "second_cc": 10}
+    assert [sample["pair_id"] for sample in dataset.samples] == [sample["pair_id"] for sample in again.samples]
+    assert dataset.selection_metadata["omitted_datasets"] == []
+
+
+def test_manifest_dataset_max_pairs_stratified_preserves_mixed_validation_coverage(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "val", {"levir_mci": 100, "second_cc": 100})
+    dataset = TemporalCaptionManifestDataset(manifest, split="val", image_size=4, max_pairs=16)
+    assert len(dataset) == 16
+    assert {name: len(indices) for name, indices in dataset.indices_by_dataset.items()} == {"levir_mci": 8, "second_cc": 8}
+
+
+def test_manifest_dataset_max_pairs_single_dataset_behavior_is_unchanged(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "train", {"levir_mci": 5})
+    dataset = TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=3)
+    assert [sample["pair_id"] for sample in dataset.samples] == [
+        "levir_mci:train:levir_mci_train_000",
+        "levir_mci:train:levir_mci_train_001",
+        "levir_mci:train:levir_mci_train_002",
+    ]
+
+
+def test_manifest_dataset_max_pairs_zero_produces_empty_subset(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "train", {"levir_mci": 4, "second_cc": 4})
+    dataset = TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=0)
+    assert len(dataset) == 0
+    assert dict(dataset.indices_by_dataset) == {}
+
+
+def test_manifest_dataset_negative_max_pairs_fails_clearly(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "train", {"levir_mci": 1})
+    with pytest.raises(ValueError, match="max_pairs must be non-negative"):
+        TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=-1)
+
+
+def test_manifest_dataset_too_small_max_pairs_reports_omitted_datasets(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "train", {"levir_mci": 5, "rscc": 5, "second_cc": 5})
+    dataset = TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=2)
+    assert len(dataset) == 2
+    assert {name: len(indices) for name, indices in dataset.indices_by_dataset.items()} == {"levir_mci": 1, "rscc": 1}
+    assert dataset.selection_metadata["omitted_datasets"] == ["second_cc"]
+
+
+def test_manifest_dataset_weighted_sampler_regression_for_mixed_smoke_subset(tmp_path: Path) -> None:
+    manifest = _write_manifest_rows(tmp_path, "train", {"levir_mci": 100, "second_cc": 100})
+    dataset = TemporalCaptionManifestDataset(manifest, split="train", image_size=4, max_pairs=20)
+    sampler = DeterministicWeightedDatasetSampler(
+        dataset,
+        weights={"levir_mci": 0.55, "second_cc": 0.45},
+        seed=20260701,
+        epoch=0,
+        num_samples=20,
+    )
+    indices = list(sampler)
+    assert dataset.indices_by_dataset["levir_mci"]
+    assert dataset.indices_by_dataset["second_cc"]
+    assert len(indices) == 20
+    assert all(0 <= index < len(dataset) for index in indices)
 
 
 def test_manifest_inspection_command_reports_counts_and_fingerprint(tmp_path: Path) -> None:
