@@ -19,7 +19,7 @@ from land_change_detection.training.temporal_caption_dataset import (
     TemporalCaptionManifestDataset,
 )
 from prepare_levir_mci_manifest import build_rows as build_levir_rows
-from prepare_second_cc_manifest import build_karpathy_rows, discover_raw_rows
+from prepare_second_cc_manifest import build_karpathy_rows, build_karpathy_rows_with_audit, discover_raw_rows
 from render_unichange_v2_retrieval import _build_eval_dataset, _checkpoint_config, _eval_metadata
 from ucv2_retrieval_metrics import RetrievalCorpus, compute_retrieval_metrics
 
@@ -49,6 +49,151 @@ def test_levir_mci_manifest_preserves_splits_and_namespaces(tmp_path: Path) -> N
     assert rows[0]["caption_source"] == "human"
     assert rows[0]["normalized_caption_groups"] == ["no change has occurred"]
     assert audit_manifest_rows(rows)["valid"]
+
+
+def _levir_sample(root: Path, split: str, name: str, before_color: tuple[int, int, int], after_color: tuple[int, int, int]) -> None:
+    _image(root / f"images/{split}/A/{name}.png", before_color)
+    _image(root / f"images/{split}/B/{name}.png", after_color)
+    _mask(root / f"images/{split}/label/{name}.png")
+
+
+def _write_levir_captions(root: Path, names: list[str]) -> None:
+    root.joinpath("LevirCCcaptions.json").write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"filename": f"{name}.png", "split": "train", "sentences": [{"raw": f"Caption for {name}."}]}
+                    for name in names
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_levir_default_errors_on_train_test_duplicate_without_replacing_output(tmp_path: Path) -> None:
+    root = tmp_path / "levir"
+    _levir_sample(root, "train", "dup_train", (9, 9, 9), (8, 8, 8))
+    _levir_sample(root, "test", "dup_test", (9, 9, 9), (8, 8, 8))
+    _write_levir_captions(root, ["dup_train", "dup_test"])
+    output = tmp_path / "levir.jsonl"
+    output.write_text("old manifest\n", encoding="utf-8")
+    audit = tmp_path / "audit.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_levir_mci_manifest.py",
+            "--root",
+            str(root),
+            "--output",
+            str(output),
+            "--audit-report",
+            str(audit),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "cross-split duplicate leakage" in result.stderr
+    assert output.read_text(encoding="utf-8") == "old manifest\n"
+
+
+def test_levir_drop_train_retains_test_and_reports_removed_pair(tmp_path: Path) -> None:
+    root = tmp_path / "levir"
+    _levir_sample(root, "train", "dup_train", (9, 9, 9), (8, 8, 8))
+    _levir_sample(root, "test", "dup_test", (9, 9, 9), (8, 8, 8))
+    _levir_sample(root, "train", "unique_train", (1, 2, 3), (3, 2, 1))
+    _write_levir_captions(root, ["dup_train", "dup_test", "unique_train"])
+    output = tmp_path / "levir.jsonl"
+    audit = tmp_path / "audit.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_levir_mci_manifest.py",
+            "--root",
+            str(root),
+            "--output",
+            str(output),
+            "--audit-report",
+            str(audit),
+            "--cross-split-duplicate-policy",
+            "drop_train",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    pair_ids = {row["pair_id"] for row in rows}
+    assert "levir_mci:test:dup_test" in pair_ids
+    assert "levir_mci:train:dup_train" not in pair_ids
+    report = json.loads(audit.read_text(encoding="utf-8"))
+    removed = report["levir_mci_adapter"]["removed_duplicates"]
+    assert removed == [
+        {
+            "removed_pair_id": "levir_mci:train:dup_train",
+            "removed_split": "train",
+            "retained_pair_id": "levir_mci:test:dup_test",
+            "retained_split": "test",
+            "t1_sha": removed[0]["t1_sha"],
+            "t2_sha": removed[0]["t2_sha"],
+        }
+    ]
+
+
+def test_levir_drop_train_retains_val_over_train(tmp_path: Path) -> None:
+    root = tmp_path / "levir"
+    _levir_sample(root, "train", "dup_train", (9, 1, 9), (8, 1, 8))
+    _levir_sample(root, "val", "dup_val", (9, 1, 9), (8, 1, 8))
+    _write_levir_captions(root, ["dup_train", "dup_val"])
+    output = tmp_path / "levir.jsonl"
+    audit = tmp_path / "audit.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_levir_mci_manifest.py",
+            "--root",
+            str(root),
+            "--output",
+            str(output),
+            "--audit-report",
+            str(audit),
+            "--cross-split-duplicate-policy",
+            "drop_train",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr
+    pair_ids = {json.loads(line)["pair_id"] for line in output.read_text(encoding="utf-8").splitlines()}
+    assert pair_ids == {"levir_mci:val:dup_val"}
+
+
+def test_levir_no_invalid_output_file_after_audit_failure(tmp_path: Path) -> None:
+    root = tmp_path / "levir"
+    _image(root / "images/train/A/bad.png", (1, 1, 1))
+    _image(root / "images/train/B/bad.png", (2, 2, 2))
+    _mask(root / "images/train/label/bad.png")
+    output = tmp_path / "levir.jsonl"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_levir_mci_manifest.py",
+            "--root",
+            str(root),
+            "--output",
+            str(output),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "empty_captions" in result.stderr
+    assert not output.exists()
 
 
 def test_second_cc_raw_adapter_does_not_need_hdf5(tmp_path: Path) -> None:
@@ -103,6 +248,180 @@ def test_second_cc_karpathy_manifest_uses_official_layout_and_semantics(tmp_path
     assert audit_manifest_rows(rows)["valid"]
 
 
+def _second_aug_fixture(root: Path, split: str, filenames: list[str]) -> None:
+    for index, filename in enumerate(filenames):
+        _image(root / split / "rgb" / "A" / filename, (index + 1, 0, 0))
+        _image(root / split / "rgb" / "B" / filename, (0, index + 1, 0))
+        _mask(root / split / "sem" / "A" / filename, index + 1)
+        _mask(root / split / "sem" / "B" / filename, index + 2)
+
+
+def test_second_cc_canonical_only_strips_random_augment_and_prefers_canonical(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    _second_aug_fixture(root, "train", ["000001.png", "000001_random_augment.png"])
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"filename": "000001_random_augment.png", "split": "train", "sentences": [{"raw": "Augmented view."}]},
+                    {"filename": "000001.png", "split": "train", "sentences": [{"raw": "Canonical view."}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows, report = build_karpathy_rows_with_audit(root, annotations, "all", "train", "canonical_only")
+    assert len(rows) == 1
+    assert rows[0]["original_id"] == "000001"
+    assert rows[0]["captions"] == ["Canonical view."]
+    assert rows[0]["source_metadata"]["base_pair_id"] == "000001"
+    assert rows[0]["source_metadata"]["is_augmented"] is False
+    assert report["pre_filter"]["row_count"] == 2
+    assert report["post_filter"]["selected_row_count"] == 1
+
+
+def test_second_cc_train_views_keeps_train_augments_but_excludes_val_test_augments(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    _second_aug_fixture(root, "train", ["000001.png", "000001_random_augment_flip.png"])
+    _second_aug_fixture(root, "val", ["000002.png", "000002_random_augment.png"])
+    _second_aug_fixture(root, "test", ["000003.png", "000003_random_augment_7.png"])
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"filename": "000001.png", "split": "train", "sentences": [{"raw": "Train canonical."}]},
+                    {"filename": "000001_random_augment_flip.png", "split": "train", "sentences": [{"raw": "Train augmented."}]},
+                    {"filename": "000002.png", "split": "val", "sentences": [{"raw": "Val canonical."}]},
+                    {"filename": "000002_random_augment.png", "split": "val", "sentences": [{"raw": "Val augmented."}]},
+                    {"filename": "000003_random_augment_7.png", "split": "test", "sentences": [{"raw": "Test augmented."}]},
+                    {"filename": "000003.png", "split": "test", "sentences": [{"raw": "Test canonical."}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows, report = build_karpathy_rows_with_audit(root, annotations, "all", "train", "train_views")
+    assert len(rows) == 4
+    augmented = [row for row in rows if row["source_metadata"]["is_augmented"]]
+    assert len(augmented) == 1
+    assert augmented[0]["split"] == "train"
+    assert augmented[0]["source_metadata"]["base_pair_id"] == "000001"
+    assert augmented[0]["source_metadata"]["augmentation_kind"] == "random_augment_flip"
+    assert augmented[0]["source_metadata"]["view_id"] == "000001_random_augment_flip"
+    assert {row["captions"][0] for row in rows if row["split"] in {"val", "test"}} == {"Val canonical.", "Test canonical."}
+    assert report["post_filter"]["selected_augmented_rows_by_split"] == {"train": 1}
+
+
+def test_second_cc_all_rows_is_diagnostic_and_keeps_augmented_val_test_warning(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    _second_aug_fixture(root, "val", ["000002.png", "000002_random_augment.png"])
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"filename": "000002.png", "split": "val", "sentences": [{"raw": "Val canonical."}]},
+                    {"filename": "000002_random_augment.png", "split": "val", "sentences": [{"raw": "Val augmented."}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    rows, report = build_karpathy_rows_with_audit(root, annotations, "all", "train", "all_rows")
+    assert len(rows) == 2
+    assert any(row["source_metadata"]["is_augmented"] and row["split"] == "val" for row in rows)
+    assert "diagnostic-only" in report["post_filter"]["warning"]
+
+
+def test_second_cc_base_pair_leakage_across_splits_is_rejected(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    _second_aug_fixture(root, "train", ["000001.png"])
+    _second_aug_fixture(root, "test", ["000001.png"])
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"filename": "000001.png", "split": "train", "sentences": [{"raw": "Train."}]},
+                    {"filename": "000001.png", "split": "test", "sentences": [{"raw": "Test leak."}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_second_cc_manifest.py",
+            "--root",
+            str(root),
+            "--annotations",
+            str(annotations),
+            "--output",
+            str(tmp_path / "out.jsonl"),
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "base-pair leakage" in result.stderr
+    assert not (tmp_path / "out.jsonl").exists()
+
+
+def test_second_cc_deterministic_fallback_when_only_augmented_view_exists(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    _second_aug_fixture(root, "train", ["000001_random_augment_z.png", "000001_random_augment_a.png"])
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(
+        json.dumps(
+            {
+                "images": [
+                    {"filename": "000001_random_augment_z.png", "split": "train", "sentences": [{"raw": "Z view."}]},
+                    {"filename": "000001_random_augment_a.png", "split": "train", "sentences": [{"raw": "A view."}]},
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    first, _ = build_karpathy_rows_with_audit(root, annotations, "all", "train", "canonical_only")
+    second, _ = build_karpathy_rows_with_audit(root, annotations, "all", "train", "canonical_only")
+    assert first == second
+    assert first[0]["source_metadata"]["view_id"] == "000001_random_augment_a"
+
+
+def test_second_cc_expected_count_mismatch_is_detailed_and_atomic(tmp_path: Path) -> None:
+    root = tmp_path / "second"
+    _second_aug_fixture(root, "train", ["000001.png"])
+    annotations = root / "SECOND-CC-AUG.json"
+    annotations.write_text(json.dumps({"images": [{"filename": "000001.png", "split": "train", "sentences": [{"raw": "One caption."}]}]}), encoding="utf-8")
+    output = tmp_path / "out.jsonl"
+    output.write_text("old manifest\n", encoding="utf-8")
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/prepare_second_cc_manifest.py",
+            "--root",
+            str(root),
+            "--annotations",
+            str(annotations),
+            "--output",
+            str(output),
+            "--expected-pairs",
+            "6041",
+        ],
+        cwd=Path(__file__).resolve().parents[1],
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0
+    assert "SECOND-CC expected pair count mismatch" in result.stderr
+    assert "found_pairs" in result.stderr
+    assert output.read_text(encoding="utf-8") == "old manifest\n"
+
+
 def test_second_cc_restval_policy_and_expected_count_validation(tmp_path: Path) -> None:
     root = tmp_path / "second"
     filename = "rest.png"
@@ -137,7 +456,7 @@ def test_second_cc_restval_policy_and_expected_count_validation(tmp_path: Path) 
         capture_output=True,
     )
     assert result.returncode != 0
-    assert "Expected 6041 SECOND-CC pairs" in result.stderr
+    assert "SECOND-CC expected pair count mismatch" in result.stderr
 
 
 def test_rscc_adapter_excludes_model_generated_by_default_and_preserves_license(tmp_path: Path) -> None:

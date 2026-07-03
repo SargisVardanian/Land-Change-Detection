@@ -194,10 +194,12 @@ Preprocessing commands:
 ```bash
 PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/prepare_levir_mci_manifest.py \
   --root /path/to/LEVIR-MCI --output manifests/levir_mci.jsonl \
+  --cross-split-duplicate-policy error \
   --audit-report reports/levir_mci_manifest_audit.json
 
 PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/prepare_second_cc_manifest.py \
   --root /path/to/SECOND-CC --annotations /path/to/SECOND-CC-AUG.json \
+  --augmentation-policy canonical_only \
   --expected-pairs 6041 --expected-captions 30205 \
   --output manifests/second_cc.jsonl \
   --audit-report reports/second_cc_manifest_audit.json
@@ -208,7 +210,9 @@ PYTHONPATH="$PWD/src:$PWD/scripts:$PWD" python scripts/merge_temporal_caption_ma
   --audit-report reports/stage1_next_mixed_manifest_audit.json
 ```
 
-SECOND-CC must be read from the official Karpathy JSON and raw paths `<root>/<split>/rgb/A`, `<root>/<split>/rgb/B`, `<root>/<split>/sem/A`, and `<root>/<split>/sem/B` through this manifest path, not from HDF5. The semantic maps are semantic supervision metadata, not binary masks.
+SECOND-CC must be read from the official Karpathy JSON and raw paths `<root>/<split>/rgb/A`, `<root>/<split>/rgb/B`, `<root>/<split>/sem/A`, and `<root>/<split>/sem/B` through this manifest path, not from HDF5. The semantic maps are semantic supervision metadata, not binary masks. `SECOND-CC-AUG.json` contains augmented views; the default `--augmentation-policy canonical_only` strips terminal `_random_augment*` suffixes into deterministic `base_pair_id`s and keeps one canonical row per base pair/split. `train_views` may include augmented train views only, with `base_pair_id`, `is_augmented`, `augmentation_kind` and `view_id` metadata. `all_rows` is diagnostic-only and can inflate validation/test metrics. Base-pair leakage across splits, multiple canonical rows, augmented val/test rows under non-diagnostic policies and missing RGB/semantic files must fail manifest generation before replacing the output.
+
+LEVIR-MCI defaults to `--cross-split-duplicate-policy error` for exact T1/T2 cross-split duplicates. If the known train/test duplicate issue must be sanitized, use `drop_train`; it preserves test over train and val over train, records removed and retained pair IDs in the audit report and never silently removes test rows.
 
 RSCC is optional and disabled by default. Use `scripts/prepare_rscc_manifest.py` with `--caption-policy qvq_ground_truth_only|model_generated_only|all`; the default is `qvq_ground_truth_only`. The official 988-pair RSCC/xBD QvQ-Max subset is benchmark ground truth, but its captions are still `caption_source=model_generated`, not human annotation. Preserve `source_metadata.caption_generator="QvQ-Max"`, `benchmark_ground_truth=true`, `benchmark_subset="rscc_xbd_988"`, `training_default_enabled=false`, `license_family="xBD"` and `research_only=true`. QvQ rows default to `split="test"` unless an explicit authoritative split is present. Do not classify generated full-RSCC captions as human, and keep them distinguishable from QvQ-Max benchmark rows.
 
