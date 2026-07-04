@@ -134,6 +134,29 @@ def test_stage1_next_does_not_introduce_pair_to_pair_or_exact_selection_modules(
     assert "pair_to_pair" not in retrieval_head_text
 
 
+def test_stage1_next_slurm_scripts_pin_pythonpath_after_code_root_override():
+    root = Path(__file__).resolve().parents[1]
+    scripts = [
+        root / "cluster" / "ysu" / "train_unichange_v2_stage1_next.sbatch",
+        root / "cluster" / "ysu" / "smoke_unichange_v2_stage1_next.sbatch",
+        root / "cluster" / "ysu" / "probe_unichange_v2_stage1_next_memory.sbatch",
+        root / "cluster" / "ysu" / "evaluate_unichange_v2_stage1_next.sbatch",
+    ]
+    for script in scripts:
+        text = script.read_text(encoding="utf-8")
+        code_root_index = text.index("export CODE_ROOT=")
+        cd_index = text.index("cd ", code_root_index)
+        pythonpath_index = text.index("export PYTHONPATH=", cd_index)
+        assert pythonpath_index > cd_index
+        assert "$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" in text or "${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" in text
+
+    train_text = scripts[0].read_text(encoding="utf-8")
+    gate_index = train_text.index("ucv2_stage1_next_readiness_gate.py")
+    pythonpath_index = train_text.index("export PYTHONPATH=", train_text.index("cd "))
+    assert pythonpath_index < gate_index
+    assert 'BATCH_SIZE="$($PYTHON "$CODE_ROOT/scripts/ucv2_stage1_next_readiness_gate.py"' in train_text
+
+
 def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Path, Path]:
     smoke = {
         "real_cluster_smoke_passed": True,

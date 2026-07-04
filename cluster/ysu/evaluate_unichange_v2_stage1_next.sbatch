@@ -14,6 +14,7 @@ set -euo pipefail
 source "${SLURM_SUBMIT_DIR}/cluster/ysu/common_env.sh"
 export CODE_ROOT="${CODE_ROOT_OVERRIDE:-$SLURM_SUBMIT_DIR}"
 cd "${CODE_ROOT}"
+export PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}"
 
 RUN_DIR="${RUN_DIR:?Set RUN_DIR to the completed Stage-1-next training directory}"
 CHECKPOINT="${CHECKPOINT:-${RUN_DIR}/best_retrieval.pt}"

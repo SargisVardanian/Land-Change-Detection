@@ -190,7 +190,7 @@ python scripts/prepare_second_cc_manifest.py \
   --annotations /path/to/SECOND-CC-AUG.json \
   --augmentation-policy canonical_only \
   --expected-pairs 6041 \
-  --expected-captions 30205 \
+  --expected-captions 30159 \
   --output manifests/second_cc.jsonl \
   --audit-report reports/second_cc_manifest_audit.json
 
@@ -224,7 +224,7 @@ python scripts/train_unichange_v2_stage1_next.py DATA_ROOT OUT UNIVERSAT CHECKPO
   --dataset-weight second_cc=0.45
 ```
 
-SECOND-CC uses the official raw layout `<root>/<split>/rgb/A/<filename>`, `<root>/<split>/rgb/B/<filename>`, `<root>/<split>/sem/A/<filename>`, and `<root>/<split>/sem/B/<filename>`. `sem/A` and `sem/B` are stored as `semantic_t1_path` and `semantic_t2_path`; they are not binary masks. `SECOND-CC-AUG.json` has 10,855 rows, including `_random_augment*` views over 6,041 underlying pairs. The default `canonical_only` policy collapses views to one deterministic row per base pair/split, preferring the non-augmented row. `train_views` allows augmented views only for train and marks them with `base_pair_id`, `is_augmented`, `augmentation_kind` and `view_id`; validation and test remain canonical-only. `all_rows` is diagnostic-only because augmented validation/test views can inflate retrieval metrics.
+SECOND-CC uses the official raw layout `<root>/<split>/rgb/A/<filename>`, `<root>/<split>/rgb/B/<filename>`, `<root>/<split>/sem/A/<filename>`, and `<root>/<split>/sem/B/<filename>`. `sem/A` and `sem/B` are stored as `semantic_t1_path` and `semantic_t2_path`; they are not binary masks. `SECOND-CC-AUG.json` has 10,855 rows, including `_random_augment*` views over 6,041 underlying pairs. The current canonical manifest produced from the actual extracted `SECOND-CC-AUG` archive has 6,041 rows and 30,159 captions. The 30,205 value is the raw/base dataset headline count and must not be used as the `canonical_only` expected count for this extracted archive. The default `canonical_only` policy collapses views to one deterministic row per base pair/split, preferring the non-augmented row. `train_views` allows augmented views only for train and marks them with `base_pair_id`, `is_augmented`, `augmentation_kind` and `view_id`; validation and test remain canonical-only. `all_rows` is diagnostic-only because augmented validation/test views can inflate retrieval metrics.
 
 LEVIR-MCI manifest generation defaults to failing on exact T1/T2 cross-split duplicates. Use `--cross-split-duplicate-policy drop_train` only for the known leakage cleanup: test beats train, val beats train, removed and retained pair IDs are recorded in the audit report, and retained captions/masks are left untouched.
 
