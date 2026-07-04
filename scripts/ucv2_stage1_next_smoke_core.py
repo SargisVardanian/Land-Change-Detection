@@ -14,10 +14,11 @@ from land_change_detection.models.retrieval_heads import (
     stable_caption_group_ids,
 )
 from land_change_detection.training.temporal_caption_dataset import parse_dataset_weights
-from ucv2_cluster_common import build_model, strict_device
+from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 from ucv2_stage1_next_core import (
     Stage1NextConfig,
+    _build_stage1_full_count_datasets,
     _dataset_index_counts,
     _mixed_subset_coverage_details,
     caption_frequencies,
@@ -81,20 +82,33 @@ def run(
     from ucv2_stage1_next_core import _build_stage1_datasets, _stage1_data_metadata
 
     train, val = _build_stage1_datasets(config)
+    full_train, full_val = _build_stage1_full_count_datasets(config)
     from ucv2_stage1_next_core import _assert_stage1_disjoint
 
     _assert_stage1_disjoint(train, val)
-    data_metadata = _stage1_data_metadata(config, train, val)
+    data_metadata = _stage1_data_metadata(config, train, val, full_train=full_train, full_val=full_val)
     configured_dataset_weights = {name: value for name, value in sorted(parse_dataset_weights(config.dataset_sampling_weights).items()) if float(value) > 0.0}
     train_sample_counts = _dataset_index_counts(train)
     validation_sample_counts = _dataset_index_counts(val)
-    mixed_subset_coverage = {"mixed_subset_coverage_passed": data_metadata["data_mode"] != "mixed"}
+    train_mixed_subset_coverage: dict[str, object] = {}
+    validation_mixed_subset_coverage: dict[str, object] = {}
+    mixed_subset_coverage_passed = data_metadata["data_mode"] != "mixed"
     if data_metadata["data_mode"] == "mixed":
-        mixed_subset_coverage = _mixed_subset_coverage_details(
+        train_mixed_subset_coverage = _mixed_subset_coverage_details(
             train,
             configured_weights=configured_dataset_weights,
             max_pairs=config.max_train_samples,
             subset_name="train",
+        )
+        validation_mixed_subset_coverage = _mixed_subset_coverage_details(
+            val,
+            configured_weights=configured_dataset_weights,
+            max_pairs=config.max_val_samples,
+            subset_name="validation",
+        )
+        mixed_subset_coverage_passed = bool(
+            train_mixed_subset_coverage.get("mixed_subset_coverage_passed")
+            and validation_mixed_subset_coverage.get("mixed_subset_coverage_passed")
         )
     frequencies = caption_frequencies(train)
     train_loader = make_train_loader(train, config, frequencies, epoch=0)
@@ -179,10 +193,31 @@ def run(
     gradient_audit_passed = not frozen_grad_violations and not missing_gradients
     checkpoint_roundtrip_passed = bool(roundtrip["ok"])
     status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and checkpoint_roundtrip_passed else "FAIL"
+    device_type = device.type
+    bf16_active = bool(device_type == "cuda" and config.use_bf16 and torch.cuda.is_bf16_supported())
+    metadata = run_metadata()
+    slurm_job_id = metadata.get("slurm_job_id", "")
+    real_cluster_smoke_passed = bool(
+        status == "PASS"
+        and slurm_job_id
+        and device_type == "cuda"
+        and step == 10
+        and finite_loss
+        and gradient_audit_passed
+        and checkpoint_roundtrip_passed
+    )
     report = {
+        **metadata,
         "status": status,
-        "cluster_ready": False,
+        "cluster_ready": real_cluster_smoke_passed,
         "cluster_ready_requires": "Slurm COMPLETED/0:0 and cluster report finalization.",
+        "real_cluster_smoke_passed": real_cluster_smoke_passed,
+        "device_type": device_type,
+        "gpu_name": torch.cuda.get_device_name(device) if device_type == "cuda" else "cpu",
+        "bf16_requested": bool(config.use_bf16),
+        "bf16_active": bf16_active,
+        "image_size": config.image_size,
+        "output_grid": config.output_grid,
         "stage1_next": True,
         "loss": "semantic_soft_target_text_to_pair",
         "stable_caption_groups": True,
@@ -199,6 +234,10 @@ def run(
         "fake_backbones": False,
         "samples": {"train": len(train), "validation": len(val)},
         **data_metadata,
+        "full_train_row_count": data_metadata["train_row_count"],
+        "full_validation_row_count": data_metadata["validation_row_count"],
+        "selected_train_row_count": len(train),
+        "selected_validation_row_count": len(val),
         "mixed_smoke": data_metadata["data_mode"] == "mixed",
         "batch_dataset_counts": dict(sorted(batch_dataset_counts.items())),
         "sample_counts_by_dataset": train_sample_counts,
@@ -206,7 +245,9 @@ def run(
         "configured_dataset_weights": configured_dataset_weights,
         "requested_max_train_samples": config.max_train_samples,
         "requested_max_val_samples": config.max_val_samples,
-        **mixed_subset_coverage,
+        "mixed_subset_coverage_passed": mixed_subset_coverage_passed,
+        "train_mixed_subset_coverage": train_mixed_subset_coverage,
+        "validation_mixed_subset_coverage": validation_mixed_subset_coverage,
         "train_val_disjoint": True,
         "steps_completed": step,
         "finite_loss": finite_loss,

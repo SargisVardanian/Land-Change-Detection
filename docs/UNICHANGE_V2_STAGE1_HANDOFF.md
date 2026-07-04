@@ -242,17 +242,20 @@ or a `DATASET_CONFIG` JSON with `train_manifests`, `val_manifests`, `dataset_sam
 
 Mixed evaluation accepts `VAL_MANIFESTS` plus `DATASET_WEIGHTS`, or the same `DATASET_CONFIG`. The evaluation report must include `data_mode`, validation manifest fingerprints, dataset names, validation row counts, combined metrics, and both cross-corpus and within-dataset per-dataset metrics. LEVIR-only evaluation remains the fallback only when no manifest configuration is supplied.
 
-The Stage-1-next readiness gate is data-aware: mixed training requires a mixed smoke report whose manifest fingerprints, dataset names, row counts and weights match the requested training manifests. The smoke and memory reports also gate `text_max_length`, default `256`. The memory probe is only an architecture/batch shape validation and reports `memory_data_mode=shape_probe`; it is not evidence that SECOND-CC ingestion was validated.
+The Stage-1-next readiness gate is data-aware: mixed training requires a mixed smoke report whose manifest fingerprints, dataset names, full eligible row counts and weights match the requested training manifests after the same loader filters used by `TemporalCaptionManifestDataset`: split filtering, configured `allowed_caption_sources`, empty-caption removal and RSCC model-generated exclusion. `train_row_count` and `validation_row_count` mean full eligible corpus rows, not raw JSONL lines and not the capped smoke subset. The aliases `full_train_row_count` and `full_validation_row_count` carry the same full-count semantics for report readability.
+
+The capped smoke workload is reported separately. `selected_train_row_count` is the actual smoke train subset size after `max_train_samples=20`; `selected_validation_row_count` is the actual smoke validation subset size after `max_val_samples=16`. `sample_counts_by_dataset` and `validation_sample_counts_by_dataset` are the selected smoke subset counts by dataset. For mixed readiness, `mixed_smoke` and `mixed_subset_coverage_passed` must both be true, and both `levir_mci` and `second_cc` must appear in the selected train and validation subsets. The smoke report must also include Slurm and hardware metadata: `git_commit`, `slurm_job_id`, `slurm_job_name`, `real_cluster_smoke_passed`, `device_type`, `bf16_active`, `gpu_name`, `image_size` and `output_grid`.
+
+`real_cluster_smoke_passed` is conservative evidence from the real smoke job: it is true only when the smoke status is `PASS`, `SLURM_JOB_ID` is present, device type is `cuda`, exactly ten steps completed, loss stayed finite, gradient audit passed and checkpoint roundtrip passed. The smoke and memory reports also gate `text_max_length`, default `256`. The memory probe is only an architecture/batch shape validation and reports `memory_data_mode=shape_probe`; it is not evidence that SECOND-CC ingestion was validated.
 
 ## Cluster workflow
 
 Develop in a separate worktree. New code invalidates old smoke/memory reports. Run:
 
 1. full tests and shell syntax checks;
-2. `smoke_unichange_v2_stage1_next.sbatch`;
-3. dependent `probe_unichange_v2_stage1_next_memory.sbatch`;
-4. inspect both reports and Slurm `COMPLETED 0:0`;
-5. submit `train_unichange_v2_stage1_next.sbatch` only if physical batch 32 fits;
-6. chain `evaluate_unichange_v2_stage1_next.sbatch` after successful training, using the clean 48-query qualitative manifest and full validation corpus metrics.
+2. submit `smoke_unichange_v2_stage1_next.sbatch`;
+3. submit `probe_unichange_v2_stage1_next_memory.sbatch` with an `afterok` dependency on the smoke job;
+4. submit `train_unichange_v2_stage1_next.sbatch` with an `afterok` dependency on the memory probe; its readiness gate rechecks smoke, memory, commit, manifest fingerprints, dataset weights, full eligible counts and selected mixed subset coverage before training starts;
+5. submit `evaluate_unichange_v2_stage1_next.sbatch` with an `afterok` dependency on training, using the clean 48-query qualitative manifest and full validation corpus metrics.
 
 The existing baseline scripts must remain usable for reproducibility.

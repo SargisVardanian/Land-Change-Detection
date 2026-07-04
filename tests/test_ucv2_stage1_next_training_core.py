@@ -20,6 +20,7 @@ from ucv2_stage1_next_core import (
     save_checkpoint,
     _selection_scores,
 )
+from land_change_detection.temporal_caption_manifest import SCHEMA_VERSION
 
 
 def _config() -> Stage1NextConfig:
@@ -137,6 +138,8 @@ def _write_readiness_reports(tmp_path: Path, *, temporal_depth: int) -> tuple[Pa
     smoke = {
         "real_cluster_smoke_passed": True,
         "git_commit": "abc123",
+        "slurm_job_id": "12345",
+        "slurm_job_name": "ucv2-next-smoke",
         "steps_completed": 10,
         "finite_loss": True,
         "device_type": "cuda",
@@ -269,10 +272,20 @@ def test_mixed_subset_coverage_details_fails_early_when_positive_weight_dataset_
         )
 
 
-def _manifest(path: Path, dataset: str, count: int) -> None:
+def _manifest(path: Path, dataset: str, count: int, *, splits: tuple[str, ...] = ("train", "val")) -> None:
     rows = []
-    for index in range(count):
-        rows.append({"dataset_name": dataset, "pair_id": f"{dataset}:val:{index}", "captions": ["caption"], "split": "val"})
+    for split in splits:
+        for index in range(count):
+            rows.append(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "dataset_name": dataset,
+                    "pair_id": f"{dataset}:{split}:{index}",
+                    "captions": ["caption"],
+                    "caption_source": "human",
+                    "split": split,
+                }
+            )
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
@@ -299,6 +312,13 @@ def _mixed_reports(tmp_path: Path, *, temporal_depth: int = 6):
             "dataset_weights": {"levir_mci": 0.55, "second_cc": 0.45},
             "train_row_count": 5,
             "validation_row_count": 5,
+            "full_train_row_count": 5,
+            "full_validation_row_count": 5,
+            "selected_train_row_count": 5,
+            "selected_validation_row_count": 5,
+            "mixed_subset_coverage_passed": True,
+            "sample_counts_by_dataset": {"levir_mci": 2, "second_cc": 3},
+            "validation_sample_counts_by_dataset": {"levir_mci": 2, "second_cc": 3},
         }
     )
     smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
@@ -332,6 +352,103 @@ def _mixed_gate_args(smoke_path: Path, memory_path: Path, levir: Path, second: P
     ]
 
 
+def _write_mixed_split_manifest(path: Path, dataset: str, *, train: int, val: int, test: int) -> None:
+    rows = []
+    for split, count in (("train", train), ("val", val), ("test", test)):
+        for index in range(count):
+            rows.append(
+                {
+                    "schema_version": SCHEMA_VERSION,
+                    "dataset_name": dataset,
+                    "pair_id": f"{dataset}:{split}:{index:04d}",
+                    "captions": [f"{dataset} {split} caption {index}"],
+                    "caption_source": "human",
+                    "split": split,
+                }
+            )
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+
+def _fingerprint(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.blake2b(digest_size=16)
+    digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def test_mixed_readiness_gate_uses_split_filtered_full_counts_and_smoke_caps(tmp_path):
+    smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=6)
+    levir = tmp_path / "levir_mixed.jsonl"
+    second = tmp_path / "second_mixed.jsonl"
+    _write_mixed_split_manifest(levir, "levir_mci", train=14, val=10, test=3)
+    _write_mixed_split_manifest(second, "second_cc", train=14, val=10, test=3)
+
+    raw_total = sum(1 for path in (levir, second) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+    assert raw_total == 54
+    assert raw_total != 28
+    assert raw_total != 20
+
+    smoke = json.loads(smoke_path.read_text(encoding="utf-8"))
+    smoke.update(
+        {
+            "data_mode": "mixed",
+            "mixed_smoke": True,
+            "manifest_fingerprints": {
+                "train": {str(levir): _fingerprint(levir), str(second): _fingerprint(second)},
+                "validation": {str(levir): _fingerprint(levir), str(second): _fingerprint(second)},
+            },
+            "dataset_names": ["levir_mci", "second_cc"],
+            "dataset_weights": {"levir_mci": 0.55, "second_cc": 0.45},
+            "train_row_count": 28,
+            "validation_row_count": 20,
+            "full_train_row_count": 28,
+            "full_validation_row_count": 20,
+            "selected_train_row_count": 20,
+            "selected_validation_row_count": 16,
+            "mixed_subset_coverage_passed": True,
+            "sample_counts_by_dataset": {"levir_mci": 10, "second_cc": 10},
+            "validation_sample_counts_by_dataset": {"levir_mci": 8, "second_cc": 8},
+        }
+    )
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+
+    valid = subprocess.run(
+        _mixed_gate_args(smoke_path, memory_path, levir, second),
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert valid.returncode == 0, valid.stderr
+    assert valid.stdout.strip() == "32"
+
+    wrong_split = dict(smoke)
+    wrong_split["train_row_count"] = raw_total
+    smoke_path.write_text(json.dumps(wrong_split), encoding="utf-8")
+    result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "train_row_count" in result.stderr
+
+    missing_metadata = dict(smoke)
+    missing_metadata.pop("gpu_name")
+    smoke_path.write_text(json.dumps(missing_metadata), encoding="utf-8")
+    result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "gpu_name" in result.stderr
+
+    smoke_path.write_text(json.dumps(smoke), encoding="utf-8")
+    result = subprocess.run(
+        _mixed_gate_args(smoke_path, memory_path, levir, second)[:4]
+        + ["different-commit"]
+        + _mixed_gate_args(smoke_path, memory_path, levir, second)[5:],
+        cwd=Path(__file__).resolve().parents[1],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "git_commit" in result.stderr
+
+
 def test_mixed_training_rejects_levir_only_smoke(tmp_path):
     smoke_path, memory_path = _write_readiness_reports(tmp_path, temporal_depth=6)
     levir = tmp_path / "levir.jsonl"
@@ -353,7 +470,21 @@ def test_mixed_readiness_rejects_fingerprint_weight_and_row_count_mismatches(tmp
     assert "dataset_weights" in result.stderr
 
     smoke_path, memory_path, levir, second = _mixed_reports(tmp_path)
-    levir.write_text(levir.read_text(encoding="utf-8") + json.dumps({"dataset_name": "levir_mci", "pair_id": "extra", "split": "val", "captions": ["x"]}) + "\n", encoding="utf-8")
+    levir.write_text(
+        levir.read_text(encoding="utf-8")
+        + json.dumps(
+            {
+                "schema_version": SCHEMA_VERSION,
+                "dataset_name": "levir_mci",
+                "pair_id": "extra",
+                "split": "val",
+                "caption_source": "human",
+                "captions": ["x"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     result = subprocess.run(_mixed_gate_args(smoke_path, memory_path, levir, second), cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True)
     assert result.returncode != 0
     assert "manifest_fingerprints" in result.stderr or "row_count" in result.stderr
@@ -396,6 +527,13 @@ def test_three_dataset_mixed_readiness_accepts_matching_reports(tmp_path):
             "dataset_weights": {dataset: weight for _, dataset, _, weight in manifests},
             "train_row_count": 9,
             "validation_row_count": 9,
+            "full_train_row_count": 9,
+            "full_validation_row_count": 9,
+            "selected_train_row_count": 9,
+            "selected_validation_row_count": 9,
+            "mixed_subset_coverage_passed": True,
+            "sample_counts_by_dataset": {"levir_mci": 2, "rscc": 4, "second_cc": 3},
+            "validation_sample_counts_by_dataset": {"levir_mci": 2, "rscc": 4, "second_cc": 3},
         }
     )
     smoke_path.write_text(json.dumps(smoke), encoding="utf-8")

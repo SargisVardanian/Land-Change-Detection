@@ -465,6 +465,33 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
     return base._build_datasets(config)
 
 
+def _build_stage1_full_count_datasets(config: Stage1NextConfig) -> tuple[Dataset | None, Dataset | None]:
+    train_manifests = tuple(config.train_manifests)
+    val_manifests = tuple(config.val_manifests)
+    if not train_manifests and not val_manifests:
+        return None, None
+    if not train_manifests or not val_manifests:
+        raise ValueError("Both train and validation manifests are required for manifest-based Stage-1-next counting")
+    allowed_sources = set(config.allowed_caption_sources) if config.allowed_caption_sources else None
+    train = TemporalCaptionManifestDataset(
+        train_manifests,
+        split=config.train_split,
+        image_size=config.image_size,
+        output_grid=config.output_grid,
+        max_pairs=None,
+        allowed_caption_sources=allowed_sources,
+    )
+    val = TemporalCaptionManifestDataset(
+        val_manifests,
+        split=config.val_split,
+        image_size=config.image_size,
+        output_grid=config.output_grid,
+        max_pairs=None,
+        allowed_caption_sources=allowed_sources,
+    )
+    return train, val
+
+
 def _assert_stage1_disjoint(train: Dataset, val: Dataset) -> None:
     def ids(dataset: Dataset) -> set[str]:
         samples = getattr(dataset, "samples", None)
@@ -483,13 +510,22 @@ def _assert_stage1_disjoint(train: Dataset, val: Dataset) -> None:
         raise RuntimeError(f"Train/validation pair ID leakage detected: {sorted(overlap)[:10]}")
 
 
-def _stage1_data_metadata(config: Stage1NextConfig, train: Dataset, val: Dataset) -> dict[str, Any]:
+def _stage1_data_metadata(
+    config: Stage1NextConfig,
+    train: Dataset,
+    val: Dataset,
+    *,
+    full_train: Dataset | None = None,
+    full_val: Dataset | None = None,
+) -> dict[str, Any]:
     train_manifests = [str(path) for path in config.train_manifests]
     val_manifests = [str(path) for path in config.val_manifests]
     data_mode = "mixed" if train_manifests or val_manifests else "levir_only"
     weights = parse_dataset_weights(config.dataset_sampling_weights) if data_mode == "mixed" else {}
+    count_train = full_train if full_train is not None else train
+    count_val = full_val if full_val is not None else val
     dataset_names: set[str] = set()
-    for dataset in (train, val):
+    for dataset in (count_train, count_val):
         mapping = getattr(dataset, "indices_by_dataset", None)
         if isinstance(mapping, dict):
             dataset_names.update(str(name) for name in mapping)
@@ -507,8 +543,8 @@ def _stage1_data_metadata(config: Stage1NextConfig, train: Dataset, val: Dataset
         },
         "dataset_names": sorted(dataset_names),
         "dataset_weights": weights,
-        "train_row_count": len(train),
-        "validation_row_count": len(val),
+        "train_row_count": len(count_train),
+        "validation_row_count": len(count_val),
     }
 
 
