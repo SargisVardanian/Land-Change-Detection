@@ -19,6 +19,9 @@ class TemporalChangeEncoderConfig:
     global_tokens: int = 4
     dropout: float = 0.0
     drop_path_max: float = 0.1
+    use_direction_embeddings: bool = False
+    use_explicit_change_fusion: bool = False
+    max_time_steps: int = 2
 
 
 @dataclass(frozen=True)
@@ -116,7 +119,25 @@ class TemporalChangeEncoder(nn.Module):
         self.config = config or TemporalChangeEncoderConfig()
         if self.config.grid_size % self.config.window_size != 0:
             raise ValueError("grid_size must be divisible by window_size")
+        if self.config.max_time_steps < 2:
+            raise ValueError("max_time_steps must be at least two")
         self.input_projection = nn.Linear(self.config.input_dim, self.config.hidden_dim)
+        if self.config.use_direction_embeddings:
+            self.direction_embeddings: nn.Parameter | None = nn.Parameter(
+                torch.randn(self.config.max_time_steps, self.config.hidden_dim) * 0.02
+            )
+        else:
+            self.direction_embeddings = None
+        if self.config.use_explicit_change_fusion:
+            fusion_dim = 5 * self.config.hidden_dim
+            self.change_fusion: nn.Module | None = nn.Sequential(
+                nn.LayerNorm(fusion_dim),
+                nn.Linear(fusion_dim, self.config.hidden_dim),
+                nn.GELU(),
+                nn.Linear(self.config.hidden_dim, self.config.hidden_dim),
+            )
+        else:
+            self.change_fusion = None
         drop_rates = torch.linspace(0.0, self.config.drop_path_max, self.config.depth).tolist()
         self.blocks = nn.ModuleList(
             TemporalChangeBlock(self.config, drop_path=float(drop_rates[index]), shift_windows=bool(index % 2))
@@ -126,13 +147,43 @@ class TemporalChangeEncoder(nn.Module):
         self.global_cross_attn = nn.MultiheadAttention(self.config.hidden_dim, self.config.heads, dropout=self.config.dropout, batch_first=True)
         self.output_norm = nn.LayerNorm(self.config.hidden_dim)
 
+    def _inject_change_inductive_bias(self, x: Tensor) -> tuple[Tensor, Tensor | None]:
+        _, time_steps, _, _ = x.shape
+        if self.direction_embeddings is not None:
+            if time_steps > self.direction_embeddings.shape[0]:
+                raise ValueError(
+                    f"Received {time_steps} timestamps but only {self.direction_embeddings.shape[0]} direction embeddings are configured"
+                )
+            x = x + self.direction_embeddings[:time_steps].view(1, time_steps, 1, -1)
+
+        explicit_change: Tensor | None = None
+        if self.change_fusion is not None:
+            if time_steps != 2:
+                raise ValueError("Explicit change fusion currently requires exactly two timestamps")
+            before = x[:, 0]
+            after = x[:, 1]
+            fusion_input = torch.cat(
+                [before, after, after - before, (after - before).abs(), before * after],
+                dim=-1,
+            )
+            explicit_change = self.change_fusion(fusion_input)
+            x = x + explicit_change.unsqueeze(1)
+        return x, explicit_change
+
     def forward(self, features: Tensor, temporal_valid_mask: Tensor | None = None) -> TemporalChangeEncoderOutput:
         if features.ndim != 4:
             raise ValueError(f"features must have shape [B,T,N,D], got {tuple(features.shape)}")
-        batch_size, _, spatial_tokens, _ = features.shape
+        batch_size, time_steps, spatial_tokens, _ = features.shape
+        if temporal_valid_mask is not None and tuple(temporal_valid_mask.shape) != (batch_size, time_steps):
+            raise ValueError(
+                f"temporal_valid_mask must have shape {(batch_size, time_steps)}, got {tuple(temporal_valid_mask.shape)}"
+            )
+        if (self.config.use_direction_embeddings or self.config.use_explicit_change_fusion) and time_steps != 2:
+            raise ValueError("Direction-aware Stage-1 temporal encoding requires exactly two timestamps")
         if spatial_tokens != self.config.grid_size * self.config.grid_size:
             raise ValueError(f"Expected {self.config.grid_size * self.config.grid_size} spatial tokens, got {spatial_tokens}.")
         x = self.input_projection(features)
+        x, explicit_change = self._inject_change_inductive_bias(x)
         for block in self.blocks:
             x = block(x, temporal_valid_mask=temporal_valid_mask)
         if temporal_valid_mask is None:
@@ -140,6 +191,8 @@ class TemporalChangeEncoder(nn.Module):
         else:
             weights = temporal_valid_mask.to(dtype=x.dtype).clamp_min(0).unsqueeze(-1).unsqueeze(-1)
             change_tokens = (x * weights).sum(dim=1) / weights.sum(dim=1).clamp_min(1.0)
+        if explicit_change is not None:
+            change_tokens = change_tokens + explicit_change
         change_tokens = self.output_norm(change_tokens)
         queries = self.global_queries.unsqueeze(0).expand(batch_size, -1, -1)
         global_tokens, _ = self.global_cross_attn(queries, change_tokens, change_tokens, need_weights=False)

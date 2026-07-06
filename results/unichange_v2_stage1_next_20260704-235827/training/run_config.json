@@ -1,0 +1,116 @@
+{
+  "data_root": "/mnt/weka/svardanyan/rs_change_project/datasets/processed/LEVIR-MCI/LEVIR-MCI-dataset",
+  "output_dir": "/mnt/weka/svardanyan/rs_change_project/runs/unichange_v2_semantic_train_20260704-235827",
+  "universat_source": "/mnt/weka/svardanyan/rs_change_project/external/UniverSat",
+  "universat_checkpoint": "/mnt/weka/svardanyan/rs_change_project/models/universat-base",
+  "jina_model": "/mnt/weka/svardanyan/rs_change_project/models/jina-v5-text-small-retrieval",
+  "train_split": "train",
+  "val_split": "val",
+  "image_size": 256,
+  "output_grid": 32,
+  "batch_size": 32,
+  "max_train_samples": null,
+  "max_val_samples": null,
+  "max_steps": null,
+  "epochs": 25,
+  "num_workers": 8,
+  "learning_rate": 0.0002,
+  "retrieval_head_lr": 0.0003,
+  "weight_decay": 0.05,
+  "warmup_ratio": 0.05,
+  "min_lr": 1e-06,
+  "grad_clip_norm": 1.0,
+  "use_bf16": true,
+  "device": "cuda",
+  "seed": 20260701,
+  "smoke": false,
+  "fake_backbones": false,
+  "synthetic_data": false,
+  "train_manifests": [
+    "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/levir_mci.jsonl",
+    "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/second_cc_canonical.jsonl"
+  ],
+  "val_manifests": [
+    "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/levir_mci.jsonl",
+    "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/second_cc_canonical.jsonl"
+  ],
+  "dataset_config": "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/stage1_semantic_levir_secondcc.json",
+  "dataset_sampling_weights": [
+    "levir_mci=0.55",
+    "second_cc=0.45"
+  ],
+  "allowed_caption_sources": [
+    "human"
+  ],
+  "temporal_depth": 6,
+  "use_direction_embeddings": true,
+  "use_explicit_change_fusion": true,
+  "trainable_temperature": true,
+  "initial_temperature": 0.07,
+  "max_logit_scale": 100.0,
+  "max_captions_per_pair": 2,
+  "caption_frequency_power": 0.5,
+  "text_to_pair_weight": 0.75,
+  "pair_to_text_weight": 0.25,
+  "semantic_soft_target_weight": 0.25,
+  "semantic_teacher_top_k": 8,
+  "semantic_teacher_temperature": 0.05,
+  "use_text_adapter": true,
+  "text_adapter_hidden_dim": 512,
+  "text_adapter_lr": 2e-05,
+  "text_max_length": 256,
+  "caption_sampling_seed": null,
+  "enable_conflict_filtering": false,
+  "conflict_mask_threshold": 0.05,
+  "mask_fraction_boundaries": [
+    0.0,
+    0.01,
+    0.05
+  ],
+  "negative_queue_size": 0,
+  "similarity_query_chunk_size": 0,
+  "similarity_candidate_chunk_size": 0,
+  "train_eval_pairs": 1024,
+  "train_eval_interval": 2,
+  "checkpoint_interval_steps": 500,
+  "early_stopping_patience": 4,
+  "early_stopping_min_improvement": 0.002,
+  "stage1_next": true,
+  "loss": "semantic_soft_target_text_to_pair",
+  "stable_caption_groups": true,
+  "resume": null,
+  "history_schema": 3,
+  "caption_group_statistics": {
+    "unique_groups": 0,
+    "caption_rows": 0
+  },
+  "conflict_audit_counts": {
+    "affected_pairs": 0,
+    "total_pairs": 11029
+  },
+  "data_mode": "mixed",
+  "manifest_fingerprints": {
+    "train": {
+      "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/levir_mci.jsonl": "0534bdf86c0c455b7fbacfcc33b5002d",
+      "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/second_cc_canonical.jsonl": "4d487c0d5bc3b24c4f7918968ec20ecd"
+    },
+    "validation": {
+      "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/levir_mci.jsonl": "0534bdf86c0c455b7fbacfcc33b5002d",
+      "/mnt/weka/svardanyan/rs_change_project/datasets/manifests/second_cc_canonical.jsonl": "4d487c0d5bc3b24c4f7918968ec20ecd"
+    }
+  },
+  "dataset_names": [
+    "levir_mci",
+    "second_cc"
+  ],
+  "dataset_weights": {
+    "levir_mci": 0.55,
+    "second_cc": 0.45
+  },
+  "train_row_count": 11029,
+  "validation_row_count": 1928,
+  "git_commit": "cc8549bacbf322a32b3306e88255caace3b8f007",
+  "slurm_job_id": "86157",
+  "slurm_job_name": "ucv2-next-train",
+  "timestamp_utc": "2026-07-05T15:14:50.919327+00:00"
+}

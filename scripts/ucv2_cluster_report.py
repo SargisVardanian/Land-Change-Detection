@@ -25,6 +25,11 @@ def finalize(output_dir: Path, device_name: str) -> dict:
         "image_size": config.get("image_size"),
         "output_grid": config.get("output_grid"),
         "batch_size": config.get("batch_size"),
+        "temporal_depth": config.get("temporal_depth"),
+        "use_direction_embeddings": config.get("use_direction_embeddings"),
+        "use_explicit_change_fusion": config.get("use_explicit_change_fusion"),
+        "trainable_temperature": config.get("trainable_temperature"),
+        "text_adapter_enabled": config.get("use_text_adapter"),
     })
     report["exact_steps_passed"] = report.get("steps_completed") == config.get("max_steps")
     report["real_cluster_smoke_passed"] = bool(
