@@ -1,0 +1,107 @@
+{
+  "git_commit": "cc8549bacbf322a32b3306e88255caace3b8f007",
+  "slurm_job_id": "86156",
+  "slurm_job_name": "ucv2-next-mem",
+  "timestamp_utc": "2026-07-05T11:36:59.977931+00:00",
+  "status": "PASS",
+  "stage1_next": true,
+  "loss": "semantic_soft_target_text_to_pair",
+  "stable_caption_groups": true,
+  "use_direction_embeddings": true,
+  "use_explicit_change_fusion": true,
+  "trainable_temperature": true,
+  "temporal_depth": 6,
+  "text_adapter_enabled": true,
+  "text_max_length": 256,
+  "semantic_soft_target_weight": 0.25,
+  "semantic_teacher_top_k": 8,
+  "semantic_teacher_temperature": 0.05,
+  "gpu_name": "NVIDIA H100 80GB HBM3",
+  "results": [
+    {
+      "batch_size": 8,
+      "success": true,
+      "error": "",
+      "peak_allocated_vram_bytes": 15783126016,
+      "peak_reserved_vram_bytes": 19365101568,
+      "shapes": {
+        "images": [
+          8,
+          2,
+          3,
+          256,
+          256
+        ],
+        "captions": 16
+      }
+    },
+    {
+      "batch_size": 16,
+      "success": true,
+      "error": "",
+      "peak_allocated_vram_bytes": 29137385472,
+      "peak_reserved_vram_bytes": 34101788672,
+      "shapes": {
+        "images": [
+          16,
+          2,
+          3,
+          256,
+          256
+        ],
+        "captions": 32
+      }
+    },
+    {
+      "batch_size": 24,
+      "success": true,
+      "error": "",
+      "peak_allocated_vram_bytes": 42494220800,
+      "peak_reserved_vram_bytes": 49455038464,
+      "shapes": {
+        "images": [
+          24,
+          2,
+          3,
+          256,
+          256
+        ],
+        "captions": 48
+      }
+    },
+    {
+      "batch_size": 32,
+      "success": true,
+      "error": "",
+      "peak_allocated_vram_bytes": 55855726592,
+      "peak_reserved_vram_bytes": 64218988544,
+      "shapes": {
+        "images": [
+          32,
+          2,
+          3,
+          256,
+          256
+        ],
+        "captions": 64
+      }
+    }
+  ],
+  "recommended_batch_size": 32,
+  "batch_32_passed": true,
+  "memory_data_mode": "shape_probe",
+  "memory_probe_scope": "architecture/batch memory validation only; not a SECOND-CC adapter validation",
+  "data_mode": "levir_only",
+  "train_manifests": [],
+  "val_manifests": [],
+  "manifest_fingerprints": {
+    "train": {},
+    "validation": {}
+  },
+  "dataset_names": [
+    "levir_mci"
+  ],
+  "dataset_weights": {},
+  "train_row_count": 64,
+  "validation_row_count": 2
+}
