@@ -32,6 +32,9 @@ ARGS=(
   "$TEMPORAL_DEPTH"
   --text-max-length "$TEXT_MAX_LENGTH"
 )
+if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
+  ARGS+=(--enable-patch-reranker)
+fi
 if [[ -n "${DATASET_CONFIG:-}" ]]; then
   ARGS+=(--dataset-config "$DATASET_CONFIG")
 elif [[ "${MIXED_SMOKE:-0}" == "1" ]]; then

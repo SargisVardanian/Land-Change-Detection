@@ -31,6 +31,7 @@ def run(
     jina_model: Path,
     temporal_depth: int = 6,
     text_max_length: int = 256,
+    enable_patch_reranker: bool = False,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -51,6 +52,7 @@ def run(
         train_eval_interval=0,
         checkpoint_interval_steps=0,
         text_max_length=text_max_length,
+        enable_patch_reranker=enable_patch_reranker,
     )
     train, val = _build_stage1_datasets(config)
     data_metadata = _stage1_data_metadata(config, train, val)
@@ -95,6 +97,11 @@ def run(
                         semantic_soft_target_weight=config.semantic_soft_target_weight,
                         semantic_teacher_top_k=config.semantic_teacher_top_k,
                         semantic_teacher_temperature=config.semantic_teacher_temperature,
+                        logits_text_to_pair=(
+                            output.final_scores * model.retrieval_head.similarity_scale()
+                            if output.final_scores is not None and enable_patch_reranker
+                            else None
+                        ),
                     )
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(
@@ -137,6 +144,8 @@ def run(
         "temporal_depth": config.temporal_depth,
         "text_adapter_enabled": config.use_text_adapter,
         "text_max_length": config.text_max_length,
+        "patch_reranker_available": enable_patch_reranker,
+        "qcpr_score_mode": "fused" if enable_patch_reranker else "global",
         "semantic_soft_target_weight": config.semantic_soft_target_weight,
         "semantic_teacher_top_k": config.semantic_teacher_top_k,
         "semantic_teacher_temperature": config.semantic_teacher_temperature,

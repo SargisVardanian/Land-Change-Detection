@@ -28,6 +28,9 @@ GATE_ARGS=(
   "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32 "$TEMPORAL_DEPTH"
   --expected-text-max-length "$TEXT_MAX_LENGTH"
 )
+if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
+  GATE_ARGS+=(--expected-patch-reranker)
+fi
 append_gate_colon_list() {
   local flag="$1"
   local values="$2"
@@ -94,6 +97,19 @@ ARGS=(
   --early-stopping-patience "${EARLY_STOPPING_PATIENCE:-4}"
   --early-stopping-min-improvement "${EARLY_STOPPING_MIN_IMPROVEMENT:-0.002}"
 )
+if [[ -n "${MAX_STEPS:-}" ]]; then
+  ARGS+=(--max-steps "$MAX_STEPS")
+fi
+if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
+  ARGS+=(
+    --enable-patch-reranker
+    --qcpr-alpha "${QCPR_ALPHA:-1.0}"
+    --qcpr-beta "${QCPR_BETA:-0.25}"
+    --qcpr-local-loss-weight "${QCPR_LOCAL_LOSS_WEIGHT:-1.0}"
+    --query-segmentation-loss-weight "${QUERY_SEGMENTATION_LOSS_WEIGHT:-0.2}"
+    --structured-fna-weight "${STRUCTURED_FNA_WEIGHT:-0.0}"
+  )
+fi
 if [[ -n "${RESUME_CHECKPOINT:-}" ]]; then
   ARGS+=(--resume "$RESUME_CHECKPOINT")
 fi

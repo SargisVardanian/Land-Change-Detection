@@ -14,6 +14,7 @@ from land_change_detection.backbones.universat_frame_backend import UniverSatFra
 from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, TextEmbeddingAdapter
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder, TemporalChangeEncoderConfig
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
+from land_change_detection.models.qcpr import QCPRPatchReranker
 from land_change_detection.training.rng_state import restore_rng_state
 
 
@@ -78,7 +79,14 @@ def build_model(config, device):
         if bool(getattr(config, "use_text_adapter", False))
         else None
     )
-    return UniChangeV2RetrievalModel(visual, temporal, text, retrieval_head, text_adapter=text_adapter).to(device)
+    patch_reranker = (
+        QCPRPatchReranker(alpha=float(getattr(config, "qcpr_alpha", 1.0)), beta=float(getattr(config, "qcpr_beta", 0.25)))
+        if bool(getattr(config, "enable_patch_reranker", False))
+        else None
+    )
+    return UniChangeV2RetrievalModel(
+        visual, temporal, text, retrieval_head, text_adapter=text_adapter, patch_reranker=patch_reranker
+    ).to(device)
 
 
 def run_metadata() -> dict:

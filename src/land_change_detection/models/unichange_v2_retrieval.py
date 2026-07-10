@@ -10,6 +10,7 @@ from land_change_detection.backbones.jina_v5_text import TextFeatures
 from land_change_detection.backbones.sequence_universat import SequenceUniverSatEncoder
 from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, TextEmbeddingAdapter
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder
+from land_change_detection.models.qcpr import QCPRPatchReranker
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,13 @@ class UniChangeV2RetrievalOutput:
     teacher_text_embedding: Tensor
     logits: Tensor
     visual_metadata: dict[str, Any]
+    patch_tokens: Tensor | None = None
+    global_scores: Tensor | None = None
+    local_scores: Tensor | None = None
+    final_scores: Tensor | None = None
+    query_mask_logits: Tensor | None = None
+    mask_query_embeddings: Tensor | None = None
+    score_mode: str = "global"
 
 
 class UniChangeV2RetrievalModel(nn.Module):
@@ -36,6 +44,7 @@ class UniChangeV2RetrievalModel(nn.Module):
         text_encoder: nn.Module,
         retrieval_head: RetrievalProjectionHead,
         text_adapter: TextEmbeddingAdapter | None = None,
+        patch_reranker: QCPRPatchReranker | None = None,
     ):
         super().__init__()
         self.visual_encoder = visual_encoder
@@ -43,6 +52,7 @@ class UniChangeV2RetrievalModel(nn.Module):
         self.text_encoder = text_encoder
         self.retrieval_head = retrieval_head
         self.text_adapter = text_adapter
+        self.patch_reranker = patch_reranker
         self.freeze_backbones()
 
     def freeze_backbones(self) -> None:
@@ -53,6 +63,14 @@ class UniChangeV2RetrievalModel(nn.Module):
         self.visual_encoder.eval()
         self.text_encoder.eval()
 
+    @property
+    def patch_projector(self) -> nn.Module | None:
+        return self.patch_reranker.patch_projector if self.patch_reranker is not None else None
+
+    @property
+    def query_mask_head(self) -> nn.Module | None:
+        return self.patch_reranker.query_mask_head if self.patch_reranker is not None else None
+
     def train(self, mode: bool = True):
         super().train(mode)
         self.visual_encoder.eval()
@@ -60,10 +78,15 @@ class UniChangeV2RetrievalModel(nn.Module):
         return self
 
     def encode_pairs(self, images: Tensor, temporal_valid_mask: Tensor | None = None) -> tuple[Tensor, dict[str, Any]]:
+        pair_embedding, _, metadata = self.encode_pair_features(images, temporal_valid_mask=temporal_valid_mask)
+        return pair_embedding, metadata
+
+    def encode_pair_features(self, images: Tensor, temporal_valid_mask: Tensor | None = None) -> tuple[Tensor, Tensor | None, dict[str, Any]]:
         visual = self.visual_encoder(images)
         temporal = self.temporal_encoder(visual.features, temporal_valid_mask=temporal_valid_mask)
         projected = self.retrieval_head(temporal.pair_embedding)
-        return projected.pair_embedding, visual.metadata
+        patches = self.patch_reranker.project_patches(temporal.change_tokens) if self.patch_reranker is not None else None
+        return projected.pair_embedding, patches, visual.metadata
 
     def encode_texts(self, captions: list[str], *, return_teacher: bool = False) -> Tensor | tuple[Tensor, Tensor]:
         with torch.no_grad():
@@ -85,15 +108,36 @@ class UniChangeV2RetrievalModel(nn.Module):
         caption_to_pair: Tensor,
         temporal_valid_mask: Tensor | None = None,
     ) -> UniChangeV2RetrievalOutput:
-        pair_embedding, metadata = self.encode_pairs(images, temporal_valid_mask=temporal_valid_mask)
+        pair_embedding, patch_tokens, metadata = self.encode_pair_features(images, temporal_valid_mask=temporal_valid_mask)
         text_embedding, teacher_text_embedding = self.encode_texts(captions, return_teacher=True)
         text_embedding = text_embedding.to(pair_embedding.device)
         teacher_text_embedding = teacher_text_embedding.to(pair_embedding.device)
-        logits = pair_embedding @ text_embedding.T
+        global_scores = text_embedding @ pair_embedding.T
+        local_scores = None
+        final_scores = global_scores
+        query_mask_logits = None
+        mask_query_embeddings = None
+        score_mode = "global"
+        if self.patch_reranker is not None and patch_tokens is not None:
+            reranked = self.patch_reranker.score(text_embedding, pair_embedding, patch_tokens)
+            global_scores = reranked["global_score"]  # type: ignore[assignment]
+            local_scores = reranked["local_score"]  # type: ignore[assignment]
+            final_scores = reranked["final_score"]  # type: ignore[assignment]
+            query_mask_logits = reranked["query_mask_logits"]  # type: ignore[assignment]
+            mask_query_embeddings = reranked["mask_query_embeddings"]  # type: ignore[assignment]
+            score_mode = str(reranked["score_mode"])
+        logits = final_scores.T
         return UniChangeV2RetrievalOutput(
             pair_embedding=pair_embedding,
             text_embedding=text_embedding,
             teacher_text_embedding=teacher_text_embedding,
             logits=logits,
             visual_metadata=metadata,
+            patch_tokens=patch_tokens,
+            global_scores=global_scores,
+            local_scores=local_scores,
+            final_scores=final_scores,
+            query_mask_logits=query_mask_logits,
+            mask_query_embeddings=mask_query_embeddings,
+            score_mode=score_mode,
         )

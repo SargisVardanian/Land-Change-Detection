@@ -245,6 +245,105 @@ def semantic_direction_contradicts(query: dict[str, Any], candidate: dict[str, A
     return bool((query_add and cand_remove) or (query_remove and cand_add) or (query_inc and cand_dec) or (query_dec and cand_inc))
 
 
+def _direction_signature(semantics: dict[str, Any]) -> str:
+    if semantics["no_change"]:
+        return "no_change"
+    if semantics["appeared"] or semantics["constructed"] or semantics["added"]:
+        return "appeared"
+    if semantics["disappeared"] or semantics["demolished"] or semantics["removed"]:
+        return "disappeared"
+    if semantics["increased"] or semantics["expanded"]:
+        return "increased"
+    if semantics["decreased"] or semantics["reduced"]:
+        return "decreased"
+    return "changed" if semantics["changed"] else "unknown"
+
+
+def _canonical_object_terms(values: list[str]) -> set[str]:
+    aliases = {
+        "buildings": "building", "houses": "house", "roads": "road", "fields": "field",
+        "crops": "crop", "trees": "tree", "greenhouses": "greenhouse", "structures": "structure",
+        "facilities": "facility", "settlements": "settlement", "bridges": "bridge",
+    }
+    return {aliases.get(value, value) for value in values}
+
+
+def structured_fna_relevance_matrix(
+    captions: list[str],
+    caption_to_pair: Tensor,
+    caption_group_ids: Tensor,
+    *,
+    pair_count: int,
+) -> Tensor:
+    """RSICRC-inspired false-negative attraction targets.
+
+    Scores preserve known duplicate-caption positives and attract candidates
+    that satisfy compatible object, direction and location constraints. Clear
+    temporal contradictions always remain zero-weight negatives.
+    """
+
+    if len(captions) != caption_to_pair.numel() or caption_group_ids.numel() != len(captions):
+        raise ValueError("captions, caption_to_pair and caption_group_ids must align")
+    if pair_count <= 0:
+        raise ValueError("pair_count must be positive")
+    semantics = [classify_caption_semantics(caption) for caption in captions]
+    candidates_by_pair = [
+        [index for index, pair_index in enumerate(caption_to_pair.tolist()) if int(pair_index) == pair]
+        for pair in range(pair_count)
+    ]
+    relevance = torch.zeros(len(captions), pair_count, dtype=torch.float32, device=caption_to_pair.device)
+    known_positives = build_caption_positive_mask(
+        caption_to_pair,
+        pair_count=pair_count,
+        caption_group_ids=caption_group_ids,
+    ).T
+    for query_index, query in enumerate(semantics):
+        query_objects = _canonical_object_terms(query["object_terms"])
+        query_locations = set(query["location_terms"])
+        query_direction = _direction_signature(query)
+        for pair_index, candidate_indices in enumerate(candidates_by_pair):
+            best = 0.0
+            for candidate_index in candidate_indices:
+                candidate = semantics[candidate_index]
+                if semantic_direction_contradicts(query, candidate):
+                    continue
+                candidate_objects = _canonical_object_terms(candidate["object_terms"])
+                candidate_locations = set(candidate["location_terms"])
+                object_match = bool(query_objects and candidate_objects and query_objects & candidate_objects)
+                direction_match = query_direction != "unknown" and query_direction == _direction_signature(candidate)
+                location_match = bool(query_locations and candidate_locations and query_locations & candidate_locations)
+                concept_match = bool(
+                    (query["no_change"] and candidate["no_change"])
+                    or (query["changed"] and candidate["changed"])
+                    or direction_match
+                )
+                score = 0.0
+                if object_match and direction_match and location_match:
+                    score = 1.0
+                elif object_match and direction_match:
+                    score = 0.8
+                elif concept_match:
+                    score = 0.5
+                best = max(best, score)
+            relevance[query_index, pair_index] = best
+    relevance = torch.maximum(relevance, known_positives.float())
+    return relevance.detach()
+
+
+def structured_fna_loss(logits_text_to_pair: Tensor, relevance: Tensor) -> Tensor:
+    if logits_text_to_pair.shape != relevance.shape:
+        raise ValueError("FNA logits and relevance must have the same shape")
+    if not torch.all((relevance >= 0.0) & (relevance <= 1.0)):
+        raise ValueError("FNA relevance must be in [0, 1]")
+    positive_mass = relevance.sum(dim=1)
+    if torch.any(positive_mass <= 0):
+        raise ValueError("Every FNA query must retain positive relevance")
+    negative = 1.0 - relevance
+    positive_loss = -(relevance * F.logsigmoid(logits_text_to_pair.float())).sum(dim=1) / positive_mass
+    negative_loss = -(negative * F.logsigmoid(-logits_text_to_pair.float())).sum(dim=1) / negative.sum(dim=1).clamp_min(1.0)
+    return (0.5 * (positive_loss + negative_loss)).mean()
+
+
 def caption_detail_score(text: str) -> float:
     normalized = normalize_caption_text(text)
     tokens = normalized.split()
@@ -536,11 +635,21 @@ def semantic_text_to_pair_set_loss(
     semantic_soft_target_weight: float = 0.25,
     semantic_teacher_top_k: int = 8,
     semantic_teacher_temperature: float = 0.05,
+    logits_text_to_pair: Tensor | None = None,
+    structured_fna_weight: float = 0.0,
     return_diagnostics: bool = False,
 ) -> Tensor | tuple[Tensor, dict[str, Any]]:
     if not 0.0 <= semantic_soft_target_weight <= 1.0:
         raise ValueError("semantic_soft_target_weight must be in [0, 1]")
-    logits = _scaled_similarity_logits(pair_embeddings, text_embeddings, temperature=temperature, logit_scale=logit_scale)
+    if not 0.0 <= structured_fna_weight <= 1.0:
+        raise ValueError("structured_fna_weight must be in [0, 1]")
+    if logits_text_to_pair is None:
+        logits = _scaled_similarity_logits(pair_embeddings, text_embeddings, temperature=temperature, logit_scale=logit_scale)
+    else:
+        expected = (text_embeddings.shape[0], pair_embeddings.shape[0])
+        if tuple(logits_text_to_pair.shape) != expected:
+            raise ValueError(f"logits_text_to_pair must have shape {expected}, got {tuple(logits_text_to_pair.shape)}")
+        logits = logits_text_to_pair.T
     positives = build_caption_positive_mask(
         caption_to_pair,
         pair_count=pair_embeddings.shape[0],
@@ -562,6 +671,17 @@ def semantic_text_to_pair_set_loss(
         teacher_temperature=semantic_teacher_temperature,
     )
     text_to_pair = (1.0 - semantic_soft_target_weight) * set_text_to_pair + semantic_soft_target_weight * soft_loss
+    fna_loss = logits.sum() * 0.0
+    fna_relevance = None
+    if structured_fna_weight > 0.0:
+        fna_relevance = structured_fna_relevance_matrix(
+            captions,
+            caption_to_pair,
+            caption_group_ids,
+            pair_count=pair_embeddings.shape[0],
+        ).to(logits.device)
+        fna_loss = structured_fna_loss(logits.T, fna_relevance)
+        text_to_pair = (1.0 - structured_fna_weight) * text_to_pair + structured_fna_weight * fna_loss
     weight_sum = text_to_pair_weight + pair_to_text_weight
     if weight_sum <= 0.0:
         raise ValueError("at least one loss direction weight must be positive")
@@ -578,6 +698,9 @@ def semantic_text_to_pair_set_loss(
         "semantic_teacher_temperature": float(semantic_teacher_temperature),
         "teacher_positive_pairs": int((relevance > 0).sum().detach().cpu()),
         "teacher_target_min_positives": int((relevance > 0).sum(dim=1).min().detach().cpu()),
+        "structured_fna_weight": float(structured_fna_weight),
+        "structured_fna_loss": float(fna_loss.detach().cpu()),
+        "structured_fna_positive_pairs": int((fna_relevance > 0).sum().detach().cpu()) if fna_relevance is not None else 0,
         "text_to_pair_weight": float(text_to_pair_weight / weight_sum),
         "pair_to_text_weight": float(pair_to_text_weight / weight_sum),
         "positive_pairs": int(positives.sum().detach().cpu()),

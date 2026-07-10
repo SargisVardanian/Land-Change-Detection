@@ -22,11 +22,16 @@ TEMPORAL_DEPTH="${TEMPORAL_DEPTH:-6}"
 TEXT_MAX_LENGTH="${TEXT_MAX_LENGTH:-256}"
 mkdir -p "$RS_PROJECT_ROOT/logs" "$RUN_DIR"
 
-PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \
-  "$CODE_ROOT/scripts/probe_unichange_v2_stage1_next_memory.py" \
-  "$MCI_DATA" "$RUN_DIR" \
-  "$RS_PROJECT_ROOT/external/UniverSat" \
-  "$RS_PROJECT_ROOT/models/universat-base" \
-  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval" \
-  "$TEMPORAL_DEPTH" \
+ARGS=(
+  "$MCI_DATA" "$RUN_DIR"
+  "$RS_PROJECT_ROOT/external/UniverSat"
+  "$RS_PROJECT_ROOT/models/universat-base"
+  "$RS_PROJECT_ROOT/models/jina-v5-text-small-retrieval"
+  "$TEMPORAL_DEPTH"
   --text-max-length "$TEXT_MAX_LENGTH"
+)
+if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
+  ARGS+=(--enable-patch-reranker)
+fi
+PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \
+  "$CODE_ROOT/scripts/probe_unichange_v2_stage1_next_memory.py" "${ARGS[@]}"

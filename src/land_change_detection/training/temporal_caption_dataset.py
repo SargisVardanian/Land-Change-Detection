@@ -121,6 +121,9 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 "semantic_t1_path": row.get("semantic_t1_path"),
                 "semantic_t2_path": row.get("semantic_t2_path"),
                 "source_metadata": row.get("source_metadata", {}),
+                "retrieval_supervision": bool(row.get("retrieval_supervision", row.get("source_metadata", {}).get("retrieval_supervision", True))),
+                "seg_supervision_mode": row.get("seg_supervision_mode", row.get("source_metadata", {}).get("seg_supervision_mode")),
+                "query_mask_path": row.get("query_mask_path", row.get("source_metadata", {}).get("query_mask_path")),
             },
         )
 
@@ -307,6 +310,7 @@ def load_dataset_config(path: str | Path | None) -> tuple[list[str], list[str], 
         "semantic_soft_target_weight",
         "semantic_teacher_top_k",
         "semantic_teacher_temperature",
+        "structured_fna_weight",
     ):
         if key in payload:
             options[key] = payload[key]

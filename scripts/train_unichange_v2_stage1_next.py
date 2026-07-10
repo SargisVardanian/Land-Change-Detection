@@ -30,6 +30,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-max-length", type=int, default=256)
     parser.add_argument("--early-stopping-patience", type=int, default=4)
     parser.add_argument("--early-stopping-min-improvement", type=float, default=0.002)
+    parser.add_argument("--max-steps", type=int, default=None)
+    parser.add_argument("--enable-patch-reranker", action="store_true")
+    parser.add_argument("--qcpr-alpha", type=float, default=1.0)
+    parser.add_argument("--qcpr-beta", type=float, default=0.25)
+    parser.add_argument("--qcpr-local-loss-weight", type=float, default=1.0)
+    parser.add_argument("--query-segmentation-loss-weight", type=float, default=0.2)
+    parser.add_argument("--structured-fna-weight", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -59,5 +66,12 @@ if __name__ == "__main__":
             text_max_length=args.text_max_length,
             early_stopping_patience=args.early_stopping_patience,
             early_stopping_min_improvement=args.early_stopping_min_improvement,
+            max_steps=args.max_steps,
+            enable_patch_reranker=args.enable_patch_reranker,
+            qcpr_alpha=args.qcpr_alpha,
+            qcpr_beta=args.qcpr_beta,
+            qcpr_local_loss_weight=args.qcpr_local_loss_weight,
+            query_segmentation_loss_weight=args.query_segmentation_loss_weight,
+            structured_fna_weight=args.structured_fna_weight,
         )
     )

@@ -31,6 +31,11 @@ class RetrievalCorpus:
     peak_reserved_vram_bytes: int
     dataset_names: list[str] | None = None
     teacher_text_embeddings: Tensor | None = None
+    patch_tokens: Tensor | None = None
+    mask_query_embeddings: Tensor | None = None
+    qcpr_alpha: float = 1.0
+    qcpr_beta: float = 0.0
+    score_mode: str = "global"
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,8 @@ def collect_retrieval_corpus(
     pair_embeddings: list[Tensor] = []
     text_embeddings: list[Tensor] = []
     teacher_text_embeddings: list[Tensor] = []
+    patch_tokens: list[Tensor] = []
+    mask_query_embeddings: list[Tensor] = []
     caption_to_pair_all: list[Tensor] = []
     caption_group_ids_all: list[Tensor] = []
     pair_mask_fractions: list[Tensor] = []
@@ -94,6 +101,10 @@ def collect_retrieval_corpus(
             pair_embeddings.append(output.pair_embedding.float().cpu())
             text_embeddings.append(output.text_embedding.float().cpu())
             teacher_text_embeddings.append(output.teacher_text_embedding.float().cpu())
+            if output.patch_tokens is not None:
+                patch_tokens.append(output.patch_tokens.float().cpu())
+            if output.mask_query_embeddings is not None:
+                mask_query_embeddings.append(output.mask_query_embeddings.float().cpu())
             caption_to_pair_all.append(batch["caption_to_pair"].cpu() + pair_offset)
             caption_group_ids_all.append(stable_caption_group_ids(batch["captions"]).cpu())
             pair_offset += output.pair_embedding.shape[0]
@@ -118,6 +129,8 @@ def collect_retrieval_corpus(
             peak_reserved_vram_bytes=peak_reserved,
             dataset_names=[],
             teacher_text_embeddings=None,
+            patch_tokens=None,
+            mask_query_embeddings=None,
         )
 
     return RetrievalCorpus(
@@ -133,6 +146,11 @@ def collect_retrieval_corpus(
         peak_reserved_vram_bytes=peak_reserved,
         dataset_names=dataset_names,
         teacher_text_embeddings=torch.cat(teacher_text_embeddings),
+        patch_tokens=torch.cat(patch_tokens) if patch_tokens else None,
+        mask_query_embeddings=torch.cat(mask_query_embeddings) if mask_query_embeddings else None,
+        qcpr_alpha=float(getattr(getattr(model, "patch_reranker", None), "alpha", 1.0)),
+        qcpr_beta=float(getattr(getattr(model, "patch_reranker", None), "beta", 0.0)),
+        score_mode="fused" if patch_tokens and mask_query_embeddings else "global",
     )
 
 
@@ -329,6 +347,21 @@ def similarity_matrix(
             output[query_start:query_end, candidate_start:candidate_end] = (
                 text[query_start:query_end] @ pairs[candidate_start:candidate_end].T
             )
+    if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+        patches = corpus.patch_tokens.float()
+        queries = corpus.mask_query_embeddings.float()
+        local = torch.empty_like(output)
+        for query_start in range(0, query_count, query_chunk_size):
+            query_end = min(query_start + query_chunk_size, query_count)
+            for candidate_start in range(0, candidate_count, candidate_chunk_size):
+                candidate_end = min(candidate_start + candidate_chunk_size, candidate_count)
+                logits = torch.einsum(
+                    "qd,bnd->qbn",
+                    queries[query_start:query_end],
+                    patches[candidate_start:candidate_end],
+                )
+                local[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
+        return corpus.qcpr_alpha * output + corpus.qcpr_beta * local
     return output
 
 

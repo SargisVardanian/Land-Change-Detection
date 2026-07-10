@@ -219,6 +219,14 @@ def main() -> int:
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
     metrics, similarities = compute_retrieval_metrics(corpus)
+    global_similarities = corpus.text_embeddings.float() @ corpus.pair_embeddings.float().T
+    local_similarities = None
+    if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+        local_similarities = torch.einsum(
+            "qd,bnd->qbn",
+            corpus.mask_query_embeddings.float(),
+            corpus.patch_tokens.float(),
+        ).sigmoid().amax(dim=-1)
     rank_result = compute_retrieval_ranks(corpus)
 
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
@@ -227,6 +235,9 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     visuals = args.output_dir / "visuals"
     visuals.mkdir(parents=True, exist_ok=True)
+    overlay_dir = args.output_dir / "qcpr_mask_overlays"
+    if local_similarities is not None:
+        overlay_dir.mkdir(parents=True, exist_ok=True)
     records = []
     relevance_ranks = []
     exact_ranks = []
@@ -249,6 +260,8 @@ def main() -> int:
         caption_index = caption_candidates[0]
         relevant_mask = rank_result.positive_mask[caption_index]
         scores = similarities[caption_index]
+        global_scores = global_similarities[caption_index]
+        local_scores = local_similarities[caption_index] if local_similarities is not None else None
         order = rank_result.ranked_candidate_indices[caption_index]
         relevant_rank = int(rank_result.duplicate_aware_ranks[caption_index].item())
         exact_rank = int(rank_result.exact_pair_ranks[caption_index].item())
@@ -268,6 +281,8 @@ def main() -> int:
         for row, retrieved_index in enumerate(top_indices, start=1):
             retrieved_id = corpus.pair_ids[int(retrieved_index)]
             score = float(scores[int(retrieved_index)].item())
+            global_score = float(global_scores[int(retrieved_index)].item())
+            local_score = float(local_scores[int(retrieved_index)].item()) if local_scores is not None else None
             is_relevant = bool(relevant_mask[int(retrieved_index)].item())
             label = f"#{row} {retrieved_id} {'RELEVANT' if is_relevant else 'OTHER'}"
             render_pair(axes[row], sample_by_id[retrieved_id], label, score)
@@ -276,6 +291,13 @@ def main() -> int:
                     "rank": row,
                     "pair_id": retrieved_id,
                     "score": score,
+                    "S_global": global_score,
+                    "S_local": local_score,
+                    "S_final": score,
+                    "global_score": global_score,
+                    "local_score": local_score,
+                    "final_score": score,
+                    "score_mode": corpus.score_mode,
                     "relevant": is_relevant,
                 }
             )
@@ -286,6 +308,38 @@ def main() -> int:
         image_name = f"query_{query_number:03d}_{query_pair_id}.png"
         figure.savefig(visuals / image_name, dpi=140, bbox_inches="tight")
         plt.close(figure)
+        overlay_name = None
+        if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+            patch_logits = torch.einsum(
+                "d,nd->n",
+                corpus.mask_query_embeddings[caption_index].float(),
+                corpus.patch_tokens[query_pair_index].float(),
+            )
+            side = int(round(patch_logits.numel() ** 0.5))
+            if side * side == patch_logits.numel():
+                _, t2_path, _ = _sample_paths(sample_by_id[query_pair_id])
+                t2 = load_rgb(t2_path)
+                mask = torch.nn.functional.interpolate(
+                    patch_logits.sigmoid().reshape(1, 1, side, side),
+                    size=t2.shape[:2],
+                    mode="bilinear",
+                    align_corners=False,
+                )[0, 0].numpy()
+                overlay_name = f"query_{query_number:03d}_{query_pair_id}.png"
+                overlay_figure, overlay_axes = plt.subplots(1, 2, figsize=(10, 5))
+                overlay_axes[0].imshow(t2)
+                overlay_axes[0].set_title("T2")
+                overlay_axes[1].imshow(t2)
+                overlay_axes[1].imshow(mask, cmap="magma", alpha=0.55, vmin=0.0, vmax=1.0)
+                overlay_axes[1].set_title("QCPR query mask")
+                for axis in overlay_axes:
+                    axis.axis("off")
+                overlay_figure.tight_layout()
+                overlay_figure.savefig(overlay_dir / overlay_name, dpi=140, bbox_inches="tight")
+                plt.close(overlay_figure)
+        top_global = float(global_scores[int(top_indices[0])].item()) if top_indices else None
+        top_local = float(local_scores[int(top_indices[0])].item()) if local_scores is not None and top_indices else None
+        top_final = float(scores[int(top_indices[0])].item()) if top_indices else None
         records.append(
             {
                 "query_pair_id": query_pair_id,
@@ -295,6 +349,14 @@ def main() -> int:
                 "exact_pair_rank": exact_rank,
                 "retrieved": retrieved,
                 "image": image_name,
+                "mask_overlay": overlay_name,
+                "S_global": top_global,
+                "S_local": top_local,
+                "S_final": top_final,
+                "global_score": top_global,
+                "local_score": top_local,
+                "final_score": top_final,
+                "score_mode": corpus.score_mode,
             }
         )
 
@@ -320,6 +382,8 @@ def main() -> int:
         "corpus_metrics": metrics,
         "gallery_metrics": gallery_metrics,
         "top_k": args.top_k,
+        "patch_reranker_available": corpus.patch_tokens is not None,
+        "qcpr_score_mode": corpus.score_mode,
     }
     (args.output_dir / "retrieval_metrics.json").write_text(
         json.dumps(report, indent=2),
@@ -328,6 +392,7 @@ def main() -> int:
     with (args.output_dir / "retrieval_results.jsonl").open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record) + "\n")
+    (args.output_dir / "evaluation_summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report, indent=2))
     return 0
 

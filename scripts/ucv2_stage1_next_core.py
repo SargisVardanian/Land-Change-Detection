@@ -22,6 +22,7 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
+from land_change_detection.models.qcpr import query_segmentation_loss
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import (
     DeterministicWeightedDatasetSampler,
@@ -99,6 +100,12 @@ class Stage1NextConfig:
     checkpoint_interval_steps: int = 500
     early_stopping_patience: int = 4
     early_stopping_min_improvement: float = 0.002
+    enable_patch_reranker: bool = False
+    qcpr_alpha: float = 1.0
+    qcpr_beta: float = 0.25
+    qcpr_local_loss_weight: float = 1.0
+    query_segmentation_loss_weight: float = 0.2
+    structured_fna_weight: float = 0.0
 
 
 class FrequencyBalancedCaptionCollator:
@@ -183,6 +190,11 @@ class FrequencyBalancedCaptionCollator:
             "mask_fractions": torch.tensor(
                 [float(item.mask.float().mean().item()) for item in items],
                 dtype=torch.float32,
+            ),
+            "masks": torch.stack([item.mask.float() for item in items], dim=0),
+            "retrieval_supervision": torch.tensor(
+                [bool(getattr(item, "metadata", {}).get("retrieval_supervision", True)) for item in items],
+                dtype=torch.bool,
             ),
         }
 
@@ -329,6 +341,15 @@ def make_optimizer(model: nn.Module, config: Stage1NextConfig) -> torch.optim.Op
                 weight_decay=config.weight_decay,
             )
         )
+    if getattr(model, "patch_reranker", None) is not None:
+        groups.extend(
+            _module_parameter_groups(
+                model.patch_reranker,
+                prefix="patch_reranker",
+                learning_rate=config.retrieval_head_lr,
+                weight_decay=config.weight_decay,
+            )
+        )
     if not groups:
         raise RuntimeError("No trainable Stage-1 parameters were found")
     seen: set[int] = set()
@@ -417,6 +438,14 @@ def validate_config(config: Stage1NextConfig) -> None:
         raise ValueError("early_stopping_patience must be non-negative")
     if config.early_stopping_min_improvement < 0:
         raise ValueError("early_stopping_min_improvement must be non-negative")
+    if config.max_steps is not None and config.max_steps <= 0:
+        raise ValueError("max_steps must be positive when provided")
+    if config.qcpr_alpha < 0 or config.qcpr_beta < 0 or config.qcpr_alpha + config.qcpr_beta <= 0:
+        raise ValueError("QCPR fusion weights must be non-negative and not both zero")
+    if config.qcpr_local_loss_weight < 0 or config.query_segmentation_loss_weight < 0:
+        raise ValueError("QCPR loss weights must be non-negative")
+    if not 0.0 <= config.structured_fna_weight <= 1.0:
+        raise ValueError("structured_fna_weight must be in [0, 1]")
     if config.text_to_pair_weight + config.pair_to_text_weight <= 0:
         raise ValueError("at least one loss direction weight must be positive")
     if sorted(config.mask_fraction_boundaries) != list(config.mask_fraction_boundaries):
@@ -434,7 +463,7 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
     val_manifests = tuple(config_val or config.val_manifests)
     if config_weights:
         object.__setattr__(config, "dataset_sampling_weights", tuple(f"{name}={value}" for name, value in sorted(config_weights.items())))
-    for key in ("allowed_caption_sources", "semantic_soft_target_weight", "semantic_teacher_top_k", "semantic_teacher_temperature"):
+    for key in ("allowed_caption_sources", "semantic_soft_target_weight", "semantic_teacher_top_k", "semantic_teacher_temperature", "structured_fna_weight"):
         if key in config_options:
             value = config_options[key]
             object.__setattr__(config, key, tuple(value) if key == "allowed_caption_sources" else value)
@@ -687,6 +716,12 @@ def _critical_resume_config(config: Stage1NextConfig) -> dict[str, Any]:
         "semantic_teacher_temperature",
         "train_eval_pairs",
         "train_eval_interval",
+        "enable_patch_reranker",
+        "qcpr_alpha",
+        "qcpr_beta",
+        "qcpr_local_loss_weight",
+        "query_segmentation_loss_weight",
+        "structured_fna_weight",
     )
     payload = asdict(config)
     return {key: payload[key] for key in keys}
@@ -728,6 +763,13 @@ def run(
     text_max_length: int = 256,
     early_stopping_patience: int = 4,
     early_stopping_min_improvement: float = 0.002,
+    max_steps: int | None = None,
+    enable_patch_reranker: bool = False,
+    qcpr_alpha: float = 1.0,
+    qcpr_beta: float = 0.25,
+    qcpr_local_loss_weight: float = 1.0,
+    query_segmentation_loss_weight: float = 0.2,
+    structured_fna_weight: float = 0.0,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -753,6 +795,13 @@ def run(
         text_max_length=text_max_length,
         early_stopping_patience=early_stopping_patience,
         early_stopping_min_improvement=early_stopping_min_improvement,
+        max_steps=max_steps,
+        enable_patch_reranker=enable_patch_reranker,
+        qcpr_alpha=qcpr_alpha,
+        qcpr_beta=qcpr_beta,
+        qcpr_local_loss_weight=qcpr_local_loss_weight,
+        query_segmentation_loss_weight=query_segmentation_loss_weight,
+        structured_fna_weight=structured_fna_weight,
     )
     validate_config(config)
     base._set_seed(config.seed)
@@ -782,7 +831,7 @@ def run(
             "loss": "semantic_soft_target_text_to_pair",
             "stable_caption_groups": True,
             "resume": str(resume) if resume else None,
-            "history_schema": 3,
+            "history_schema": 4,
             "caption_group_statistics": {
                 "unique_groups": len(frequencies),
                 "caption_rows": int(sum(frequencies.values())),
@@ -801,7 +850,7 @@ def run(
         train_eval_loader = make_eval_loader(train_eval_dataset, config)
 
     steps_per_epoch = math.ceil(len(train) / config.batch_size)
-    total_steps = steps_per_epoch * config.epochs
+    total_steps = min(steps_per_epoch * config.epochs, config.max_steps) if config.max_steps is not None else steps_per_epoch * config.epochs
     model = build_model(config, device)
     optimizer = make_optimizer(model, config)
     scheduler = base._make_scheduler(optimizer, total_steps, config)
@@ -858,7 +907,6 @@ def run(
             model.train()
             batch = base._move_batch(batch, device)
             optimizer.zero_grad(set_to_none=True)
-            caption_groups = stable_caption_group_ids(batch["captions"], device=device)
             with base._amp_context(device, config.use_bf16):
                 output = model(
                     batch["images"],
@@ -866,24 +914,85 @@ def run(
                     batch["caption_to_pair"],
                     batch["temporal_valid_mask"],
                 )
-                loss, loss_diagnostics = semantic_text_to_pair_set_loss(
-                    output.pair_embedding,
-                    output.text_embedding,
-                    output.teacher_text_embedding,
-                    batch["captions"],
-                    batch["caption_to_pair"],
-                    caption_groups,
-                    logit_scale=model.retrieval_head.similarity_scale(),
-                    text_to_pair_weight=config.text_to_pair_weight,
-                    pair_to_text_weight=config.pair_to_text_weight,
-                    semantic_soft_target_weight=config.semantic_soft_target_weight,
-                    semantic_teacher_top_k=config.semantic_teacher_top_k,
-                    semantic_teacher_temperature=config.semantic_teacher_temperature,
-                    return_diagnostics=True,
+                pair_retrieval_mask = batch["retrieval_supervision"].bool()
+                caption_retrieval_mask = pair_retrieval_mask[batch["caption_to_pair"].long()]
+                if torch.any(pair_retrieval_mask) and torch.any(caption_retrieval_mask):
+                    selected_pairs = torch.nonzero(pair_retrieval_mask, as_tuple=False).flatten()
+                    inverse = torch.full(
+                        (pair_retrieval_mask.numel(),), -1, dtype=torch.long, device=device
+                    )
+                    inverse[selected_pairs] = torch.arange(selected_pairs.numel(), device=device)
+                    selected_queries = torch.nonzero(caption_retrieval_mask, as_tuple=False).flatten()
+                    selected_captions = [batch["captions"][index] for index in selected_queries.tolist()]
+                    selected_mapping = inverse[batch["caption_to_pair"][selected_queries].long()]
+                    selected_groups = stable_caption_group_ids(selected_captions, device=device)
+                    selected_final_scores = (
+                        output.final_scores[selected_queries][:, selected_pairs]
+                        if output.final_scores is not None and config.enable_patch_reranker
+                        else None
+                    )
+                    retrieval_loss, loss_diagnostics = semantic_text_to_pair_set_loss(
+                        output.pair_embedding[selected_pairs],
+                        output.text_embedding[selected_queries],
+                        output.teacher_text_embedding[selected_queries],
+                        selected_captions,
+                        selected_mapping,
+                        selected_groups,
+                        logit_scale=model.retrieval_head.similarity_scale(),
+                        text_to_pair_weight=config.text_to_pair_weight,
+                        pair_to_text_weight=config.pair_to_text_weight,
+                        semantic_soft_target_weight=config.semantic_soft_target_weight,
+                        semantic_teacher_top_k=config.semantic_teacher_top_k,
+                        semantic_teacher_temperature=config.semantic_teacher_temperature,
+                        logits_text_to_pair=(
+                            selected_final_scores * model.retrieval_head.similarity_scale()
+                            if selected_final_scores is not None
+                            else None
+                        ),
+                        structured_fna_weight=config.structured_fna_weight,
+                        return_diagnostics=True,
+                    )
+                else:
+                    retrieval_loss = output.pair_embedding.sum() * 0.0
+                    loss_diagnostics = {
+                        "retrieval_supervised_pairs": 0,
+                        "retrieval_supervised_queries": 0,
+                        "structured_fna_weight": float(config.structured_fna_weight),
+                    }
+                loss_diagnostics["retrieval_supervised_pairs"] = int(pair_retrieval_mask.sum().item())
+                loss_diagnostics["retrieval_supervised_queries"] = int(caption_retrieval_mask.sum().item())
+                segmentation_loss = retrieval_loss.new_zeros(())
+                if config.enable_patch_reranker:
+                    if output.query_mask_logits is None:
+                        raise RuntimeError("QCPR is enabled but query_mask_logits are unavailable")
+                    segmentation_loss = query_segmentation_loss(
+                        output.query_mask_logits,
+                        batch["caption_to_pair"],
+                        batch["masks"],
+                    )
+                loss = config.qcpr_local_loss_weight * retrieval_loss + config.query_segmentation_loss_weight * segmentation_loss
+                loss_diagnostics.update(
+                    {
+                        "retrieval_loss": float(retrieval_loss.detach().cpu()),
+                        "qcpr_local_loss": float(retrieval_loss.detach().cpu()) if config.enable_patch_reranker else 0.0,
+                        "query_segmentation_loss": float(segmentation_loss.detach().cpu()),
+                        "qcpr_score_mode": output.score_mode,
+                    }
                 )
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss at step {step}: {float(loss.detach().cpu())}")
             loss.backward()
+            patch_projector_grad_present = False
+            query_mask_head_grad_present = False
+            if config.enable_patch_reranker and model.patch_reranker is not None:
+                patch_projector_grad_present = any(
+                    parameter.grad is not None and torch.isfinite(parameter.grad).all() and bool(torch.any(parameter.grad != 0))
+                    for parameter in model.patch_reranker.patch_projector.parameters()
+                )
+                query_mask_head_grad_present = any(
+                    parameter.grad is not None and torch.isfinite(parameter.grad).all() and bool(torch.any(parameter.grad != 0))
+                    for parameter in model.patch_reranker.query_mask_head.parameters()
+                )
             grad_norm_tensor = torch.nn.utils.clip_grad_norm_(
                 trainable_stage1_parameters(model),
                 config.grad_clip_norm,
@@ -911,6 +1020,8 @@ def run(
                     "captions": len(batch["captions"]),
                     "grad_norm_before_clip": grad_norm,
                     "gradient_was_clipped": grad_norm > config.grad_clip_norm,
+                    "patch_projector_grad_present": patch_projector_grad_present,
+                    "query_mask_head_grad_present": query_mask_head_grad_present,
                     "logit_scale": float(model.retrieval_head.similarity_scale().detach().cpu()),
                     "effective_temperature": float(1.0 / model.retrieval_head.similarity_scale().detach().cpu()),
                     **loss_diagnostics,
@@ -1067,7 +1178,11 @@ def run(
             output_dir / "training_report.json",
             {
                 "stage1_next": True,
-                "status": "RUNNING" if epoch + 1 < config.epochs else "COMPLETED",
+                "status": (
+                    "BOUNDED_COMPLETED"
+                    if config.max_steps is not None and step >= config.max_steps
+                    else "RUNNING" if epoch + 1 < config.epochs else "COMPLETED"
+                ),
                 "completed_epochs": epoch + 1,
                 "step": step,
                 "best_scores": best_scores,

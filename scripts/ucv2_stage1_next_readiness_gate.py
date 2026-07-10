@@ -44,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-dataset-weight", action="append", default=[])
     parser.add_argument("--expected-dataset-config", type=Path, default=None)
     parser.add_argument("--expected-text-max-length", type=int, default=256)
+    parser.add_argument("--expected-patch-reranker", action="store_true")
     return parser.parse_args()
 
 
@@ -150,6 +151,8 @@ def main() -> int:
         "text_adapter_enabled": True,
         "text_max_length": args.expected_text_max_length,
     }
+    if args.expected_patch_reranker:
+        smoke_checks["patch_reranker_available"] = True
     errors = [
         f"smoke {key}={smoke.get(key)!r}"
         for key, expected in smoke_checks.items()
@@ -216,6 +219,8 @@ def main() -> int:
         "text_adapter_enabled": True,
         "text_max_length": args.expected_text_max_length,
     }
+    if args.expected_patch_reranker:
+        memory_checks["patch_reranker_available"] = True
     errors.extend(
         f"memory {key}={memory.get(key)!r}"
         for key, expected in memory_checks.items()
@@ -223,6 +228,13 @@ def main() -> int:
     )
     if memory.get("memory_data_mode") != "shape_probe":
         errors.append(f"memory memory_data_mode={memory.get('memory_data_mode')!r}; expected 'shape_probe'")
+    if args.expected_patch_reranker:
+        if smoke.get("qcpr_score_mode") != "fused":
+            errors.append("patch-reranker smoke must report qcpr_score_mode='fused'")
+        if smoke.get("qcpr_gradient_audit_passed") is not True:
+            errors.append("patch-reranker smoke must pass QCPR gradient audit")
+        if memory.get("qcpr_score_mode") != "fused":
+            errors.append("patch-reranker memory probe must report qcpr_score_mode='fused'")
     recommended = int(memory.get("recommended_batch_size") or 0)
     required_local = math.ceil(minimum_global_batch / world_size)
     if recommended < required_local:

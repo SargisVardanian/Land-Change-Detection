@@ -13,6 +13,7 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
+from land_change_detection.models.qcpr import query_segmentation_loss
 from land_change_detection.training.temporal_caption_dataset import parse_dataset_weights
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
@@ -42,6 +43,7 @@ def run(
     dataset_config: Path | None = None,
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
     text_max_length: int = 256,
+    enable_patch_reranker: bool = False,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -67,6 +69,7 @@ def run(
         dataset_config=str(dataset_config) if dataset_config else None,
         dataset_sampling_weights=dataset_sampling_weights,
         text_max_length=text_max_length,
+        enable_patch_reranker=enable_patch_reranker,
     )
     base._set_seed(config.seed)
     base._write_json(
@@ -137,7 +140,7 @@ def run(
                 batch["caption_to_pair"],
                 batch["temporal_valid_mask"],
             )
-            loss = semantic_text_to_pair_set_loss(
+            retrieval_loss = semantic_text_to_pair_set_loss(
                 output.pair_embedding,
                 output.text_embedding,
                 output.teacher_text_embedding,
@@ -150,7 +153,18 @@ def run(
                 semantic_soft_target_weight=config.semantic_soft_target_weight,
                 semantic_teacher_top_k=config.semantic_teacher_top_k,
                 semantic_teacher_temperature=config.semantic_teacher_temperature,
+                logits_text_to_pair=(
+                    output.final_scores * model.retrieval_head.similarity_scale()
+                    if output.final_scores is not None and enable_patch_reranker
+                    else None
+                ),
             )
+            segmentation_loss = (
+                query_segmentation_loss(output.query_mask_logits, batch["caption_to_pair"], batch["masks"])
+                if enable_patch_reranker and output.query_mask_logits is not None
+                else retrieval_loss.new_zeros(())
+            )
+            loss = retrieval_loss + config.query_segmentation_loss_weight * segmentation_loss
         if not torch.isfinite(loss):
             finite_loss = False
             break
@@ -161,6 +175,17 @@ def run(
         )
         if gradient_audit is None:
             gradient_audit = base._gradient_audit(model)
+            if enable_patch_reranker and model.patch_reranker is not None:
+                gradient_audit["patch_projector"] = {
+                    "has_grad": any(parameter.grad is not None for parameter in model.patch_projector.parameters()),
+                    "finite": all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in model.patch_projector.parameters()),
+                    "nonzero": any(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in model.patch_projector.parameters()),
+                }
+                gradient_audit["query_mask_head"] = {
+                    "has_grad": any(parameter.grad is not None for parameter in model.query_mask_head.parameters()),
+                    "finite": all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in model.query_mask_head.parameters()),
+                    "nonzero": any(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in model.query_mask_head.parameters()),
+                }
         optimizer.step()
         scheduler.step()
         losses.append(float(loss.detach().cpu()))
@@ -191,8 +216,14 @@ def run(
     )
     frozen_grad_violations, missing_gradients = base._audit_failures(gradient_audit)
     gradient_audit_passed = not frozen_grad_violations and not missing_gradients
+    qcpr_gradient_audit_passed = not enable_patch_reranker or all(
+        bool(gradient_audit.get(name, {}).get("has_grad"))
+        and bool(gradient_audit.get(name, {}).get("finite"))
+        and bool(gradient_audit.get(name, {}).get("nonzero"))
+        for name in ("patch_projector", "query_mask_head")
+    )
     checkpoint_roundtrip_passed = bool(roundtrip["ok"])
-    status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and checkpoint_roundtrip_passed else "FAIL"
+    status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and qcpr_gradient_audit_passed and checkpoint_roundtrip_passed else "FAIL"
     device_type = device.type
     bf16_active = bool(device_type == "cuda" and config.use_bf16 and torch.cuda.is_bf16_supported())
     metadata = run_metadata()
@@ -204,6 +235,7 @@ def run(
         and step == 10
         and finite_loss
         and gradient_audit_passed
+        and qcpr_gradient_audit_passed
         and checkpoint_roundtrip_passed
     )
     report = {
@@ -227,6 +259,9 @@ def run(
         "temporal_depth": config.temporal_depth,
         "text_adapter_enabled": config.use_text_adapter,
         "text_max_length": config.text_max_length,
+        "patch_reranker_available": enable_patch_reranker,
+        "qcpr_score_mode": "fused" if enable_patch_reranker else "global",
+        "qcpr_gradient_audit_passed": qcpr_gradient_audit_passed,
         "semantic_soft_target_weight": config.semantic_soft_target_weight,
         "semantic_teacher_top_k": config.semantic_teacher_top_k,
         "semantic_teacher_temperature": config.semantic_teacher_temperature,

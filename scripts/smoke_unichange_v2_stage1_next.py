@@ -20,6 +20,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset-config", type=Path, default=None)
     parser.add_argument("--dataset-weight", action="append", default=None)
     parser.add_argument("--text-max-length", type=int, default=256)
+    parser.add_argument("--enable-patch-reranker", action="store_true")
     args = parser.parse_args()
     output_dir = args.output_dir
     temporal_depth = args.temporal_depth
@@ -35,6 +36,7 @@ if __name__ == "__main__":
         dataset_config=args.dataset_config,
         dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
         text_max_length=args.text_max_length,
+        enable_patch_reranker=args.enable_patch_reranker,
     )
     report = finalize(output_dir, "cuda")
     required = (
@@ -48,6 +50,8 @@ if __name__ == "__main__":
         and report.get("temporal_depth") == temporal_depth
         and report.get("text_adapter_enabled") is True
         and report.get("text_max_length") == args.text_max_length
+        and report.get("patch_reranker_available") is args.enable_patch_reranker
+        and (not args.enable_patch_reranker or report.get("qcpr_gradient_audit_passed") is True)
     )
     if not required:
         raise SystemExit("Stage-1-next smoke report did not pass all feature gates")

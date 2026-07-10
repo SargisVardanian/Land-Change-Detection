@@ -15,6 +15,7 @@ if __name__ == "__main__":
     parser.add_argument("jina_model", type=Path)
     parser.add_argument("temporal_depth", type=int, nargs="?", default=6)
     parser.add_argument("--text-max-length", type=int, default=256)
+    parser.add_argument("--enable-patch-reranker", action="store_true")
     args = parser.parse_args()
     raise SystemExit(
         run(
@@ -25,5 +26,6 @@ if __name__ == "__main__":
             args.jina_model,
             temporal_depth=args.temporal_depth,
             text_max_length=args.text_max_length,
+            enable_patch_reranker=args.enable_patch_reranker,
         )
     )

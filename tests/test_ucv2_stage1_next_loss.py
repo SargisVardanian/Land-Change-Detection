@@ -17,6 +17,8 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     normalize_caption_text,
     stable_caption_group_ids,
+    structured_fna_loss,
+    structured_fna_relevance_matrix,
 )
 
 
@@ -344,3 +346,56 @@ def test_caption_detail_score_prefers_direction_object_count_location_without_le
     detailed = "Two new buildings appeared in the upper left corner"
     long_vague = "change " * 80
     assert caption_detail_score(detailed) > caption_detail_score(long_vague)
+
+
+def test_structured_fna_attracts_compatible_constraints_and_rejects_direction_conflicts():
+    captions = [
+        "A building appeared in the upper left",
+        "New buildings were constructed in the upper left",
+        "A building was demolished in the upper left",
+        "A road appeared on the right",
+    ]
+    mapping = torch.arange(4)
+    relevance = structured_fna_relevance_matrix(
+        captions,
+        mapping,
+        stable_caption_group_ids(captions),
+        pair_count=4,
+    )
+
+    assert relevance[0, 0].item() == 1.0
+    assert relevance[0, 1].item() == 1.0
+    assert relevance[0, 2].item() == 0.0
+    assert relevance[0, 3].item() == 0.5
+
+
+def test_structured_fna_loss_is_finite_and_improves_when_compatible_scores_increase():
+    relevance = torch.tensor([[1.0, 0.8, 0.0]])
+    weak = torch.tensor([[0.0, -1.0, 1.0]], requires_grad=True)
+    strong = torch.tensor([[2.0, 1.5, -2.0]], requires_grad=True)
+    weak_loss = structured_fna_loss(weak, relevance)
+    strong_loss = structured_fna_loss(strong, relevance)
+
+    assert torch.isfinite(weak_loss)
+    assert strong_loss < weak_loss
+    strong_loss.backward()
+    assert strong.grad is not None
+
+
+def test_semantic_loss_reports_structured_fna_diagnostics_when_enabled():
+    pair = torch.nn.functional.normalize(torch.eye(3), dim=-1).requires_grad_(True)
+    text = torch.nn.functional.normalize(torch.eye(3), dim=-1)
+    captions = ["A building appeared", "New buildings were constructed", "A building was demolished"]
+    loss, diagnostics = semantic_text_to_pair_set_loss(
+        pair,
+        text,
+        text.detach(),
+        captions,
+        torch.arange(3),
+        stable_caption_group_ids(captions),
+        structured_fna_weight=0.25,
+        return_diagnostics=True,
+    )
+    assert torch.isfinite(loss)
+    assert diagnostics["structured_fna_weight"] == 0.25
+    assert diagnostics["structured_fna_positive_pairs"] > 3
