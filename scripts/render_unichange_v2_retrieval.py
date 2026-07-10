@@ -384,6 +384,11 @@ def main() -> int:
         "top_k": args.top_k,
         "patch_reranker_available": corpus.patch_tokens is not None,
         "qcpr_score_mode": corpus.score_mode,
+        **{
+            key: value
+            for key, value in metrics.items()
+            if key.startswith("mask_") or key in {"predicted_mask_area_mean", "target_mask_area_mean"}
+        },
     }
     (args.output_dir / "retrieval_metrics.json").write_text(
         json.dumps(report, indent=2),

@@ -92,6 +92,14 @@ provides category-agnostic change supervision. Rows with neither masks nor
 semantic maps are excluded from segmentation loss through an explicit
 `segmentation_supervision` flag.
 
+Target kinds and fixed first-ablation weights are explicit: query-specific
+S2Looking/SECOND masks use `query_specific` at `1.0`; LEVIR binary masks use
+`binary_generic` at `0.5`; SECOND semantic-transition unions use
+`semantic_transition_union` at `0.25`; missing targets use `none` at `0.0`.
+Training logs query-specific, generic and total segmentation losses separately.
+Supervised validation reports Dice, IoU, precision, recall and mask-area
+statistics globally and by dataset, target kind and appeared/disappeared slice.
+
 ## Structured FNA ablation
 
 RSICRC-inspired false-negative attraction is feature-gated and defaults off.

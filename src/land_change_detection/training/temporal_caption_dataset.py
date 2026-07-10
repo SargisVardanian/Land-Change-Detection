@@ -9,6 +9,7 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterator, Sequence
 
+import numpy as np
 import torch
 from PIL import Image
 from torch import Tensor
@@ -39,19 +40,57 @@ def _blank_mask_like(path: str | Path, image_size: int | None) -> Tensor:
     return torch.zeros(int(height), int(width), dtype=torch.float32)
 
 
-def _semantic_change_mask(t1_path: str | Path, t2_path: str | Path, image_size: int | None) -> Tensor:
-    with Image.open(t1_path) as first, Image.open(t2_path) as second:
-        first = first.convert("L")
-        second = second.convert("L")
+_INTEGER_SEMANTIC_MODES = {"P", "L", "I", "I;16", "I;16B", "I;16L"}
+_TUPLE_SEMANTIC_MODES = {"RGB", "RGBA"}
+
+
+def _load_semantic_labels(path: str | Path, image_size: int | None) -> Tensor:
+    """Load semantic class identities without converting them to luminance."""
+
+    with Image.open(path) as image:
+        mode = image.mode
+        if mode not in _INTEGER_SEMANTIC_MODES | _TUPLE_SEMANTIC_MODES:
+            raise ValueError(f"Unsupported semantic-map mode {mode!r} for {path}; expected indexed/integer or RGB/RGBA labels")
         if image_size is not None:
-            size = (int(image_size), int(image_size))
-            first = first.resize(size, resample=Image.Resampling.NEAREST)
-            second = second.resize(size, resample=Image.Resampling.NEAREST)
-        first_tensor = torch.frombuffer(bytearray(first.tobytes()), dtype=torch.uint8).reshape(first.height, first.width)
-        second_tensor = torch.frombuffer(bytearray(second.tobytes()), dtype=torch.uint8).reshape(second.height, second.width)
-    if first_tensor.shape != second_tensor.shape:
-        raise ValueError(f"Semantic maps must align, got {tuple(first_tensor.shape)} and {tuple(second_tensor.shape)}")
-    return (first_tensor != second_tensor).float()
+            image = image.resize((int(image_size), int(image_size)), resample=Image.Resampling.NEAREST)
+        array = np.asarray(image)
+    if mode in _INTEGER_SEMANTIC_MODES:
+        if array.ndim != 2:
+            raise ValueError(f"Integer semantic map {path} must be rank-2, got {array.shape}")
+        return torch.from_numpy(array.copy()).to(torch.int64)
+    expected_channels = 3 if mode == "RGB" else 4
+    if array.ndim != 3 or array.shape[-1] != expected_channels:
+        raise ValueError(f"{mode} semantic map {path} must have {expected_channels} channels, got {array.shape}")
+    return torch.from_numpy(array.copy()).to(torch.uint8)
+
+
+def _semantic_change_mask(t1_path: str | Path, t2_path: str | Path, image_size: int | None) -> Tensor:
+    first = _load_semantic_labels(t1_path, image_size)
+    second = _load_semantic_labels(t2_path, image_size)
+    if first.shape != second.shape:
+        raise ValueError(f"Semantic maps must align after normalization, got {tuple(first.shape)} and {tuple(second.shape)}")
+    if first.ndim == 2:
+        return (first != second).float()
+    return torch.any(first != second, dim=-1).float()
+
+
+def _segmentation_target_contract(row: dict[str, Any], *, has_mask: bool, has_semantics: bool) -> tuple[str, float]:
+    source_metadata = row.get("source_metadata", {})
+    explicit_kind = (
+        row.get("segmentation_target_kind")
+        or row.get("seg_supervision_mode")
+        or source_metadata.get("segmentation_target_kind")
+        or source_metadata.get("seg_supervision_mode")
+    )
+    if has_mask:
+        if explicit_kind in {"query_specific", "query-specific"} or row.get("query_mask_path"):
+            return "query_specific", 1.0
+        if str(row.get("dataset_name", "")).casefold() in {"levir_mci", "levir_cc"}:
+            return "binary_generic", 0.5
+        return "binary_generic", 0.5
+    if has_semantics:
+        return "semantic_transition_union", 0.25
+    return "none", 0.0
 
 
 class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
@@ -111,17 +150,20 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
     def __getitem__(self, index: int) -> TemporalCaptionItem:
         row = self.samples[index]
         mask_path = row.get("mask_path")
+        has_semantics = bool(row.get("semantic_t1_path") and row.get("semantic_t2_path"))
+        target_kind, supervision_weight = _segmentation_target_contract(
+            row,
+            has_mask=bool(mask_path),
+            has_semantics=has_semantics,
+        )
         if mask_path:
             mask = _load_mask(mask_path, self.image_size)
-            segmentation_supervision = True
-            segmentation_target_source = "mask_path"
-        elif row.get("semantic_t1_path") and row.get("semantic_t2_path"):
+            segmentation_target_source = target_kind
+        elif has_semantics:
             mask = _semantic_change_mask(row["semantic_t1_path"], row["semantic_t2_path"], self.image_size)
-            segmentation_supervision = True
-            segmentation_target_source = "semantic_transition_union"
+            segmentation_target_source = target_kind
         else:
             mask = _blank_mask_like(row["t1_path"], self.image_size)
-            segmentation_supervision = False
             segmentation_target_source = "none"
         return TemporalCaptionItem(
             pair_id=str(row["pair_id"]),
@@ -147,8 +189,11 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 "retrieval_supervision": bool(row.get("retrieval_supervision", row.get("source_metadata", {}).get("retrieval_supervision", True))),
                 "seg_supervision_mode": row.get("seg_supervision_mode", row.get("source_metadata", {}).get("seg_supervision_mode")),
                 "query_mask_path": row.get("query_mask_path", row.get("source_metadata", {}).get("query_mask_path")),
-                "segmentation_supervision": segmentation_supervision,
+                "segmentation_supervision": supervision_weight > 0.0,
                 "segmentation_target_source": segmentation_target_source,
+                "segmentation_target_kind": target_kind,
+                "segmentation_supervision_weight": supervision_weight,
+                "change_type": row.get("change_type", row.get("source_metadata", {}).get("change_type")),
             },
         )
 

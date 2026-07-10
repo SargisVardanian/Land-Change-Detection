@@ -13,7 +13,7 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
-from land_change_detection.models.qcpr import query_segmentation_loss
+from land_change_detection.models.qcpr import segmentation_loss_components
 from land_change_detection.training.temporal_caption_dataset import parse_dataset_weights
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
@@ -26,6 +26,7 @@ from ucv2_stage1_next_core import (
     make_eval_loader,
     make_optimizer,
     make_train_loader,
+    retrieval_supervision_selection,
     save_checkpoint,
     trainable_stage1_parameters,
 )
@@ -124,12 +125,25 @@ def run(
     finite_loss = True
     step = 0
     losses: list[float] = []
+    query_specific_losses: list[float] = []
+    generic_losses: list[float] = []
     batch_dataset_counts: Counter[str] = Counter()
+    target_kind_counts: Counter[str] = Counter()
+    target_source_counts: Counter[str] = Counter()
+    total_pairs_seen = 0
+    retrieval_pairs_seen = 0
+    retrieval_queries_seen = 0
+    segmentation_pairs_seen = 0
+    query_specific_pairs_seen = 0
+    generic_pairs_seen = 0
     for batch in cycle(train_loader):
         if step >= 10:
             break
         model.train()
         batch_dataset_counts.update(str(name) for name in batch.get("dataset_names", []))
+        target_kind_counts.update(str(kind) for kind in batch.get("segmentation_target_kinds", []))
+        target_source_counts.update(str(source) for source in batch.get("segmentation_target_sources", []))
+        total_pairs_seen += len(batch["pair_ids"])
         batch = base._move_batch(batch, device)
         optimizer.zero_grad(set_to_none=True)
         with base._amp_context(device, config.use_bf16):
@@ -139,15 +153,16 @@ def run(
                 batch["caption_to_pair"],
                 batch["temporal_valid_mask"],
             )
-            pair_retrieval_mask = batch["retrieval_supervision"].bool()
-            caption_retrieval_mask = pair_retrieval_mask[batch["caption_to_pair"].long()]
+            retrieval_selection = retrieval_supervision_selection(batch, device)
+            pair_retrieval_mask = retrieval_selection["pair_mask"]
+            caption_retrieval_mask = retrieval_selection["caption_mask"]
+            retrieval_pairs_seen += int(pair_retrieval_mask.sum().item())
+            retrieval_queries_seen += int(caption_retrieval_mask.sum().item())
             if torch.any(pair_retrieval_mask) and torch.any(caption_retrieval_mask):
-                selected_pairs = torch.nonzero(pair_retrieval_mask, as_tuple=False).flatten()
-                inverse = torch.full((pair_retrieval_mask.numel(),), -1, dtype=torch.long, device=device)
-                inverse[selected_pairs] = torch.arange(selected_pairs.numel(), device=device)
-                selected_queries = torch.nonzero(caption_retrieval_mask, as_tuple=False).flatten()
+                selected_pairs = retrieval_selection["selected_pairs"]
+                selected_queries = retrieval_selection["selected_queries"]
                 selected_captions = [batch["captions"][index] for index in selected_queries.tolist()]
-                selected_mapping = inverse[batch["caption_to_pair"][selected_queries].long()]
+                selected_mapping = retrieval_selection["selected_mapping"]
                 selected_groups = stable_caption_group_ids(selected_captions, device=device)
                 selected_final_scores = (
                     output.final_scores[selected_queries][:, selected_pairs]
@@ -176,17 +191,31 @@ def run(
                 )
             else:
                 retrieval_loss = output.pair_embedding.sum() * 0.0
-            segmentation_loss = (
-                query_segmentation_loss(
+            segmentation = (
+                segmentation_loss_components(
                     output.query_mask_logits,
                     batch["caption_to_pair"],
                     batch["masks"],
-                    batch["segmentation_supervision"],
+                    batch["segmentation_target_kinds"],
+                    batch["segmentation_weights"],
                 )
                 if enable_patch_reranker and output.query_mask_logits is not None
-                else retrieval_loss.new_zeros(())
+                else {
+                    "query_specific_segmentation_loss": retrieval_loss.new_zeros(()),
+                    "generic_change_segmentation_loss": retrieval_loss.new_zeros(()),
+                    "total_segmentation_loss": retrieval_loss.new_zeros(()),
+                    "segmentation_supervised_pairs": 0,
+                    "query_specific_supervised_pairs": 0,
+                    "generic_supervised_pairs": 0,
+                    "mean_segmentation_weight": 0.0,
+                }
             )
-            loss = retrieval_loss + config.query_segmentation_loss_weight * segmentation_loss
+            segmentation_pairs_seen += int(segmentation["segmentation_supervised_pairs"])
+            query_specific_pairs_seen += int(segmentation["query_specific_supervised_pairs"])
+            generic_pairs_seen += int(segmentation["generic_supervised_pairs"])
+            query_specific_losses.append(float(segmentation["query_specific_segmentation_loss"].detach().cpu()))
+            generic_losses.append(float(segmentation["generic_change_segmentation_loss"].detach().cpu()))
+            loss = retrieval_loss + config.query_segmentation_loss_weight * segmentation["total_segmentation_loss"]
         if not torch.isfinite(loss):
             finite_loss = False
             break
@@ -245,7 +274,18 @@ def run(
         for name in ("patch_projector", "query_mask_head")
     )
     checkpoint_roundtrip_passed = bool(roundtrip["ok"])
-    status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and qcpr_gradient_audit_passed and checkpoint_roundtrip_passed else "FAIL"
+    supervision_evidence_passed = (
+        retrieval_queries_seen > 0
+        and segmentation_pairs_seen > 0
+        and all(torch.isfinite(torch.tensor(query_specific_losses + generic_losses)).tolist())
+    )
+    s2_mixed_evidence_passed = not (
+        data_metadata["data_mode"] == "mixed" and "s2looking" in data_metadata["dataset_names"]
+    ) or (
+        int(train_sample_counts.get("s2looking", 0)) > 0
+        and retrieval_pairs_seen < total_pairs_seen
+    )
+    status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and qcpr_gradient_audit_passed and checkpoint_roundtrip_passed and supervision_evidence_passed and s2_mixed_evidence_passed else "FAIL"
     device_type = device.type
     bf16_active = bool(device_type == "cuda" and config.use_bf16 and torch.cuda.is_bf16_supported())
     metadata = run_metadata()
@@ -259,6 +299,8 @@ def run(
         and gradient_audit_passed
         and qcpr_gradient_audit_passed
         and checkpoint_roundtrip_passed
+        and supervision_evidence_passed
+        and s2_mixed_evidence_passed
     )
     report = {
         **metadata,
@@ -307,6 +349,18 @@ def run(
         "validation_mixed_subset_coverage": validation_mixed_subset_coverage,
         "train_val_disjoint": True,
         "steps_completed": step,
+        "total_pairs_seen": total_pairs_seen,
+        "retrieval_supervised_pairs": retrieval_pairs_seen,
+        "retrieval_supervised_queries": retrieval_queries_seen,
+        "segmentation_supervised_pairs": segmentation_pairs_seen,
+        "query_specific_supervised_pairs": query_specific_pairs_seen,
+        "generic_supervised_pairs": generic_pairs_seen,
+        "target_kind_counts": dict(sorted(target_kind_counts.items())),
+        "target_source_counts": dict(sorted(target_source_counts.items())),
+        "query_specific_segmentation_losses": query_specific_losses,
+        "generic_change_segmentation_losses": generic_losses,
+        "supervision_evidence_passed": supervision_evidence_passed,
+        "s2_mixed_evidence_passed": s2_mixed_evidence_passed,
         "finite_loss": finite_loss,
         "losses": losses,
         "gradient_audit": gradient_audit,

@@ -45,6 +45,84 @@ class QCPRPatchReranker(nn.Module):
         }
 
 
+def _per_query_segmentation_losses(query_mask_logits: Tensor, caption_to_pair: Tensor, pair_masks: Tensor) -> Tensor:
+    """Return BCE-plus-Dice loss for every query against its paired target."""
+    query_count, pair_count, patch_count = query_mask_logits.shape
+    if caption_to_pair.shape != (query_count,):
+        raise ValueError("caption_to_pair must contain one pair index per query")
+    if pair_masks.ndim != 3 or pair_masks.shape[0] != pair_count:
+        raise ValueError("pair_masks must have shape [B,H,W] with the QCPR pair count")
+    side = int(math.isqrt(patch_count))
+    if side * side != patch_count:
+        raise ValueError("QCPR patch count must form a square grid")
+    targets = F.interpolate(pair_masks[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1)
+    rows = torch.arange(query_count, device=query_mask_logits.device)
+    mapping = caption_to_pair.long()
+    logits = query_mask_logits[rows, mapping]
+    target = targets.to(logits.device)[mapping]
+    bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none").mean(dim=1)
+    probabilities = logits.sigmoid()
+    intersection = (probabilities * target).sum(dim=1)
+    dice = 1.0 - ((2.0 * intersection + 1.0) / (probabilities.sum(dim=1) + target.sum(dim=1) + 1.0))
+    return bce + dice
+
+
+def segmentation_loss_components(
+    query_mask_logits: Tensor,
+    caption_to_pair: Tensor,
+    pair_masks: Tensor,
+    pair_target_kinds: list[str],
+    pair_supervision_weights: Tensor,
+) -> dict[str, Tensor | int | float]:
+    """Compute separated query-specific and generic mask supervision losses."""
+    if query_mask_logits.ndim != 3:
+        raise ValueError("query_mask_logits must have shape [Q,B,N]")
+    query_count, pair_count, _ = query_mask_logits.shape
+    if len(pair_target_kinds) != pair_count:
+        raise ValueError("pair_target_kinds must contain one kind per pair")
+    if pair_supervision_weights.shape != (pair_count,):
+        raise ValueError("pair_supervision_weights must contain one weight per pair")
+    per_query = _per_query_segmentation_losses(query_mask_logits, caption_to_pair, pair_masks)
+    mapping = caption_to_pair.long()
+    weights = pair_supervision_weights.to(device=per_query.device, dtype=per_query.dtype)[mapping]
+    query_specific_pairs = torch.tensor(
+        [kind == "query_specific" for kind in pair_target_kinds], device=per_query.device, dtype=torch.bool
+    )
+    generic_pairs = torch.tensor(
+        [kind in {"binary_generic", "semantic_transition_union"} for kind in pair_target_kinds],
+        device=per_query.device,
+        dtype=torch.bool,
+    )
+
+    def weighted(group_pairs: Tensor) -> Tensor:
+        keep = group_pairs[mapping] & (weights > 0)
+        if not torch.any(keep):
+            return per_query.sum() * 0.0
+        return (per_query[keep] * weights[keep]).mean()
+
+    query_loss = weighted(query_specific_pairs)
+    generic_loss = weighted(generic_pairs)
+    pair_has_weight = pair_supervision_weights.to(query_specific_pairs.device) > 0
+    query_specific_supervised = query_specific_pairs & pair_has_weight
+    generic_supervised = generic_pairs & pair_has_weight
+    all_pairs = query_specific_supervised | generic_supervised
+    all_keep = all_pairs[mapping] & (weights > 0)
+    total_loss = (
+        (per_query[all_keep] * weights[all_keep]).mean()
+        if torch.any(all_keep)
+        else per_query.sum() * 0.0
+    )
+    return {
+        "query_specific_segmentation_loss": query_loss,
+        "generic_change_segmentation_loss": generic_loss,
+        "total_segmentation_loss": total_loss,
+        "segmentation_supervised_pairs": int(all_pairs.sum().item()),
+        "query_specific_supervised_pairs": int(query_specific_supervised.sum().item()),
+        "generic_supervised_pairs": int(generic_supervised.sum().item()),
+        "mean_segmentation_weight": float(pair_supervision_weights[all_pairs].float().mean().item()) if torch.any(all_pairs) else 0.0,
+    }
+
+
 def query_segmentation_loss(
     query_mask_logits: Tensor,
     caption_to_pair: Tensor,
@@ -53,18 +131,8 @@ def query_segmentation_loss(
 ) -> Tensor:
     if query_mask_logits.ndim != 3:
         raise ValueError("query_mask_logits must have shape [Q,B,N]")
-    if pair_masks.ndim != 3:
-        raise ValueError("pair_masks must have shape [B,H,W]")
-    query_count, pair_count, patch_count = query_mask_logits.shape
-    if caption_to_pair.shape != (query_count,):
-        raise ValueError("caption_to_pair must contain one pair index per query")
-    if pair_masks.shape[0] != pair_count:
-        raise ValueError("pair_masks and query_mask_logits must have the same pair count")
-    side = int(math.isqrt(patch_count))
-    if side * side != patch_count:
-        raise ValueError("QCPR patch count must form a square grid")
-    targets = F.interpolate(pair_masks[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1)
-    rows = torch.arange(query_count, device=query_mask_logits.device)
+    query_count, pair_count, _ = query_mask_logits.shape
+    per_query = _per_query_segmentation_losses(query_mask_logits, caption_to_pair, pair_masks)
     mapping = caption_to_pair.long()
     if pair_supervision_mask is not None:
         if pair_supervision_mask.shape != (pair_count,):
@@ -72,12 +140,5 @@ def query_segmentation_loss(
         keep = pair_supervision_mask.to(device=query_mask_logits.device, dtype=torch.bool)[mapping]
         if not torch.any(keep):
             return query_mask_logits.sum() * 0.0
-        rows = rows[keep]
-        mapping = mapping[keep]
-    matched_logits = query_mask_logits[rows, mapping]
-    matched_targets = targets.to(matched_logits.device)[mapping]
-    bce = F.binary_cross_entropy_with_logits(matched_logits, matched_targets)
-    probabilities = matched_logits.sigmoid()
-    intersection = (probabilities * matched_targets).sum(dim=1)
-    dice = 1.0 - ((2.0 * intersection + 1.0) / (probabilities.sum(dim=1) + matched_targets.sum(dim=1) + 1.0))
-    return bce + dice.mean()
+        return per_query[keep].mean()
+    return per_query.mean()

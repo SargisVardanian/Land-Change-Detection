@@ -235,6 +235,25 @@ def main() -> int:
             errors.append("patch-reranker smoke must pass QCPR gradient audit")
         if memory.get("qcpr_score_mode") != "fused":
             errors.append("patch-reranker memory probe must report qcpr_score_mode='fused'")
+        if int(smoke.get("retrieval_supervised_queries", 0)) <= 0:
+            errors.append("patch-reranker smoke must include retrieval-supervised queries")
+        if int(smoke.get("segmentation_supervised_pairs", 0)) <= 0:
+            errors.append("patch-reranker smoke must include segmentation-supervised pairs")
+        if smoke.get("supervision_evidence_passed") is not True:
+            errors.append("patch-reranker smoke must pass mixed-supervision evidence checks")
+        if not isinstance(smoke.get("target_kind_counts"), dict):
+            errors.append("patch-reranker smoke must report target source counts")
+        if not isinstance(smoke.get("target_source_counts"), dict):
+            errors.append("patch-reranker smoke must report segmentation target-source counts")
+        for key in ("query_specific_segmentation_losses", "generic_change_segmentation_losses"):
+            values = smoke.get(key)
+            if not isinstance(values, list) or not values or not all(math.isfinite(float(value)) for value in values):
+                errors.append(f"patch-reranker smoke must report finite {key}")
+        if args.expected_data_mode == "mixed" and "s2looking" in smoke.get("dataset_names", []):
+            if int(smoke.get("sample_counts_by_dataset", {}).get("s2looking", 0)) <= 0:
+                errors.append("mixed patch-reranker smoke must select S2Looking")
+            if int(smoke.get("retrieval_supervised_pairs", 0)) >= int(smoke.get("total_pairs_seen", 0)):
+                errors.append("mixed S2Looking smoke must exclude at least one pair from retrieval supervision")
     recommended = int(memory.get("recommended_batch_size") or 0)
     required_local = math.ceil(minimum_global_batch / world_size)
     if recommended < required_local:

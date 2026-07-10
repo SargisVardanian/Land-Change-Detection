@@ -22,7 +22,7 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
-from land_change_detection.models.qcpr import query_segmentation_loss
+from land_change_detection.models.qcpr import segmentation_loss_components
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import (
     DeterministicWeightedDatasetSampler,
@@ -200,7 +200,38 @@ class FrequencyBalancedCaptionCollator:
                 [bool(getattr(item, "metadata", {}).get("segmentation_supervision", False)) for item in items],
                 dtype=torch.bool,
             ),
+            "segmentation_weights": torch.tensor(
+                [float(getattr(item, "metadata", {}).get("segmentation_supervision_weight", 0.0)) for item in items],
+                dtype=torch.float32,
+            ),
+            "segmentation_target_kinds": [
+                str(getattr(item, "metadata", {}).get("segmentation_target_kind", "none")) for item in items
+            ],
+            "change_types": [
+                getattr(item, "metadata", {}).get("change_type") for item in items
+            ],
+            "segmentation_target_sources": [
+                str(getattr(item, "metadata", {}).get("segmentation_target_source", "none")) for item in items
+            ],
         }
+
+
+def retrieval_supervision_selection(batch: dict[str, Any], device: torch.device) -> dict[str, Tensor]:
+    """Shared retrieval filter used by production training and smoke."""
+    pair_mask = batch["retrieval_supervision"].to(device=device, dtype=torch.bool)
+    caption_mask = pair_mask[batch["caption_to_pair"].long()]
+    selected_pairs = torch.nonzero(pair_mask, as_tuple=False).flatten()
+    selected_queries = torch.nonzero(caption_mask, as_tuple=False).flatten()
+    inverse = torch.full((pair_mask.numel(),), -1, dtype=torch.long, device=device)
+    inverse[selected_pairs] = torch.arange(selected_pairs.numel(), device=device)
+    selected_mapping = inverse[batch["caption_to_pair"][selected_queries].long()]
+    return {
+        "pair_mask": pair_mask,
+        "caption_mask": caption_mask,
+        "selected_pairs": selected_pairs,
+        "selected_queries": selected_queries,
+        "selected_mapping": selected_mapping,
+    }
 
 
 def _captions_from_sample(sample: Any) -> list[str]:
@@ -918,17 +949,14 @@ def run(
                     batch["caption_to_pair"],
                     batch["temporal_valid_mask"],
                 )
-                pair_retrieval_mask = batch["retrieval_supervision"].bool()
-                caption_retrieval_mask = pair_retrieval_mask[batch["caption_to_pair"].long()]
+                retrieval_selection = retrieval_supervision_selection(batch, device)
+                pair_retrieval_mask = retrieval_selection["pair_mask"]
+                caption_retrieval_mask = retrieval_selection["caption_mask"]
                 if torch.any(pair_retrieval_mask) and torch.any(caption_retrieval_mask):
-                    selected_pairs = torch.nonzero(pair_retrieval_mask, as_tuple=False).flatten()
-                    inverse = torch.full(
-                        (pair_retrieval_mask.numel(),), -1, dtype=torch.long, device=device
-                    )
-                    inverse[selected_pairs] = torch.arange(selected_pairs.numel(), device=device)
-                    selected_queries = torch.nonzero(caption_retrieval_mask, as_tuple=False).flatten()
+                    selected_pairs = retrieval_selection["selected_pairs"]
+                    selected_queries = retrieval_selection["selected_queries"]
                     selected_captions = [batch["captions"][index] for index in selected_queries.tolist()]
-                    selected_mapping = inverse[batch["caption_to_pair"][selected_queries].long()]
+                    selected_mapping = retrieval_selection["selected_mapping"]
                     selected_groups = stable_caption_group_ids(selected_captions, device=device)
                     selected_final_scores = (
                         output.final_scores[selected_queries][:, selected_pairs]
@@ -965,23 +993,39 @@ def run(
                     }
                 loss_diagnostics["retrieval_supervised_pairs"] = int(pair_retrieval_mask.sum().item())
                 loss_diagnostics["retrieval_supervised_queries"] = int(caption_retrieval_mask.sum().item())
-                segmentation_loss = retrieval_loss.new_zeros(())
+                segmentation = {
+                    "query_specific_segmentation_loss": retrieval_loss.new_zeros(()),
+                    "generic_change_segmentation_loss": retrieval_loss.new_zeros(()),
+                    "total_segmentation_loss": retrieval_loss.new_zeros(()),
+                    "segmentation_supervised_pairs": 0,
+                    "query_specific_supervised_pairs": 0,
+                    "generic_supervised_pairs": 0,
+                    "mean_segmentation_weight": 0.0,
+                }
                 if config.enable_patch_reranker:
                     if output.query_mask_logits is None:
                         raise RuntimeError("QCPR is enabled but query_mask_logits are unavailable")
-                    segmentation_loss = query_segmentation_loss(
+                    segmentation = segmentation_loss_components(
                         output.query_mask_logits,
                         batch["caption_to_pair"],
                         batch["masks"],
-                        batch["segmentation_supervision"],
+                        batch["segmentation_target_kinds"],
+                        batch["segmentation_weights"],
                     )
-                loss = config.qcpr_local_loss_weight * retrieval_loss + config.query_segmentation_loss_weight * segmentation_loss
+                total_segmentation_loss = segmentation["total_segmentation_loss"]
+                loss = config.qcpr_local_loss_weight * retrieval_loss + config.query_segmentation_loss_weight * total_segmentation_loss
                 loss_diagnostics.update(
                     {
                         "retrieval_loss": float(retrieval_loss.detach().cpu()),
                         "qcpr_local_loss": float(retrieval_loss.detach().cpu()) if config.enable_patch_reranker else 0.0,
-                        "query_segmentation_loss": float(segmentation_loss.detach().cpu()),
-                        "segmentation_supervised_pairs": int(batch["segmentation_supervision"].sum().item()),
+                        "query_segmentation_loss": float(segmentation["query_specific_segmentation_loss"].detach().cpu()),
+                        "query_specific_segmentation_loss": float(segmentation["query_specific_segmentation_loss"].detach().cpu()),
+                        "generic_change_segmentation_loss": float(segmentation["generic_change_segmentation_loss"].detach().cpu()),
+                        "total_segmentation_loss": float(total_segmentation_loss.detach().cpu()),
+                        "segmentation_supervised_pairs": int(segmentation["segmentation_supervised_pairs"]),
+                        "query_specific_supervised_pairs": int(segmentation["query_specific_supervised_pairs"]),
+                        "generic_supervised_pairs": int(segmentation["generic_supervised_pairs"]),
+                        "mean_segmentation_weight": float(segmentation["mean_segmentation_weight"]),
                         "qcpr_score_mode": output.score_mode,
                     }
                 )

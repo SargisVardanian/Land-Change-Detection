@@ -36,6 +36,10 @@ class RetrievalCorpus:
     qcpr_alpha: float = 1.0
     qcpr_beta: float = 0.0
     score_mode: str = "global"
+    pair_masks: Tensor | None = None
+    segmentation_target_kinds: list[str] | None = None
+    segmentation_weights: Tensor | None = None
+    change_types: list[str | None] | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +73,10 @@ def collect_retrieval_corpus(
     caption_to_pair_all: list[Tensor] = []
     caption_group_ids_all: list[Tensor] = []
     pair_mask_fractions: list[Tensor] = []
+    pair_masks: list[Tensor] = []
+    segmentation_target_kinds: list[str] = []
+    segmentation_weights: list[Tensor] = []
+    change_types: list[str | None] = []
     pair_ids: list[str] = []
     dataset_names: list[str] = []
     captions: list[str] = []
@@ -90,6 +98,17 @@ def collect_retrieval_corpus(
                 pair_mask_fractions.append(torch.full((len(batch_pair_ids),), float("nan")))
             else:
                 pair_mask_fractions.append(torch.as_tensor(raw_mask_fractions, dtype=torch.float32).cpu())
+            raw_masks = batch.get("masks")
+            if raw_masks is not None:
+                pair_masks.append(torch.as_tensor(raw_masks, dtype=torch.float32).cpu())
+            segmentation_target_kinds.extend(str(value) for value in batch.get("segmentation_target_kinds", ["none"] * len(batch_pair_ids)))
+            raw_weights = batch.get("segmentation_weights")
+            segmentation_weights.append(
+                torch.as_tensor(raw_weights, dtype=torch.float32).cpu()
+                if raw_weights is not None
+                else torch.zeros(len(batch_pair_ids), dtype=torch.float32)
+            )
+            change_types.extend(batch.get("change_types", [None] * len(batch_pair_ids)))
             batch = base._move_batch(batch, device)
             with base._amp_context(device, config.use_bf16):
                 output = model(
@@ -151,6 +170,10 @@ def collect_retrieval_corpus(
         qcpr_alpha=float(getattr(getattr(model, "patch_reranker", None), "alpha", 1.0)),
         qcpr_beta=float(getattr(getattr(model, "patch_reranker", None), "beta", 0.0)),
         score_mode="fused" if patch_tokens and mask_query_embeddings else "global",
+        pair_masks=torch.cat(pair_masks) if pair_masks else None,
+        segmentation_target_kinds=segmentation_target_kinds,
+        segmentation_weights=torch.cat(segmentation_weights) if segmentation_weights else None,
+        change_types=[str(value) if value is not None else None for value in change_types],
     )
 
 
@@ -363,6 +386,109 @@ def similarity_matrix(
                 local[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
         return corpus.qcpr_alpha * output + corpus.qcpr_beta * local
     return output
+
+
+def _safe_metric_name(value: str) -> str:
+    return "".join(character if character.isalnum() else "_" for character in value.casefold()).strip("_") or "unknown"
+
+
+def _mask_metric_summary(predictions: Tensor, targets: Tensor) -> dict[str, float | int]:
+    if predictions.numel() == 0:
+        return {
+            "count": 0,
+            "Dice": 0.0,
+            "IoU": 0.0,
+            "precision": 0.0,
+            "recall": 0.0,
+            "predicted_mask_area_mean": 0.0,
+            "target_mask_area_mean": 0.0,
+        }
+    predicted = predictions >= 0.5
+    target = targets >= 0.5
+    true_positive = (predicted & target).sum().float()
+    false_positive = (predicted & ~target).sum().float()
+    false_negative = (~predicted & target).sum().float()
+    epsilon = 1e-8
+    return {
+        "count": int(predictions.shape[0]),
+        "Dice": float((2.0 * true_positive / (2.0 * true_positive + false_positive + false_negative + epsilon)).item()),
+        "IoU": float((true_positive / (true_positive + false_positive + false_negative + epsilon)).item()),
+        "precision": float((true_positive / (true_positive + false_positive + epsilon)).item()),
+        "recall": float((true_positive / (true_positive + false_negative + epsilon)).item()),
+        "predicted_mask_area_mean": float(predicted.float().mean(dim=1).mean().item()),
+        "target_mask_area_mean": float(target.float().mean(dim=1).mean().item()),
+    }
+
+
+def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
+    """Mask metrics for true supervised targets only; unsupervised rows never enter denominators."""
+    empty = _mask_metric_summary(torch.empty(0, 1), torch.empty(0, 1))
+    metrics: dict[str, float | int] = {f"mask_{key}": value for key, value in empty.items()}
+    metrics["predicted_mask_area_mean"] = 0.0
+    metrics["target_mask_area_mean"] = 0.0
+    if (
+        corpus.patch_tokens is None
+        or corpus.mask_query_embeddings is None
+        or corpus.pair_masks is None
+        or corpus.segmentation_weights is None
+        or corpus.segmentation_target_kinds is None
+    ):
+        return metrics
+    pair_count = len(corpus.pair_ids)
+    if (
+        corpus.pair_masks.shape[0] != pair_count
+        or corpus.segmentation_weights.shape != (pair_count,)
+        or len(corpus.segmentation_target_kinds) != pair_count
+    ):
+        raise ValueError("Mask-supervision corpus fields must align with pair corpus")
+    patch_count = int(corpus.patch_tokens.shape[1])
+    side = int(round(patch_count**0.5))
+    if side * side != patch_count:
+        raise ValueError("QCPR patch grid must be square for mask metrics")
+    mapping = corpus.caption_to_pair.long()
+    supervised_pairs = corpus.segmentation_weights > 0
+    keep = supervised_pairs[mapping]
+    if not torch.any(keep):
+        return metrics
+    query_indices = torch.nonzero(keep, as_tuple=False).flatten()
+    paired_indices = mapping[query_indices]
+    logits = torch.einsum(
+        "qd,qnd->qn",
+        corpus.mask_query_embeddings[query_indices].float(),
+        corpus.patch_tokens[paired_indices].float(),
+    )
+    predictions = logits.sigmoid()
+    targets = torch.nn.functional.interpolate(
+        corpus.pair_masks[paired_indices, None].float(),
+        size=(side, side),
+        mode="nearest",
+    )[:, 0].flatten(1)
+
+    def add_summary(prefix: str, mask: Tensor) -> None:
+        summary = _mask_metric_summary(predictions[mask], targets[mask])
+        metrics.update({f"{prefix}{key}": value for key, value in summary.items()})
+
+    all_mask = torch.ones(query_indices.numel(), dtype=torch.bool)
+    add_summary("mask_", all_mask)
+    metrics["predicted_mask_area_mean"] = metrics["mask_predicted_mask_area_mean"]
+    metrics["target_mask_area_mean"] = metrics["mask_target_mask_area_mean"]
+    pair_dataset_names = corpus.dataset_names or ["unknown"] * pair_count
+    query_dataset_names = [str(pair_dataset_names[int(index)]) for index in paired_indices.tolist()]
+    query_kinds = [str(corpus.segmentation_target_kinds[int(index)]) for index in paired_indices.tolist()]
+    query_change_types = [
+        (corpus.change_types[int(index)] if corpus.change_types is not None else None)
+        for index in paired_indices.tolist()
+    ]
+    for dataset in sorted(set(query_dataset_names)):
+        add_summary(f"mask_dataset_{_safe_metric_name(dataset)}_", torch.tensor([value == dataset for value in query_dataset_names]))
+    for kind in sorted(set(query_kinds)):
+        add_summary(f"mask_target_kind_{_safe_metric_name(kind)}_", torch.tensor([value == kind for value in query_kinds]))
+    for direction in ("appeared", "disappeared"):
+        add_summary(
+            f"mask_change_type_{direction}_",
+            torch.tensor([value == direction for value in query_change_types]),
+        )
+    return metrics
 
 
 def stable_ranked_candidate_indices(similarities: Tensor, candidate_tie_keys: Tensor) -> Tensor:
@@ -691,6 +817,8 @@ def compute_retrieval_metrics(
         for prefix, mask in strata.items():
             metrics.update(_masked_rank_summary(ranks, mask, prefix))
             metrics.update(_masked_rank_summary(exact, mask, f"{prefix}exact_"))
+
+    metrics.update(supervised_mask_metrics(corpus))
 
     return metrics, similarities
 
