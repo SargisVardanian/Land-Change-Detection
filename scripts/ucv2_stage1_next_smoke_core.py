@@ -132,7 +132,6 @@ def run(
         batch_dataset_counts.update(str(name) for name in batch.get("dataset_names", []))
         batch = base._move_batch(batch, device)
         optimizer.zero_grad(set_to_none=True)
-        groups = stable_caption_group_ids(batch["captions"], device=device)
         with base._amp_context(device, config.use_bf16):
             output = model(
                 batch["images"],
@@ -140,27 +139,50 @@ def run(
                 batch["caption_to_pair"],
                 batch["temporal_valid_mask"],
             )
-            retrieval_loss = semantic_text_to_pair_set_loss(
-                output.pair_embedding,
-                output.text_embedding,
-                output.teacher_text_embedding,
-                batch["captions"],
-                batch["caption_to_pair"],
-                groups,
-                logit_scale=model.retrieval_head.similarity_scale(),
-                text_to_pair_weight=config.text_to_pair_weight,
-                pair_to_text_weight=config.pair_to_text_weight,
-                semantic_soft_target_weight=config.semantic_soft_target_weight,
-                semantic_teacher_top_k=config.semantic_teacher_top_k,
-                semantic_teacher_temperature=config.semantic_teacher_temperature,
-                logits_text_to_pair=(
-                    output.final_scores * model.retrieval_head.similarity_scale()
+            pair_retrieval_mask = batch["retrieval_supervision"].bool()
+            caption_retrieval_mask = pair_retrieval_mask[batch["caption_to_pair"].long()]
+            if torch.any(pair_retrieval_mask) and torch.any(caption_retrieval_mask):
+                selected_pairs = torch.nonzero(pair_retrieval_mask, as_tuple=False).flatten()
+                inverse = torch.full((pair_retrieval_mask.numel(),), -1, dtype=torch.long, device=device)
+                inverse[selected_pairs] = torch.arange(selected_pairs.numel(), device=device)
+                selected_queries = torch.nonzero(caption_retrieval_mask, as_tuple=False).flatten()
+                selected_captions = [batch["captions"][index] for index in selected_queries.tolist()]
+                selected_mapping = inverse[batch["caption_to_pair"][selected_queries].long()]
+                selected_groups = stable_caption_group_ids(selected_captions, device=device)
+                selected_final_scores = (
+                    output.final_scores[selected_queries][:, selected_pairs]
                     if output.final_scores is not None and enable_patch_reranker
                     else None
-                ),
-            )
+                )
+                retrieval_loss = semantic_text_to_pair_set_loss(
+                    output.pair_embedding[selected_pairs],
+                    output.text_embedding[selected_queries],
+                    output.teacher_text_embedding[selected_queries],
+                    selected_captions,
+                    selected_mapping,
+                    selected_groups,
+                    logit_scale=model.retrieval_head.similarity_scale(),
+                    text_to_pair_weight=config.text_to_pair_weight,
+                    pair_to_text_weight=config.pair_to_text_weight,
+                    semantic_soft_target_weight=config.semantic_soft_target_weight,
+                    semantic_teacher_top_k=config.semantic_teacher_top_k,
+                    semantic_teacher_temperature=config.semantic_teacher_temperature,
+                    logits_text_to_pair=(
+                        selected_final_scores * model.retrieval_head.similarity_scale()
+                        if selected_final_scores is not None
+                        else None
+                    ),
+                    structured_fna_weight=config.structured_fna_weight,
+                )
+            else:
+                retrieval_loss = output.pair_embedding.sum() * 0.0
             segmentation_loss = (
-                query_segmentation_loss(output.query_mask_logits, batch["caption_to_pair"], batch["masks"])
+                query_segmentation_loss(
+                    output.query_mask_logits,
+                    batch["caption_to_pair"],
+                    batch["masks"],
+                    batch["segmentation_supervision"],
+                )
                 if enable_patch_reranker and output.query_mask_logits is not None
                 else retrieval_loss.new_zeros(())
             )

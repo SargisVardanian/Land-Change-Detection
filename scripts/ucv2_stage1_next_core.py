@@ -196,6 +196,10 @@ class FrequencyBalancedCaptionCollator:
                 [bool(getattr(item, "metadata", {}).get("retrieval_supervision", True)) for item in items],
                 dtype=torch.bool,
             ),
+            "segmentation_supervision": torch.tensor(
+                [bool(getattr(item, "metadata", {}).get("segmentation_supervision", False)) for item in items],
+                dtype=torch.bool,
+            ),
         }
 
 
@@ -969,6 +973,7 @@ def run(
                         output.query_mask_logits,
                         batch["caption_to_pair"],
                         batch["masks"],
+                        batch["segmentation_supervision"],
                     )
                 loss = config.qcpr_local_loss_weight * retrieval_loss + config.query_segmentation_loss_weight * segmentation_loss
                 loss_diagnostics.update(
@@ -976,6 +981,7 @@ def run(
                         "retrieval_loss": float(retrieval_loss.detach().cpu()),
                         "qcpr_local_loss": float(retrieval_loss.detach().cpu()) if config.enable_patch_reranker else 0.0,
                         "query_segmentation_loss": float(segmentation_loss.detach().cpu()),
+                        "segmentation_supervised_pairs": int(batch["segmentation_supervision"].sum().item()),
                         "qcpr_score_mode": output.score_mode,
                     }
                 )

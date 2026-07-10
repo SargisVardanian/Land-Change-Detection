@@ -39,6 +39,21 @@ def _blank_mask_like(path: str | Path, image_size: int | None) -> Tensor:
     return torch.zeros(int(height), int(width), dtype=torch.float32)
 
 
+def _semantic_change_mask(t1_path: str | Path, t2_path: str | Path, image_size: int | None) -> Tensor:
+    with Image.open(t1_path) as first, Image.open(t2_path) as second:
+        first = first.convert("L")
+        second = second.convert("L")
+        if image_size is not None:
+            size = (int(image_size), int(image_size))
+            first = first.resize(size, resample=Image.Resampling.NEAREST)
+            second = second.resize(size, resample=Image.Resampling.NEAREST)
+        first_tensor = torch.frombuffer(bytearray(first.tobytes()), dtype=torch.uint8).reshape(first.height, first.width)
+        second_tensor = torch.frombuffer(bytearray(second.tobytes()), dtype=torch.uint8).reshape(second.height, second.width)
+    if first_tensor.shape != second_tensor.shape:
+        raise ValueError(f"Semantic maps must align, got {tuple(first_tensor.shape)} and {tuple(second_tensor.shape)}")
+    return (first_tensor != second_tensor).float()
+
+
 class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
     def __init__(
         self,
@@ -98,8 +113,16 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         mask_path = row.get("mask_path")
         if mask_path:
             mask = _load_mask(mask_path, self.image_size)
+            segmentation_supervision = True
+            segmentation_target_source = "mask_path"
+        elif row.get("semantic_t1_path") and row.get("semantic_t2_path"):
+            mask = _semantic_change_mask(row["semantic_t1_path"], row["semantic_t2_path"], self.image_size)
+            segmentation_supervision = True
+            segmentation_target_source = "semantic_transition_union"
         else:
             mask = _blank_mask_like(row["t1_path"], self.image_size)
+            segmentation_supervision = False
+            segmentation_target_source = "none"
         return TemporalCaptionItem(
             pair_id=str(row["pair_id"]),
             dataset_name=str(row["dataset_name"]),
@@ -124,6 +147,8 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 "retrieval_supervision": bool(row.get("retrieval_supervision", row.get("source_metadata", {}).get("retrieval_supervision", True))),
                 "seg_supervision_mode": row.get("seg_supervision_mode", row.get("source_metadata", {}).get("seg_supervision_mode")),
                 "query_mask_path": row.get("query_mask_path", row.get("source_metadata", {}).get("query_mask_path")),
+                "segmentation_supervision": segmentation_supervision,
+                "segmentation_target_source": segmentation_target_source,
             },
         )
 

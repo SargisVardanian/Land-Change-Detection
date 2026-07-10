@@ -85,6 +85,13 @@ flags. The builder fails on missing or misaligned stems. Rows use
 direction-specific mask paths, so S2Looking supervises the temporal/patch/mask
 branches without being treated as a natural-language retrieval benchmark.
 
+Rows without `mask_path` are not silently treated as negative mask examples.
+When aligned `semantic_t1_path` and `semantic_t2_path` are available
+(SECOND-CC), their class-transition union (`semantic_t1 != semantic_t2`)
+provides category-agnostic change supervision. Rows with neither masks nor
+semantic maps are excluded from segmentation loss through an explicit
+`segmentation_supervision` flag.
+
 ## Structured FNA ablation
 
 RSICRC-inspired false-negative attraction is feature-gated and defaults off.

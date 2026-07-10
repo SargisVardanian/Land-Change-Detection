@@ -54,3 +54,17 @@ def test_query_segmentation_loss_rejects_non_square_patch_grid():
         assert "square grid" in str(exc)
     else:
         raise AssertionError("Expected non-square patch grid to be rejected")
+
+
+def test_query_segmentation_loss_ignores_pairs_without_real_supervision():
+    logits = torch.randn(2, 2, 16, requires_grad=True)
+    loss = query_segmentation_loss(
+        logits,
+        torch.tensor([0, 1]),
+        torch.zeros(2, 8, 8),
+        torch.tensor([False, False]),
+    )
+    assert loss.item() == 0.0
+    loss.backward()
+    assert logits.grad is not None
+    assert torch.count_nonzero(logits.grad).item() == 0
