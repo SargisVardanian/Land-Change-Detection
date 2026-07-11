@@ -13,7 +13,7 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
-from land_change_detection.models.qcpr import segmentation_loss_components
+from land_change_detection.models.qcpr import segmentation_loss_components, temporal_channel_loss_components
 from land_change_detection.training.temporal_caption_dataset import parse_dataset_weights
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
@@ -219,7 +219,20 @@ def run(
             generic_pairs_seen += int(segmentation["generic_supervised_pairs"])
             query_specific_losses.append(float(segmentation["query_specific_segmentation_loss"].detach().cpu()))
             generic_losses.append(float(segmentation["generic_change_segmentation_loss"].detach().cpu()))
+            temporal_losses = None
+            if enable_temporal_explanation_channels:
+                reverse_output = model(batch["images"].flip(1), batch["captions"], batch["caption_to_pair"], batch["temporal_valid_mask"])
+                temporal_losses = temporal_channel_loss_components(
+                    output.temporal_explanation_logits, batch["masks"], batch["changed_masks"],
+                    batch["segmentation_target_kinds"], batch["segmentation_weights"], batch["change_types"],
+                    reverse_output.temporal_explanation_logits,
+                )
             loss = retrieval_loss + config.query_segmentation_loss_weight * segmentation["total_segmentation_loss"]
+            if temporal_losses is not None:
+                loss = loss + config.changed_channel_loss_weight * temporal_losses["changed_channel_loss"]
+                loss = loss + config.appeared_channel_loss_weight * temporal_losses["appeared_channel_loss"]
+                loss = loss + config.disappeared_channel_loss_weight * temporal_losses["disappeared_channel_loss"]
+                loss = loss + config.temporal_reversal_consistency_loss_weight * temporal_losses["temporal_reversal_consistency_loss"]
         if not torch.isfinite(loss):
             finite_loss = False
             break
@@ -241,6 +254,15 @@ def run(
                     "finite": all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in model.query_mask_head.parameters()),
                     "nonzero": any(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in model.query_mask_head.parameters()),
                 }
+                if config.qcpr_architecture_version == "v2":
+                    for head_name in ("temporal_descriptor_mlp", "token_projection", "interaction_mlp", "temporal_channel_head"):
+                        head = getattr(model.patch_reranker, head_name)
+                        parameters = [parameter for parameter in head.parameters() if parameter.requires_grad]
+                        gradient_audit[head_name] = {
+                            "has_grad": any(parameter.grad is not None for parameter in parameters),
+                            "finite": all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in parameters),
+                            "nonzero": any(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in parameters),
+                        }
         optimizer.step()
         scheduler.step()
         losses.append(float(loss.detach().cpu()))
@@ -271,11 +293,12 @@ def run(
     )
     frozen_grad_violations, missing_gradients = base._audit_failures(gradient_audit)
     gradient_audit_passed = not frozen_grad_violations and not missing_gradients
+    qcpr_audit_names = (("temporal_descriptor_mlp", "token_projection", "interaction_mlp", "temporal_channel_head") if config.qcpr_architecture_version == "v2" else ("patch_projector", "query_mask_head"))
     qcpr_gradient_audit_passed = not enable_patch_reranker or all(
         bool(gradient_audit.get(name, {}).get("has_grad"))
         and bool(gradient_audit.get(name, {}).get("finite"))
         and bool(gradient_audit.get(name, {}).get("nonzero"))
-        for name in ("patch_projector", "query_mask_head")
+        for name in qcpr_audit_names
     )
     checkpoint_roundtrip_passed = bool(roundtrip["ok"])
     supervision_evidence_passed = (

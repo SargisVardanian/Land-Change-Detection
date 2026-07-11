@@ -43,6 +43,10 @@ class QCPRPatchReranker(nn.Module):
             self.token_projection = nn.Linear(retrieval_dim, retrieval_dim)
             self.interaction_mlp = nn.Sequential(nn.LayerNorm(3 * retrieval_dim), nn.Linear(3 * retrieval_dim, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, 1))
             self.temporal_channel_head = nn.Sequential(nn.LayerNorm(retrieval_dim), nn.Linear(retrieval_dim, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, 3))
+            for parameter in self.patch_projector.parameters():
+                parameter.requires_grad_(False)
+            for parameter in self.query_mask_head.parameters():
+                parameter.requires_grad_(False)
 
     @staticmethod
     def masked_local_embedding(patch_tokens: Tensor, query_mask_logits: Tensor) -> Tensor:
