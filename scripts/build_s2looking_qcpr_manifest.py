@@ -76,6 +76,7 @@ def build_rows(
                     spatial_resolution="0.5-0.8m",
                     source_metadata={
                         "base_pair_id": stem,
+                        "changed_mask_paths": [str(maps["label1"][stem]), str(maps["label2"][stem])],
                         "object_category": "building",
                         "change_type": direction,
                         "query_mask_path": str(maps[label_key][stem]),

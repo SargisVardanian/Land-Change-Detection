@@ -1,23 +1,28 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+import numpy as np
 import torch
+from PIL import Image
 
 from land_change_detection.models.qcpr import QCPRPatchReranker, temporal_patch_descriptor
+from render_unichange_v2_retrieval import _candidate_mask, _result_logits, _top_regions
 from ucv2_retrieval_metrics import RetrievalCorpus, compute_retrieval_ranks
 
 
 def test_candidates_receive_distinct_masks_and_mask_weights_define_local_score() -> None:
     torch.manual_seed(7)
-    reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4, beta=0.25)
+    reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4, beta=0.25, architecture_version="v2")
     query = torch.randn(1, 4)
     pairs = torch.randn(2, 4)
-    candidate_changes = torch.randn(2, 4, 4)
-    patches = reranker.project_patches(candidate_changes)
-    output = reranker.score(query, pairs, patches)
+    per_time = torch.randn(2, 2, 4, 4)
+    tokens = torch.randn(1, 3, 4)
+    output = reranker.score_v2(query, tokens, torch.ones(1, 3, dtype=torch.bool), pairs, per_time)
     logits = output["query_mask_logits"]
     assert not torch.allclose(logits[0, 0], logits[0, 1])
+    patches = output["patch_tokens"]
     pooled = reranker.masked_local_embedding(patches, logits)
     expected = torch.einsum("qd,qbd->qb", torch.nn.functional.normalize(query, dim=-1), pooled)
     assert torch.allclose(output["local_score"], expected)
@@ -39,12 +44,20 @@ def test_temporal_descriptor_reversal_swaps_signed_direction() -> None:
     assert torch.all(disappeared_forward < disappeared_reverse)
 
 
-def test_renderer_contract_uses_candidate_tokens_and_shows_both_times() -> None:
-    source = (Path(__file__).parents[1] / "scripts" / "render_unichange_v2_retrieval.py").read_text()
-    assert "corpus.patch_tokens[int(retrieved_index)]" in source
-    assert "corpus.patch_tokens[query_pair_index]" not in source
-    assert 'set_title("Soft mask over T1")' in source
-    assert 'set_title("Soft mask over T2")' in source
+def test_candidate_renderer_uses_candidate_logits_functionally() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4)
+    queries = torch.randn(1, 4)
+    patches = reranker.project_patches(torch.randn(2, 4, 4))
+    mask_queries = torch.nn.functional.normalize(reranker.query_mask_head(queries), dim=-1) / reranker.logit_scale
+    corpus = RetrievalCorpus(pair_embeddings=torch.randn(2, 4), text_embeddings=queries, caption_to_pair=torch.tensor([0]), caption_group_ids=torch.tensor([0]), pair_ids=["a", "b"], captions=["query"], pair_mask_fractions=torch.zeros(2), encode_seconds=0.0, peak_allocated_vram_bytes=0, peak_reserved_vram_bytes=0, patch_tokens=patches, mask_query_embeddings=mask_queries, qcpr_beta=.25)
+    logits_a = _result_logits(corpus, 0, 0)
+    logits_b = _result_logits(corpus, 0, 1)
+    assert not torch.allclose(logits_a, logits_b)
+    soft = _candidate_mask(logits_b, (16, 16))
+    assert soft.shape == (16, 16)
+    assert np.isfinite(soft).all()
+    assert isinstance(_top_regions(soft, .5), list)
+    assert torch.allclose(logits_b.sigmoid().amax(), torch.tensor(float(soft.max())), atol=.1)
 
 
 def test_chunked_and_unchunked_qcpr_rankings_match() -> None:

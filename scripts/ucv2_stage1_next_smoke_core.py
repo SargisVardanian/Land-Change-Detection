@@ -45,6 +45,8 @@ def run(
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
     text_max_length: int = 256,
     enable_patch_reranker: bool = False,
+    qcpr_architecture_version: str = "v1",
+    enable_temporal_explanation_channels: bool = False,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,8 @@ def run(
         dataset_sampling_weights=dataset_sampling_weights,
         text_max_length=text_max_length,
         enable_patch_reranker=enable_patch_reranker,
+        qcpr_architecture_version=qcpr_architecture_version,
+        enable_temporal_explanation_channels=enable_temporal_explanation_channels,
     )
     base._set_seed(config.seed)
     base._write_json(

@@ -17,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("epochs", type=int)
     parser.add_argument("num_workers", type=int)
     parser.add_argument("--resume", type=Path, default=None)
+    parser.add_argument("--initialize-from-v1", type=Path, default=None)
     parser.add_argument("--temporal-depth", type=int, default=4)
     parser.add_argument("--max-captions-per-pair", type=int, default=2)
     parser.add_argument("--caption-frequency-power", type=float, default=0.5)
@@ -32,6 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--early-stopping-min-improvement", type=float, default=0.002)
     parser.add_argument("--max-steps", type=int, default=None)
     parser.add_argument("--enable-patch-reranker", action="store_true")
+    parser.add_argument("--qcpr-architecture-version", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--enable-temporal-explanation-channels", action="store_true")
     parser.add_argument("--qcpr-alpha", type=float, default=1.0)
     parser.add_argument("--qcpr-beta", type=float, default=0.25)
     parser.add_argument("--qcpr-local-loss-weight", type=float, default=1.0)
@@ -53,6 +56,7 @@ if __name__ == "__main__":
             args.epochs,
             args.num_workers,
             args.resume,
+            initialize_from_v1=args.initialize_from_v1,
             temporal_depth=args.temporal_depth,
             max_captions_per_pair=args.max_captions_per_pair,
             caption_frequency_power=args.caption_frequency_power,
@@ -68,6 +72,8 @@ if __name__ == "__main__":
             early_stopping_min_improvement=args.early_stopping_min_improvement,
             max_steps=args.max_steps,
             enable_patch_reranker=args.enable_patch_reranker,
+            qcpr_architecture_version=args.qcpr_architecture_version,
+            enable_temporal_explanation_channels=args.enable_temporal_explanation_channels,
             qcpr_alpha=args.qcpr_alpha,
             qcpr_beta=args.qcpr_beta,
             qcpr_local_loss_weight=args.qcpr_local_loss_weight,

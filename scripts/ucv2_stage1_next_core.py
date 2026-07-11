@@ -22,7 +22,8 @@ from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
     stable_caption_group_ids,
 )
-from land_change_detection.models.qcpr import segmentation_loss_components
+from land_change_detection.models.qcpr import segmentation_loss_components, temporal_channel_loss_components
+from land_change_detection.run_metadata import file_sha256, path_fingerprint
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import (
     DeterministicWeightedDatasetSampler,
@@ -101,10 +102,16 @@ class Stage1NextConfig:
     early_stopping_patience: int = 4
     early_stopping_min_improvement: float = 0.002
     enable_patch_reranker: bool = False
+    qcpr_architecture_version: str = "v1"
+    enable_temporal_explanation_channels: bool = False
     qcpr_alpha: float = 1.0
     qcpr_beta: float = 0.25
     qcpr_local_loss_weight: float = 1.0
     query_segmentation_loss_weight: float = 0.2
+    changed_channel_loss_weight: float = 0.2
+    appeared_channel_loss_weight: float = 0.2
+    disappeared_channel_loss_weight: float = 0.2
+    temporal_reversal_consistency_loss_weight: float = 0.05
     structured_fna_weight: float = 0.0
 
 
@@ -185,6 +192,9 @@ class FrequencyBalancedCaptionCollator:
             "images": images,
             "timestamps": torch.tensor([[0.0, 1.0] for _ in items], dtype=torch.float32),
             "temporal_valid_mask": torch.ones(len(items), 2, dtype=torch.bool),
+            "changed_masks": torch.stack(
+                [getattr(item, "metadata", {}).get("changed_mask", item.mask).float() for item in items], dim=0
+            ),
             "captions": captions,
             "caption_to_pair": torch.tensor(caption_to_pair, dtype=torch.long),
             "mask_fractions": torch.tensor(
@@ -477,6 +487,10 @@ def validate_config(config: Stage1NextConfig) -> None:
         raise ValueError("max_steps must be positive when provided")
     if config.qcpr_alpha < 0 or config.qcpr_beta < 0 or config.qcpr_alpha + config.qcpr_beta <= 0:
         raise ValueError("QCPR fusion weights must be non-negative and not both zero")
+    if config.qcpr_architecture_version not in {"v1", "v2"}:
+        raise ValueError("qcpr_architecture_version must be v1 or v2")
+    if config.enable_temporal_explanation_channels and config.qcpr_architecture_version != "v2":
+        raise ValueError("temporal explanation channels require QCPR v2")
     if config.qcpr_local_loss_weight < 0 or config.query_segmentation_loss_weight < 0:
         raise ValueError("QCPR loss weights must be non-negative")
     if not 0.0 <= config.structured_fna_weight <= 1.0:
@@ -785,6 +799,7 @@ def run(
     num_workers: int,
     resume: Path | None = None,
     *,
+    initialize_from_v1: Path | None = None,
     temporal_depth: int = 4,
     max_captions_per_pair: int = 2,
     caption_frequency_power: float = 0.5,
@@ -800,6 +815,8 @@ def run(
     early_stopping_min_improvement: float = 0.002,
     max_steps: int | None = None,
     enable_patch_reranker: bool = False,
+    qcpr_architecture_version: str = "v1",
+    enable_temporal_explanation_channels: bool = False,
     qcpr_alpha: float = 1.0,
     qcpr_beta: float = 0.25,
     qcpr_local_loss_weight: float = 1.0,
@@ -832,6 +849,8 @@ def run(
         early_stopping_min_improvement=early_stopping_min_improvement,
         max_steps=max_steps,
         enable_patch_reranker=enable_patch_reranker,
+        qcpr_architecture_version=qcpr_architecture_version,
+        enable_temporal_explanation_channels=enable_temporal_explanation_channels,
         qcpr_alpha=qcpr_alpha,
         qcpr_beta=qcpr_beta,
         qcpr_local_loss_weight=qcpr_local_loss_weight,
@@ -887,6 +906,17 @@ def run(
     steps_per_epoch = math.ceil(len(train) / config.batch_size)
     total_steps = min(steps_per_epoch * config.epochs, config.max_steps) if config.max_steps is not None else steps_per_epoch * config.epochs
     model = build_model(config, device)
+    initialization_missing: list[str] = []
+    initialization_unexpected: list[str] = []
+    initialized_from_v1_modules: list[str] = []
+    if initialize_from_v1 is not None:
+        if resume is not None:
+            raise ValueError("resume and initialize_from_v1 are mutually exclusive")
+        initialization_payload = torch.load(initialize_from_v1, map_location=device)
+        incompatible = model.load_state_dict(initialization_payload["model"], strict=False)
+        initialization_missing = list(incompatible.missing_keys)
+        initialization_unexpected = list(incompatible.unexpected_keys)
+        initialized_from_v1_modules = sorted({name.split(".", 1)[0] for name in initialization_payload["model"]})
     optimizer = make_optimizer(model, config)
     scheduler = base._make_scheduler(optimizer, total_steps, config)
 
@@ -922,6 +952,40 @@ def run(
         resume_batch = int(payload.get("next_batch_index", 0))
         step = int(payload.get("step", 0))
         best_scores.update({key: float(value) for key, value in payload.get("best_scores", {}).items()})
+
+    named_parameters = dict(model.named_parameters())
+    trainable_names = sorted(name for name, parameter in named_parameters.items() if parameter.requires_grad)
+    frozen_names = sorted(name for name, parameter in named_parameters.items() if not parameter.requires_grad)
+    random_names = sorted(name for name in initialization_missing if name in named_parameters)
+    initialization_audit = {
+        "resume_checkpoint": str(resume) if resume else None,
+        "resume_checkpoint_sha256": file_sha256(resume) if resume else None,
+        "initialize_from_v1_checkpoint": str(initialize_from_v1) if initialize_from_v1 else None,
+        "initialize_from_v1_sha256": file_sha256(initialize_from_v1) if initialize_from_v1 else None,
+        "visual_backbone_checkpoint": path_fingerprint(Path(config.universat_checkpoint)),
+        "text_checkpoint": path_fingerprint(Path(config.jina_model)),
+        "modules_loaded_from_checkpoint": initialized_from_v1_modules,
+        "randomly_initialized_parameters": random_names,
+        "frozen_parameters": frozen_names,
+        "trainable_parameters": trainable_names,
+        "missing_keys": initialization_missing,
+        "unexpected_keys": initialization_unexpected,
+        "qcpr_architecture_version": config.qcpr_architecture_version,
+    }
+    optimizer_audit = {
+        "groups": [
+            {"name": group.get("name"), "lr": group["lr"], "weight_decay": group["weight_decay"], "parameter_names": list(group.get("param_names", []))}
+            for group in optimizer.param_groups
+        ],
+        "trainable_parameter_count": len(trainable_names),
+        "covered_exactly_once": len({id(parameter) for group in optimizer.param_groups for parameter in group["params"]}) == len(trainable_names),
+    }
+    base._write_json(output_dir / "initialization_audit.json", initialization_audit)
+    base._write_json(output_dir / "optimizer_parameter_audit.json", optimizer_audit)
+    base._write_json(output_dir / "resolved_config.json", asdict(config))
+    (output_dir / "git_commit.txt").write_text(run_metadata()["git_commit"] + "\n", encoding="utf-8")
+    base._write_json(output_dir / "environment_summary.json", {"hostname": os.uname().nodename, "python": os.sys.version, "torch": torch.__version__, "cuda": torch.version.cuda, "device": str(device)})
+    base._write_json(output_dir / "training_summary.json", {"status": "RUNNING", "step": step, "stage1_next": True, "qcpr_architecture_version": config.qcpr_architecture_version})
 
     history_path = output_dir / "metrics_history.jsonl"
     epochs_since_composite = 0
@@ -1013,7 +1077,27 @@ def run(
                         batch["segmentation_weights"],
                     )
                 total_segmentation_loss = segmentation["total_segmentation_loss"]
-                loss = config.qcpr_local_loss_weight * retrieval_loss + config.query_segmentation_loss_weight * total_segmentation_loss
+                temporal_losses = {
+                    "changed_channel_loss": retrieval_loss.new_zeros(()), "appeared_channel_loss": retrieval_loss.new_zeros(()),
+                    "disappeared_channel_loss": retrieval_loss.new_zeros(()), "temporal_reversal_consistency_loss": retrieval_loss.new_zeros(()),
+                    "temporal_supervised_pairs": 0,
+                }
+                if config.enable_temporal_explanation_channels:
+                    if config.qcpr_architecture_version != "v2" or output.temporal_explanation_logits is None:
+                        raise RuntimeError("Temporal explanation supervision requires QCPR v2")
+                    reverse_output = model(batch["images"].flip(1), batch["captions"], batch["caption_to_pair"], batch["temporal_valid_mask"])
+                    temporal_losses = temporal_channel_loss_components(
+                        output.temporal_explanation_logits, batch["masks"], batch["changed_masks"], batch["segmentation_target_kinds"],
+                        batch["segmentation_weights"], batch["change_types"], reverse_output.temporal_explanation_logits,
+                    )
+                total_localization_loss = (
+                    config.query_segmentation_loss_weight * total_segmentation_loss
+                    + config.changed_channel_loss_weight * temporal_losses["changed_channel_loss"]
+                    + config.appeared_channel_loss_weight * temporal_losses["appeared_channel_loss"]
+                    + config.disappeared_channel_loss_weight * temporal_losses["disappeared_channel_loss"]
+                    + config.temporal_reversal_consistency_loss_weight * temporal_losses["temporal_reversal_consistency_loss"]
+                )
+                loss = config.qcpr_local_loss_weight * retrieval_loss + total_localization_loss
                 loss_diagnostics.update(
                     {
                         "retrieval_loss": float(retrieval_loss.detach().cpu()),
@@ -1022,6 +1106,12 @@ def run(
                         "query_specific_segmentation_loss": float(segmentation["query_specific_segmentation_loss"].detach().cpu()),
                         "generic_change_segmentation_loss": float(segmentation["generic_change_segmentation_loss"].detach().cpu()),
                         "total_segmentation_loss": float(total_segmentation_loss.detach().cpu()),
+                        "changed_channel_loss": float(temporal_losses["changed_channel_loss"].detach().cpu()),
+                        "appeared_channel_loss": float(temporal_losses["appeared_channel_loss"].detach().cpu()),
+                        "disappeared_channel_loss": float(temporal_losses["disappeared_channel_loss"].detach().cpu()),
+                        "temporal_reversal_consistency_loss": float(temporal_losses["temporal_reversal_consistency_loss"].detach().cpu()),
+                        "total_localization_loss": float(total_localization_loss.detach().cpu()),
+                        "temporal_supervised_pairs": int(temporal_losses["temporal_supervised_pairs"]),
                         "segmentation_supervised_pairs": int(segmentation["segmentation_supervised_pairs"]),
                         "query_specific_supervised_pairs": int(segmentation["query_specific_supervised_pairs"]),
                         "generic_supervised_pairs": int(segmentation["generic_supervised_pairs"]),
@@ -1032,6 +1122,19 @@ def run(
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss at step {step}: {float(loss.detach().cpu())}")
             loss.backward()
+            gradient_modules = {}
+            for module_name, module in model.named_children():
+                trainable_module_parameters = [parameter for parameter in module.parameters() if parameter.requires_grad]
+                if not trainable_module_parameters:
+                    continue
+                gradients = [parameter.grad for parameter in trainable_module_parameters if parameter.grad is not None]
+                gradient_modules[module_name] = {
+                    "parameter_count": len(trainable_module_parameters),
+                    "gradient_count": len(gradients),
+                    "finite": bool(gradients) and all(bool(torch.isfinite(gradient).all()) for gradient in gradients),
+                    "nonzero": any(bool(torch.any(gradient != 0)) for gradient in gradients),
+                }
+            base._write_json(output_dir / "gradient_flow_audit.json", {"step": step, "modules": gradient_modules})
             patch_projector_grad_present = False
             query_mask_head_grad_present = False
             if config.enable_patch_reranker and model.patch_reranker is not None:
@@ -1269,4 +1372,5 @@ def run(
             **run_metadata(),
         },
     )
+    base._write_json(output_dir / "training_summary.json", {"status": "BOUNDED_COMPLETED" if config.max_steps is not None and step >= config.max_steps else "COMPLETED", "step": step, "best_scores": best_scores, "stage1_next": True, "qcpr_architecture_version": config.qcpr_architecture_version, **run_metadata()})
     return 0

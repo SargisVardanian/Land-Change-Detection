@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import resource
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
+from scipy import ndimage
 from torch.utils.data import DataLoader
 
 import train_unichange_v2_retrieval as base
@@ -91,7 +94,23 @@ def _candidate_mask(logits: torch.Tensor, shape: tuple[int, int]) -> np.ndarray:
         raise ValueError("QCPR patch grid must be square")
     return torch.nn.functional.interpolate(
         logits.sigmoid().reshape(1, 1, side, side), size=shape, mode="bilinear", align_corners=False
-    )[0, 0].cpu().numpy()
+    )[0, 0].detach().cpu().numpy()
+
+
+def _result_logits(corpus, query_index: int, candidate_index: int) -> torch.Tensor:
+    patches = corpus.patch_tokens[candidate_index : candidate_index + 1].float()
+    if corpus.qcpr_architecture_version == "v1":
+        return torch.einsum("d,nd->n", corpus.mask_query_embeddings[query_index].float(), patches[0])
+    reranker = corpus.qcpr_reranker
+    device = next(reranker.parameters()).device
+    descriptor = patches.to(device)
+    token = torch.nn.functional.normalize(reranker.token_projection(corpus.text_token_embeddings[query_index : query_index + 1].to(device)), dim=-1)
+    attention = corpus.text_attention_mask[query_index : query_index + 1].to(device)
+    affinity = torch.einsum("bnd,qld->qbnl", descriptor, token) / reranker.logit_scale
+    affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
+    attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
+    expanded = descriptor.unsqueeze(0)
+    return reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze().detach().cpu()
 
 
 def _per_result_overlap(mask: np.ndarray, gt: np.ndarray | None, threshold: float) -> tuple[float | None, float | None]:
@@ -105,24 +124,26 @@ def _per_result_overlap(mask: np.ndarray, gt: np.ndarray | None, threshold: floa
     return (2.0 * intersection / denominator if denominator else 1.0, intersection / union if union else 1.0)
 
 
-def _top_regions(mask: np.ndarray, count: int = 3) -> list[dict[str, float]]:
-    flat = mask.reshape(-1)
-    indices = np.argsort(flat)[::-1][:count]
+def _top_regions(mask: np.ndarray, threshold: float = 0.5, count: int = 5) -> list[dict[str, object]]:
     height, width = mask.shape
-    return [
-        {"x": float((index % width + 0.5) / width), "y": float((index // width + 0.5) / height), "probability": float(flat[index])}
-        for index in indices
-    ]
+    labels, component_count = ndimage.label(mask >= threshold)
+    regions: list[dict[str, object]] = []
+    for label_index in range(1, component_count + 1):
+        yy, xx = np.where(labels == label_index)
+        if yy.size < max(4, int(0.001 * height * width)):
+            continue
+        regions.append({
+            "normalized_bbox": [float(xx.min() / width), float(yy.min() / height), float((xx.max() + 1) / width), float((yy.max() + 1) / height)],
+            "region_confidence": float(mask[yy, xx].mean()), "area_fraction": float(yy.size / (height * width)),
+        })
+    return sorted(regions, key=lambda item: float(item["region_confidence"]), reverse=True)[:count]
 
 
-def _query_evidence(query: str, regions: list[dict[str, float]]) -> dict[str, object]:
-    normalized = query.casefold()
-    directions = [word for word in ("appeared", "disappeared", "changed", "increased", "decreased") if word in normalized]
-    locations = [word for word in ("left", "right", "top", "bottom", "center", "middle") if word in normalized]
+def _model_evidence(mask: np.ndarray, regions: list[dict[str, object]]) -> dict[str, object]:
     return {
-        "object_evidence": query,
-        "temporal_direction_evidence": directions,
-        "location_evidence": {"query_terms": locations, "mask_peak_regions": regions},
+        "object_evidence": {"query_conditioned_peak": float(mask.max()), "query_conditioned_mean": float(mask.mean())},
+        "temporal_direction_evidence": None,
+        "location_evidence": {"connected_components": regions},
     }
 
 
@@ -241,6 +262,7 @@ def _query_items(args: argparse.Namespace, dataset, pair_index: dict[str, int]) 
 
 
 def main() -> int:
+    evaluation_started = time.perf_counter()
     args = parse_args()
     device = strict_device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location=device)
@@ -263,20 +285,19 @@ def main() -> int:
     model.load_state_dict(checkpoint["model"], strict=True)
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
-    metrics, similarities = compute_retrieval_metrics(
+    rank_result = compute_retrieval_ranks(
         corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
+    )
+    metrics, similarities = compute_retrieval_metrics(
+        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size, rank_result=rank_result
     )
     global_similarities = corpus.text_embeddings.float() @ corpus.pair_embeddings.float().T
     local_similarities = None
-    if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+    if corpus.patch_tokens is not None and corpus.qcpr_beta > 0:
         if corpus.qcpr_beta > 0:
             local_similarities = (similarities - corpus.qcpr_alpha * global_similarities) / corpus.qcpr_beta
         else:
             local_similarities = torch.zeros_like(similarities)
-    rank_result = compute_retrieval_ranks(
-        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
-    )
-
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
     sample_by_id = _sample_map(dataset)
     query_items = _query_items(args, dataset, pair_index)
@@ -335,9 +356,16 @@ def main() -> int:
             is_exact = int(retrieved_index) == query_pair_index
             label = f"#{row} {retrieved_id} {'RELEVANT' if is_relevant else 'OTHER'}"
             render_pair(axes[row], sample_by_id[retrieved_id], label, score)
+            candidate_sample = sample_by_id[retrieved_id]
+            candidate_captions = candidate_sample.get("captions", []) if isinstance(candidate_sample, dict) else (candidate_sample.captions or [])
             result_record = {
                     "rank": row,
                     "pair_id": retrieved_id,
+                    "query": query_caption,
+                    "candidate_captions": candidate_captions,
+                    "candidate_metadata": candidate_sample.get("source_metadata", {}) if isinstance(candidate_sample, dict) else getattr(candidate_sample, "metadata", {}),
+                    "segmentation_target_kind": corpus.segmentation_target_kinds[int(retrieved_index)] if corpus.segmentation_target_kinds else "none",
+                    "segmentation_supervision_weight": float(corpus.segmentation_weights[int(retrieved_index)]) if corpus.segmentation_weights is not None else 0.0,
                     "score": score,
                     "S_global": global_score,
                     "S_local": local_score,
@@ -348,17 +376,17 @@ def main() -> int:
                     "score_mode": corpus.score_mode,
                     "semantic_relevance": is_relevant,
                     "exact_pair_relevance": is_exact,
+                    "relevance_rules_passed": [name for name, passed in (("semantic", is_relevant), ("exact_pair", is_exact)) if passed],
+                    "relevance_rules_failed": [name for name, passed in (("semantic", is_relevant), ("exact_pair", is_exact)) if not passed],
                 }
-            if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+            if corpus.patch_tokens is not None and (corpus.mask_query_embeddings is not None or corpus.qcpr_architecture_version == "v2"):
                 candidate_patches = corpus.patch_tokens[int(retrieved_index)].float()
-                mask_query = corpus.mask_query_embeddings[caption_index].float()
-                patch_logits = torch.einsum("d,nd->n", mask_query, candidate_patches)
-                pooled = QCPRPatchReranker.masked_local_embedding(
-                    candidate_patches.unsqueeze(0), patch_logits.reshape(1, 1, -1)
-                )
-                recomputed_local = float(torch.einsum(
-                    "d,qbd->qb", corpus.text_embeddings[caption_index].float(), pooled
-                )[0, 0].item())
+                patch_logits = _result_logits(corpus, caption_index, int(retrieved_index))
+                if corpus.qcpr_architecture_version == "v1":
+                    recomputed_local = float(patch_logits.sigmoid().amax().item())
+                else:
+                    pooled = QCPRPatchReranker.masked_local_embedding(candidate_patches.unsqueeze(0), patch_logits.reshape(1, 1, -1))
+                    recomputed_local = float(torch.einsum("d,qbd->qb", corpus.text_embeddings[caption_index].float(), pooled)[0, 0].item())
                 if local_score is None or not np.isclose(recomputed_local, local_score, atol=1e-5):
                     raise RuntimeError("Displayed candidate mask logits do not reproduce S_local")
                 t1_path, t2_path, gt_path = _sample_paths(sample_by_id[retrieved_id])
@@ -372,9 +400,15 @@ def main() -> int:
                 Image.fromarray(np.uint8(thresholded) * 255, mode="L").save(threshold_path)
                 gt = load_mask(gt_path) if gt_path else None
                 dice, iou = _per_result_overlap(soft, gt, args.mask_threshold)
-                regions = _top_regions(soft)
-                evidence = _query_evidence(query_caption, regions)
-                panel, panel_axes = plt.subplots(2, 4, figsize=(18, 9))
+                regions = _top_regions(soft, args.mask_threshold)
+                evidence = _model_evidence(soft, regions)
+                render_channels = {name: np.zeros(t2.shape[:2]) for name in ("changed", "appeared", "disappeared")}
+                if corpus.temporal_explanation_logits is not None:
+                    probabilities = corpus.temporal_explanation_logits[int(retrieved_index)].sigmoid().T
+                    for channel_index, channel_name in enumerate(("changed", "appeared", "disappeared")):
+                        render_channels[channel_name] = _candidate_mask(torch.logit(probabilities[channel_index].clamp(1e-6, 1 - 1e-6)), t2.shape[:2])
+
+                panel, panel_axes = plt.subplots(3, 4, figsize=(18, 13))
                 panel_axes[0, 0].imshow(t1); panel_axes[0, 0].set_title("T1")
                 panel_axes[0, 1].imshow(t2); panel_axes[0, 1].set_title("T2")
                 panel_axes[0, 2].imshow(rgb_absolute_difference(t1, t2), cmap="magma"); panel_axes[0, 2].set_title("RGB difference")
@@ -383,13 +417,19 @@ def main() -> int:
                 panel_axes[1, 1].imshow(t2); panel_axes[1, 1].imshow(soft, cmap="magma", alpha=.55, vmin=0, vmax=1); panel_axes[1, 1].set_title("Soft mask over T2")
                 panel_axes[1, 2].imshow(thresholded, cmap="gray"); panel_axes[1, 2].set_title(f"Thresholded @{args.mask_threshold:g}")
                 panel_axes[1, 3].axis("off"); panel_axes[1, 3].text(0, .95, f"pair_id: {retrieved_id}\nS_global={global_score:.4f}\nS_local={local_score:.4f}\nS_final={score:.4f}\nsemantic={is_relevant}\nexact={is_exact}", va="top")
-                for axis in panel_axes.flat[:7]: axis.axis("off")
+                for column, channel_name in enumerate(("changed", "appeared", "disappeared")):
+                    panel_axes[2, column].imshow(render_channels[channel_name], cmap="magma", vmin=0, vmax=1)
+                    panel_axes[2, column].set_title(f"{channel_name} probability")
+                panel_axes[2, 3].axis("off")
+
+                for axis in panel_axes.flat: axis.axis("off")
                 panel.suptitle(f"Exact query: {query_caption}")
                 panel.tight_layout(rect=(0, 0, 1, .96))
                 panel_path = visuals / f"{stem}.png"
                 panel.savefig(panel_path, dpi=140, bbox_inches="tight"); plt.close(panel)
                 result_record.update({
                     "query": query_caption, "soft_mask_path": str(soft_path),
+                    "S_token_patch": float(patch_logits.sigmoid().amax().item()),
                     "thresholded_mask_path": str(threshold_path), "explanation_panel_path": str(panel_path),
                     "per_result_Dice": dice, "per_result_IoU": iou, "top_regions": regions,
                     **evidence,
@@ -397,13 +437,15 @@ def main() -> int:
                 if corpus.temporal_explanation_logits is not None:
                     channels = corpus.temporal_explanation_logits[int(retrieved_index)].sigmoid().T
                     channel_paths = {}
-                    for channel_index, channel_name in enumerate(("appeared", "disappeared", "changed")):
+                    for channel_index, channel_name in enumerate(("changed", "appeared", "disappeared")):
                         channel_mask = _candidate_mask(
                             torch.logit(channels[channel_index].clamp(1e-6, 1 - 1e-6)), t2.shape[:2]
                         )
                         channel_path = overlay_dir / f"{stem}_{channel_name}.png"
                         Image.fromarray(np.uint8(channel_mask * 255), mode="L").save(channel_path)
                         channel_paths[f"{channel_name}_probability_map_path"] = str(channel_path)
+                        channel_paths[f"{channel_name}_mean_probability"] = float(channel_mask.mean())
+                    result_record["temporal_direction_evidence"] = {name: channel_paths[f"{name}_mean_probability"] for name in ("changed", "appeared", "disappeared")}
                     result_record.update(channel_paths)
             retrieved.append(result_record)
         figure.suptitle(
@@ -449,6 +491,15 @@ def main() -> int:
         "exact_pair_R@10": float((exact_tensor <= 10).float().mean().item()) if exact_ranks else 0.0,
     }
     report = {
+        "query_chunk_size": args.query_chunk_size,
+        "candidate_chunk_size": args.candidate_chunk_size,
+        "num_queries": int(corpus.text_embeddings.shape[0]),
+        "num_candidates": int(corpus.pair_embeddings.shape[0]),
+        "peak_cpu_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024),
+        "peak_gpu_allocated_bytes": corpus.peak_allocated_vram_bytes,
+        "peak_gpu_reserved_bytes": corpus.peak_reserved_vram_bytes,
+        "evaluator_wall_seconds": float(time.perf_counter() - evaluation_started),
+        "ranking_passes": 1,
         "checkpoint": str(args.checkpoint),
         "stage1_next": bool(checkpoint.get("stage1_next")),
         "checkpoint_epoch": checkpoint.get("epoch", checkpoint.get("epoch_index")),

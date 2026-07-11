@@ -37,11 +37,15 @@ class RetrievalCorpus:
     qcpr_alpha: float = 1.0
     qcpr_beta: float = 0.0
     score_mode: str = "global"
+    qcpr_architecture_version: str = "v1"
     pair_masks: Tensor | None = None
     segmentation_target_kinds: list[str] | None = None
     segmentation_weights: Tensor | None = None
     change_types: list[str | None] | None = None
     temporal_explanation_logits: Tensor | None = None
+    text_token_embeddings: Tensor | None = None
+    text_attention_mask: Tensor | None = None
+    qcpr_reranker: QCPRPatchReranker | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +74,8 @@ def collect_retrieval_corpus(
     pair_embeddings: list[Tensor] = []
     text_embeddings: list[Tensor] = []
     teacher_text_embeddings: list[Tensor] = []
+    text_token_embeddings: list[Tensor] = []
+    text_attention_masks: list[Tensor] = []
     patch_tokens: list[Tensor] = []
     mask_query_embeddings: list[Tensor] = []
     caption_to_pair_all: list[Tensor] = []
@@ -129,6 +135,10 @@ def collect_retrieval_corpus(
                 mask_query_embeddings.append(output.mask_query_embeddings.float().cpu())
             if output.temporal_explanation_logits is not None:
                 temporal_explanation_logits.append(output.temporal_explanation_logits.float().cpu())
+            if output.text_token_embeddings is not None:
+                text_token_embeddings.append(output.text_token_embeddings.float().cpu())
+            if output.text_attention_mask is not None:
+                text_attention_masks.append(output.text_attention_mask.bool().cpu())
             caption_to_pair_all.append(batch["caption_to_pair"].cpu() + pair_offset)
             caption_group_ids_all.append(stable_caption_group_ids(batch["captions"]).cpu())
             pair_offset += output.pair_embedding.shape[0]
@@ -174,12 +184,22 @@ def collect_retrieval_corpus(
         mask_query_embeddings=torch.cat(mask_query_embeddings) if mask_query_embeddings else None,
         qcpr_alpha=float(getattr(getattr(model, "patch_reranker", None), "alpha", 1.0)),
         qcpr_beta=float(getattr(getattr(model, "patch_reranker", None), "beta", 0.0)),
-        score_mode="fused" if patch_tokens and mask_query_embeddings else "global",
+        score_mode=("qcpr_v2" if patch_tokens and getattr(getattr(model, "patch_reranker", None), "architecture_version", "v1") == "v2" else "fused" if patch_tokens and mask_query_embeddings else "global"),
+        qcpr_architecture_version=str(getattr(getattr(model, "patch_reranker", None), "architecture_version", "v1")),
         pair_masks=torch.cat(pair_masks) if pair_masks else None,
         segmentation_target_kinds=segmentation_target_kinds,
         segmentation_weights=torch.cat(segmentation_weights) if segmentation_weights else None,
         change_types=[str(value) if value is not None else None for value in change_types],
         temporal_explanation_logits=torch.cat(temporal_explanation_logits) if temporal_explanation_logits else None,
+        text_token_embeddings=(torch.cat([
+            torch.nn.functional.pad(value, (0, 0, 0, max(item.shape[1] for item in text_token_embeddings) - value.shape[1]))
+            for value in text_token_embeddings
+        ]) if text_token_embeddings else None),
+        text_attention_mask=(torch.cat([
+            torch.nn.functional.pad(value, (0, max(item.shape[1] for item in text_attention_masks) - value.shape[1]))
+            for value in text_attention_masks
+        ]) if text_attention_masks else None),
+        qcpr_reranker=getattr(model, "patch_reranker", None),
     )
 
 
@@ -376,25 +396,34 @@ def similarity_matrix(
             output[query_start:query_end, candidate_start:candidate_end] = (
                 text[query_start:query_end] @ pairs[candidate_start:candidate_end].T
             )
-    if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+    has_v1 = corpus.qcpr_architecture_version == "v1" and corpus.mask_query_embeddings is not None
+    has_v2 = corpus.qcpr_architecture_version == "v2" and corpus.text_token_embeddings is not None and corpus.text_attention_mask is not None and corpus.qcpr_reranker is not None
+    if corpus.patch_tokens is not None and (has_v1 or has_v2):
         patches = corpus.patch_tokens.float()
-        queries = corpus.mask_query_embeddings.float()
         local = torch.empty_like(output)
         for query_start in range(0, query_count, query_chunk_size):
             query_end = min(query_start + query_chunk_size, query_count)
             for candidate_start in range(0, candidate_count, candidate_chunk_size):
                 candidate_end = min(candidate_start + candidate_chunk_size, candidate_count)
-                logits = torch.einsum(
-                    "qd,bnd->qbn",
-                    queries[query_start:query_end],
-                    patches[candidate_start:candidate_end],
-                )
-                pooled = QCPRPatchReranker.masked_local_embedding(
-                    patches[candidate_start:candidate_end], logits
-                )
-                local[query_start:query_end, candidate_start:candidate_end] = torch.einsum(
-                    "qd,qbd->qb", text[query_start:query_end], pooled
-                )
+                if has_v1:
+                    queries = corpus.mask_query_embeddings.float()
+                    logits = torch.einsum("qd,bnd->qbn", queries[query_start:query_end], patches[candidate_start:candidate_end])
+                    local[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
+                else:
+                    reranker = corpus.qcpr_reranker
+                    reranker_device = next(reranker.parameters()).device
+                    descriptor = patches[candidate_start:candidate_end].to(reranker_device)
+                    token = torch.nn.functional.normalize(reranker.token_projection(corpus.text_token_embeddings[query_start:query_end].to(reranker_device)), dim=-1)
+                    attention = corpus.text_attention_mask[query_start:query_end].to(reranker_device)
+                    affinity = torch.einsum("bnd,qld->qbnl", descriptor, token) / reranker.logit_scale
+                    affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
+                    attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
+                    expanded = descriptor.unsqueeze(0).expand(query_end - query_start, -1, -1, -1)
+                    logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
+                    pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
+                    local_chunk = torch.einsum("qd,qbd->qb", text[query_start:query_end].to(reranker_device), pooled)
+                    local[query_start:query_end, candidate_start:candidate_end] = local_chunk.detach().cpu()
+                del logits
         return corpus.qcpr_alpha * output + corpus.qcpr_beta * local
     return output
 
@@ -431,6 +460,22 @@ def _mask_metric_summary(predictions: Tensor, targets: Tensor) -> dict[str, floa
     }
 
 
+def paired_candidate_mask_logits(corpus: RetrievalCorpus, query_indices: Tensor, candidate_indices: Tensor) -> Tensor:
+    """Faithful aligned logits without allocating QxBxN."""
+    patches = corpus.patch_tokens[candidate_indices].float()
+    if corpus.qcpr_architecture_version == "v1":
+        return torch.einsum("qd,qnd->qn", corpus.mask_query_embeddings[query_indices].float(), patches)
+    reranker = corpus.qcpr_reranker
+    device = next(reranker.parameters()).device
+    descriptor = patches.to(device)
+    token = torch.nn.functional.normalize(reranker.token_projection(corpus.text_token_embeddings[query_indices].to(device)), dim=-1)
+    attention = corpus.text_attention_mask[query_indices].to(device)
+    affinity = torch.einsum("qnd,qld->qnl", descriptor, token) / reranker.logit_scale
+    affinity = affinity.masked_fill(~attention[:, None, :].bool(), -1e4)
+    attended = torch.einsum("qnl,qld->qnd", affinity.softmax(-1), token)
+    return reranker.interaction_mlp(torch.cat((descriptor, attended, descriptor * attended), dim=-1)).squeeze(-1).detach().cpu()
+
+
 def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
     """Mask metrics for true supervised targets only; unsupervised rows never enter denominators."""
     empty = _mask_metric_summary(torch.empty(0, 1), torch.empty(0, 1))
@@ -439,7 +484,7 @@ def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
     metrics["target_mask_area_mean"] = 0.0
     if (
         corpus.patch_tokens is None
-        or corpus.mask_query_embeddings is None
+        or (corpus.mask_query_embeddings is None and corpus.qcpr_architecture_version != "v2")
         or corpus.pair_masks is None
         or corpus.segmentation_weights is None
         or corpus.segmentation_target_kinds is None
@@ -463,11 +508,7 @@ def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
         return metrics
     query_indices = torch.nonzero(keep, as_tuple=False).flatten()
     paired_indices = mapping[query_indices]
-    logits = torch.einsum(
-        "qd,qnd->qn",
-        corpus.mask_query_embeddings[query_indices].float(),
-        corpus.patch_tokens[paired_indices].float(),
-    )
+    logits = paired_candidate_mask_logits(corpus, query_indices, paired_indices)
     predictions = logits.sigmoid()
     targets = torch.nn.functional.interpolate(
         corpus.pair_masks[paired_indices, None].float(),
@@ -553,6 +594,7 @@ def compute_retrieval_metrics(
     *,
     query_chunk_size: int | None = None,
     candidate_chunk_size: int | None = None,
+    rank_result: RetrievalRankResult | None = None,
 ) -> tuple[dict[str, float | int | bool | str], Tensor]:
     if corpus.pair_embeddings.numel() == 0:
         empty_metrics: dict[str, float | int | bool | str] = {
@@ -594,11 +636,10 @@ def compute_retrieval_metrics(
         return empty_metrics, torch.empty(0, 0)
 
     search_started = time.perf_counter()
-    rank_result = compute_retrieval_ranks(
-        corpus,
-        query_chunk_size=query_chunk_size,
-        candidate_chunk_size=candidate_chunk_size,
-    )
+    if rank_result is None:
+        rank_result = compute_retrieval_ranks(
+            corpus, query_chunk_size=query_chunk_size, candidate_chunk_size=candidate_chunk_size,
+        )
     search_seconds = time.perf_counter() - search_started
 
     similarities = rank_result.similarities

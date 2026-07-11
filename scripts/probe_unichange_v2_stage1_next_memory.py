@@ -16,6 +16,8 @@ if __name__ == "__main__":
     parser.add_argument("temporal_depth", type=int, nargs="?", default=6)
     parser.add_argument("--text-max-length", type=int, default=256)
     parser.add_argument("--enable-patch-reranker", action="store_true")
+    parser.add_argument("--qcpr-architecture-version", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--enable-temporal-explanation-channels", action="store_true")
     args = parser.parse_args()
     raise SystemExit(
         run(
@@ -27,5 +29,7 @@ if __name__ == "__main__":
             temporal_depth=args.temporal_depth,
             text_max_length=args.text_max_length,
             enable_patch_reranker=args.enable_patch_reranker,
+            qcpr_architecture_version=args.qcpr_architecture_version,
+            enable_temporal_explanation_channels=args.enable_temporal_explanation_channels,
         )
     )

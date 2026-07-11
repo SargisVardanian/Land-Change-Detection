@@ -103,6 +103,7 @@ fi
 if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
   ARGS+=(
     --enable-patch-reranker
+    --qcpr-architecture-version "${QCPR_ARCHITECTURE_VERSION:-v1}"
     --qcpr-alpha "${QCPR_ALPHA:-1.0}"
     --qcpr-beta "${QCPR_BETA:-0.25}"
     --qcpr-local-loss-weight "${QCPR_LOCAL_LOSS_WEIGHT:-1.0}"
@@ -110,8 +111,14 @@ if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
     --structured-fna-weight "${STRUCTURED_FNA_WEIGHT:-0.0}"
   )
 fi
+if [[ "${ENABLE_TEMPORAL_EXPLANATION_CHANNELS:-0}" == "1" ]]; then
+  ARGS+=(--enable-temporal-explanation-channels)
+fi
 if [[ -n "${RESUME_CHECKPOINT:-}" ]]; then
   ARGS+=(--resume "$RESUME_CHECKPOINT")
+fi
+if [[ -n "${INITIALIZE_FROM_V1:-}" ]]; then
+  ARGS+=(--initialize-from-v1 "$INITIALIZE_FROM_V1")
 fi
 if [[ -n "${DATASET_CONFIG:-}" ]]; then
   ARGS+=(--dataset-config "$DATASET_CONFIG")

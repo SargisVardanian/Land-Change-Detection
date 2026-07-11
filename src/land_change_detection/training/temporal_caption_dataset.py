@@ -165,6 +165,11 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         else:
             mask = _blank_mask_like(row["t1_path"], self.image_size)
             segmentation_target_source = "none"
+        changed_mask = mask
+        changed_paths = row.get("source_metadata", {}).get("changed_mask_paths", [])
+        if changed_paths:
+            changed_masks = [_load_mask(path, self.image_size) for path in changed_paths]
+            changed_mask = torch.stack(changed_masks).amax(dim=0)
         return TemporalCaptionItem(
             pair_id=str(row["pair_id"]),
             dataset_name=str(row["dataset_name"]),
@@ -193,6 +198,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 "segmentation_target_source": segmentation_target_source,
                 "segmentation_target_kind": target_kind,
                 "segmentation_supervision_weight": supervision_weight,
+                "changed_mask": changed_mask,
                 "change_type": row.get("change_type", row.get("source_metadata", {}).get("change_type")),
             },
         )

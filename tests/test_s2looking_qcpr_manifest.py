@@ -30,6 +30,8 @@ def test_s2looking_builder_emits_direction_specific_query_masks(tmp_path: Path):
     assert appeared["retrieval_supervision"] is False
     assert appeared["seg_supervision_mode"] == "query_specific"
     assert appeared["pair_id"] != demolished["pair_id"]
+    assert {Path(path).parent.name for path in appeared["source_metadata"]["changed_mask_paths"]} == {"label1", "label2"}
+    assert {Path(path).parent.name for path in demolished["source_metadata"]["changed_mask_paths"]} == {"label1", "label2"}
     assert audit["total_base_pairs"] == 3
 
 

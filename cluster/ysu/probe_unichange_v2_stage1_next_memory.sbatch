@@ -31,7 +31,10 @@ ARGS=(
   --text-max-length "$TEXT_MAX_LENGTH"
 )
 if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
-  ARGS+=(--enable-patch-reranker)
+  ARGS+=(--enable-patch-reranker --qcpr-architecture-version "${QCPR_ARCHITECTURE_VERSION:-v1}")
+fi
+if [[ "${ENABLE_TEMPORAL_EXPLANATION_CHANNELS:-0}" == "1" ]]; then
+  ARGS+=(--enable-temporal-explanation-channels)
 fi
 PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts:$CODE_ROOT" "$PYTHON" \
   "$CODE_ROOT/scripts/probe_unichange_v2_stage1_next_memory.py" "${ARGS[@]}"

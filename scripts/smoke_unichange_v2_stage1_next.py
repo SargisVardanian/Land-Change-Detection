@@ -21,6 +21,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset-weight", action="append", default=None)
     parser.add_argument("--text-max-length", type=int, default=256)
     parser.add_argument("--enable-patch-reranker", action="store_true")
+    parser.add_argument("--qcpr-architecture-version", choices=("v1", "v2"), default="v1")
+    parser.add_argument("--enable-temporal-explanation-channels", action="store_true")
     args = parser.parse_args()
     output_dir = args.output_dir
     temporal_depth = args.temporal_depth
@@ -37,6 +39,8 @@ if __name__ == "__main__":
         dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
         text_max_length=args.text_max_length,
         enable_patch_reranker=args.enable_patch_reranker,
+        qcpr_architecture_version=args.qcpr_architecture_version,
+        enable_temporal_explanation_channels=args.enable_temporal_explanation_channels,
     )
     report = finalize(output_dir, "cuda")
     required = (

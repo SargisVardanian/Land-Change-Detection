@@ -26,15 +26,23 @@ def temporal_patch_descriptor(per_time_tokens: Tensor) -> Tensor:
 class QCPRPatchReranker(nn.Module):
     """Query-conditioned patch reranker with an auxiliary mask head."""
 
-    def __init__(self, hidden_dim: int = 512, retrieval_dim: int = 512, *, alpha: float = 1.0, beta: float = 0.25):
+    def __init__(self, hidden_dim: int = 512, retrieval_dim: int = 512, *, alpha: float = 1.0, beta: float = 0.25, architecture_version: str = "v1"):
         super().__init__()
         if alpha < 0.0 or beta < 0.0 or alpha + beta <= 0.0:
             raise ValueError("QCPR fusion weights must be non-negative and not both zero")
+        if architecture_version not in {"v1", "v2"}:
+            raise ValueError("qcpr architecture_version must be 'v1' or 'v2'")
         self.alpha = float(alpha)
         self.beta = float(beta)
+        self.architecture_version = architecture_version
         self.patch_projector = nn.Sequential(nn.LayerNorm(hidden_dim), nn.Linear(hidden_dim, retrieval_dim))
         self.query_mask_head = nn.Sequential(nn.LayerNorm(retrieval_dim), nn.Linear(retrieval_dim, retrieval_dim))
         self.logit_scale = 1.0 / math.sqrt(float(retrieval_dim))
+        if architecture_version == "v2":
+            self.temporal_descriptor_mlp = nn.Sequential(nn.LayerNorm(4 * hidden_dim + 2), nn.Linear(4 * hidden_dim + 2, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, retrieval_dim))
+            self.token_projection = nn.Linear(retrieval_dim, retrieval_dim)
+            self.interaction_mlp = nn.Sequential(nn.LayerNorm(3 * retrieval_dim), nn.Linear(3 * retrieval_dim, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, 1))
+            self.temporal_channel_head = nn.Sequential(nn.LayerNorm(retrieval_dim), nn.Linear(retrieval_dim, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, 3))
 
     @staticmethod
     def masked_local_embedding(patch_tokens: Tensor, query_mask_logits: Tensor) -> Tensor:
@@ -57,17 +65,40 @@ class QCPRPatchReranker(nn.Module):
         global_score = queries @ pairs.T
         mask_queries = F.normalize(self.query_mask_head(queries), dim=-1)
         query_mask_logits = torch.einsum("qd,bnd->qbn", mask_queries, patch_tokens) / self.logit_scale
-        local_embeddings = self.masked_local_embedding(patch_tokens, query_mask_logits)
-        local_score = torch.einsum("qd,qbd->qb", queries, local_embeddings)
+        local_score = query_mask_logits.sigmoid().amax(dim=-1)
         final_score = self.alpha * global_score + self.beta * local_score
         return {
             "global_score": global_score,
             "local_score": local_score,
             "final_score": final_score,
             "query_mask_logits": query_mask_logits,
-            "local_embeddings": local_embeddings,
             "mask_query_embeddings": mask_queries / self.logit_scale,
             "score_mode": "fused",
+        }
+
+    def score_v2(self, query_embeddings: Tensor, query_token_embeddings: Tensor, query_attention_mask: Tensor, pair_embeddings: Tensor, per_time_tokens: Tensor) -> dict[str, Tensor | str]:
+        if self.architecture_version != "v2":
+            raise RuntimeError("score_v2 requires qcpr architecture v2")
+        descriptors = F.normalize(self.temporal_descriptor_mlp(temporal_patch_descriptor(per_time_tokens)), dim=-1)
+        token_embeddings = F.normalize(self.token_projection(query_token_embeddings), dim=-1)
+        affinity = torch.einsum("bnd,qld->qbnl", descriptors, token_embeddings) / self.logit_scale
+        affinity = affinity.masked_fill(~query_attention_mask[:, None, None, :].bool(), -1e4)
+        attended_query = torch.einsum("qbnl,qld->qbnd", affinity.softmax(dim=-1), token_embeddings)
+        descriptor = descriptors.unsqueeze(0).expand(query_embeddings.shape[0], -1, -1, -1)
+        query_mask_logits = self.interaction_mlp(torch.cat((descriptor, attended_query, descriptor * attended_query), dim=-1)).squeeze(-1)
+        local_embeddings = self.masked_local_embedding(descriptors, query_mask_logits)
+        queries = F.normalize(query_embeddings, dim=-1)
+        global_score = queries @ F.normalize(pair_embeddings, dim=-1).T
+        local_score = torch.einsum("qd,qbd->qb", queries, local_embeddings)
+        return {
+            "global_score": global_score,
+            "local_score": local_score,
+            "token_patch_score": query_mask_logits.sigmoid().amax(dim=-1),
+            "final_score": self.alpha * global_score + self.beta * local_score,
+            "query_mask_logits": query_mask_logits,
+            "patch_tokens": descriptors,
+            "temporal_explanation_logits": self.temporal_channel_head(descriptors),
+            "score_mode": "qcpr_v2",
         }
 
 
@@ -168,3 +199,52 @@ def query_segmentation_loss(
             return query_mask_logits.sum() * 0.0
         return per_query[keep].mean()
     return per_query.mean()
+
+
+def temporal_channel_loss_components(
+    logits: Tensor,
+    pair_masks: Tensor,
+    changed_masks: Tensor,
+    pair_target_kinds: list[str],
+    pair_supervision_weights: Tensor,
+    change_types: list[str | None],
+    reverse_logits: Tensor | None = None,
+) -> dict[str, Tensor | int]:
+    """Supervise changed/appeared/disappeared channels with real labels only."""
+    if logits.ndim != 3 or logits.shape[-1] != 3:
+        raise ValueError("temporal logits must have shape [B,N,3]")
+    batch, patches, _ = logits.shape
+    side = int(math.isqrt(patches))
+    if side * side != patches or pair_masks.shape[0] != batch:
+        raise ValueError("temporal channel targets do not align")
+    targets = F.interpolate(pair_masks[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1).to(logits.device)
+    changed_targets = F.interpolate(changed_masks[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1).to(logits.device)
+    base_weights = pair_supervision_weights.to(logits.device, logits.dtype)
+
+    def channel_loss(channel: int, keep: Tensor, weights: Tensor, target_values: Tensor | None = None) -> Tensor:
+        keep = keep & (weights > 0)
+        if target_values is None:
+            target_values = targets
+        if not torch.any(keep):
+            return logits.sum() * 0.0
+        prediction = logits[keep, :, channel]
+        target = target_values[keep]
+        bce = F.binary_cross_entropy_with_logits(prediction, target, reduction="none").mean(dim=1)
+        probability = prediction.sigmoid()
+        dice = 1.0 - (2 * (probability * target).sum(1) + 1) / (probability.sum(1) + target.sum(1) + 1)
+        return ((bce + dice) * weights[keep]).mean()
+
+    real = torch.tensor([kind != "none" for kind in pair_target_kinds], device=logits.device)
+    appeared = torch.tensor([value == "appeared" for value in change_types], device=logits.device)
+    disappeared = torch.tensor([value == "disappeared" for value in change_types], device=logits.device)
+    changed_loss = channel_loss(0, real, base_weights, changed_targets)
+    appeared_loss = channel_loss(1, appeared, torch.where(appeared, torch.ones_like(base_weights), torch.zeros_like(base_weights)))
+    disappeared_loss = channel_loss(2, disappeared, torch.where(disappeared, torch.ones_like(base_weights), torch.zeros_like(base_weights)))
+    reversal = logits.sum() * 0.0
+    if reverse_logits is not None:
+        supervised = real & (base_weights > 0)
+        if torch.any(supervised):
+            reversal = F.mse_loss(logits[supervised, :, 0].sigmoid(), reverse_logits[supervised, :, 0].sigmoid())
+            reversal = reversal + F.mse_loss(logits[supervised, :, 1].sigmoid(), reverse_logits[supervised, :, 2].sigmoid())
+            reversal = reversal + F.mse_loss(logits[supervised, :, 2].sigmoid(), reverse_logits[supervised, :, 1].sigmoid())
+    return {"changed_channel_loss": changed_loss, "appeared_channel_loss": appeared_loss, "disappeared_channel_loss": disappeared_loss, "temporal_reversal_consistency_loss": reversal, "temporal_supervised_pairs": int(real.sum().item())}

@@ -32,6 +32,8 @@ def run(
     temporal_depth: int = 6,
     text_max_length: int = 256,
     enable_patch_reranker: bool = False,
+    qcpr_architecture_version: str = "v1",
+    enable_temporal_explanation_channels: bool = False,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -53,6 +55,8 @@ def run(
         checkpoint_interval_steps=0,
         text_max_length=text_max_length,
         enable_patch_reranker=enable_patch_reranker,
+        qcpr_architecture_version=qcpr_architecture_version,
+        enable_temporal_explanation_channels=enable_temporal_explanation_channels,
     )
     train, val = _build_stage1_datasets(config)
     data_metadata = _stage1_data_metadata(config, train, val)
