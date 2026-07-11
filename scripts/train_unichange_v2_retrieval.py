@@ -515,6 +515,17 @@ def main() -> int:
     total_batches = len(train_loader) * max(config.epochs, 1)
     total_steps = config.max_steps or total_batches
     model = _build_model(config, device)
+    module_names = sorted(name for name, _ in model.named_children())
+    trainable_module_names = sorted({name.split(".", 1)[0] for name, parameter in model.named_parameters() if parameter.requires_grad})
+    provenance = {
+        "resume_checkpoint": None,
+        "pretrained_visual_checkpoint": config.universat_checkpoint,
+        "pretrained_text_checkpoint": config.jina_model,
+        "randomly_initialized_module_names": [name for name in module_names if name not in {"visual_encoder", "text_encoder"}],
+        "loaded_module_names": ["visual_encoder", "text_encoder"],
+        "trainable_module_names": trainable_module_names,
+    }
+    _write_json(output_dir / "run_config.json", asdict(config) | provenance | {"cluster_ready": False, "readiness_note": "Requires real Slurm COMPLETED/0:0 smoke report."})
     optimizer = _make_optimizer(model, config)
     scheduler = _make_scheduler(optimizer, total_steps, config)
 

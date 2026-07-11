@@ -15,6 +15,7 @@ from land_change_detection.models.retrieval_heads import (
     stable_caption_group_ids,
 )
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
+from land_change_detection.models.qcpr import QCPRPatchReranker
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,7 @@ class RetrievalCorpus:
     segmentation_target_kinds: list[str] | None = None
     segmentation_weights: Tensor | None = None
     change_types: list[str | None] | None = None
+    temporal_explanation_logits: Tensor | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ def collect_retrieval_corpus(
     segmentation_target_kinds: list[str] = []
     segmentation_weights: list[Tensor] = []
     change_types: list[str | None] = []
+    temporal_explanation_logits: list[Tensor] = []
     pair_ids: list[str] = []
     dataset_names: list[str] = []
     captions: list[str] = []
@@ -124,6 +127,8 @@ def collect_retrieval_corpus(
                 patch_tokens.append(output.patch_tokens.float().cpu())
             if output.mask_query_embeddings is not None:
                 mask_query_embeddings.append(output.mask_query_embeddings.float().cpu())
+            if output.temporal_explanation_logits is not None:
+                temporal_explanation_logits.append(output.temporal_explanation_logits.float().cpu())
             caption_to_pair_all.append(batch["caption_to_pair"].cpu() + pair_offset)
             caption_group_ids_all.append(stable_caption_group_ids(batch["captions"]).cpu())
             pair_offset += output.pair_embedding.shape[0]
@@ -174,6 +179,7 @@ def collect_retrieval_corpus(
         segmentation_target_kinds=segmentation_target_kinds,
         segmentation_weights=torch.cat(segmentation_weights) if segmentation_weights else None,
         change_types=[str(value) if value is not None else None for value in change_types],
+        temporal_explanation_logits=torch.cat(temporal_explanation_logits) if temporal_explanation_logits else None,
     )
 
 
@@ -383,7 +389,12 @@ def similarity_matrix(
                     queries[query_start:query_end],
                     patches[candidate_start:candidate_end],
                 )
-                local[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
+                pooled = QCPRPatchReranker.masked_local_embedding(
+                    patches[candidate_start:candidate_end], logits
+                )
+                local[query_start:query_end, candidate_start:candidate_end] = torch.einsum(
+                    "qd,qbd->qb", text[query_start:query_end], pooled
+                )
         return corpus.qcpr_alpha * output + corpus.qcpr_beta * local
     return output
 

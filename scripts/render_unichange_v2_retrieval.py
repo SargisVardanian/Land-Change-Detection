@@ -16,6 +16,7 @@ from torch.utils.data import DataLoader
 import train_unichange_v2_retrieval as base
 from land_change_detection.data.unichange_mci import UniChangeMciDataset
 from land_change_detection.models.retrieval_heads import normalize_caption_text
+from land_change_detection.models.qcpr import QCPRPatchReranker
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import TemporalCaptionManifestDataset, load_dataset_config, parse_dataset_weights
 from land_change_detection.visualization import mask_rgba_overlay, rgb_absolute_difference
@@ -41,6 +42,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--max-queries", type=int, default=48)
     parser.add_argument("--device", default="cuda")
+    parser.add_argument("--query-chunk-size", type=int, default=64)
+    parser.add_argument("--candidate-chunk-size", type=int, default=256)
+    parser.add_argument("--mask-threshold", type=float, default=0.5)
     return parser.parse_args()
 
 
@@ -79,6 +83,47 @@ def render_pair(axes, sample, heading: str, score: float | None = None) -> None:
         axes[3].set_title("No binary mask")
     for axis in axes:
         axis.axis("off")
+
+
+def _candidate_mask(logits: torch.Tensor, shape: tuple[int, int]) -> np.ndarray:
+    side = int(round(logits.numel() ** 0.5))
+    if side * side != logits.numel():
+        raise ValueError("QCPR patch grid must be square")
+    return torch.nn.functional.interpolate(
+        logits.sigmoid().reshape(1, 1, side, side), size=shape, mode="bilinear", align_corners=False
+    )[0, 0].cpu().numpy()
+
+
+def _per_result_overlap(mask: np.ndarray, gt: np.ndarray | None, threshold: float) -> tuple[float | None, float | None]:
+    if gt is None:
+        return None, None
+    predicted = mask >= threshold
+    target = gt > 0
+    intersection = int(np.logical_and(predicted, target).sum())
+    denominator = int(predicted.sum() + target.sum())
+    union = int(np.logical_or(predicted, target).sum())
+    return (2.0 * intersection / denominator if denominator else 1.0, intersection / union if union else 1.0)
+
+
+def _top_regions(mask: np.ndarray, count: int = 3) -> list[dict[str, float]]:
+    flat = mask.reshape(-1)
+    indices = np.argsort(flat)[::-1][:count]
+    height, width = mask.shape
+    return [
+        {"x": float((index % width + 0.5) / width), "y": float((index // width + 0.5) / height), "probability": float(flat[index])}
+        for index in indices
+    ]
+
+
+def _query_evidence(query: str, regions: list[dict[str, float]]) -> dict[str, object]:
+    normalized = query.casefold()
+    directions = [word for word in ("appeared", "disappeared", "changed", "increased", "decreased") if word in normalized]
+    locations = [word for word in ("left", "right", "top", "bottom", "center", "middle") if word in normalized]
+    return {
+        "object_evidence": query,
+        "temporal_direction_evidence": directions,
+        "location_evidence": {"query_terms": locations, "mask_peak_regions": regions},
+    }
 
 
 def _checkpoint_config(args: argparse.Namespace, checkpoint: dict) -> SimpleNamespace:
@@ -218,16 +263,19 @@ def main() -> int:
     model.load_state_dict(checkpoint["model"], strict=True)
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
-    metrics, similarities = compute_retrieval_metrics(corpus)
+    metrics, similarities = compute_retrieval_metrics(
+        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
+    )
     global_similarities = corpus.text_embeddings.float() @ corpus.pair_embeddings.float().T
     local_similarities = None
     if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
-        local_similarities = torch.einsum(
-            "qd,bnd->qbn",
-            corpus.mask_query_embeddings.float(),
-            corpus.patch_tokens.float(),
-        ).sigmoid().amax(dim=-1)
-    rank_result = compute_retrieval_ranks(corpus)
+        if corpus.qcpr_beta > 0:
+            local_similarities = (similarities - corpus.qcpr_alpha * global_similarities) / corpus.qcpr_beta
+        else:
+            local_similarities = torch.zeros_like(similarities)
+    rank_result = compute_retrieval_ranks(
+        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
+    )
 
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
     sample_by_id = _sample_map(dataset)
@@ -284,10 +332,10 @@ def main() -> int:
             global_score = float(global_scores[int(retrieved_index)].item())
             local_score = float(local_scores[int(retrieved_index)].item()) if local_scores is not None else None
             is_relevant = bool(relevant_mask[int(retrieved_index)].item())
+            is_exact = int(retrieved_index) == query_pair_index
             label = f"#{row} {retrieved_id} {'RELEVANT' if is_relevant else 'OTHER'}"
             render_pair(axes[row], sample_by_id[retrieved_id], label, score)
-            retrieved.append(
-                {
+            result_record = {
                     "rank": row,
                     "pair_id": retrieved_id,
                     "score": score,
@@ -298,9 +346,66 @@ def main() -> int:
                     "local_score": local_score,
                     "final_score": score,
                     "score_mode": corpus.score_mode,
-                    "relevant": is_relevant,
+                    "semantic_relevance": is_relevant,
+                    "exact_pair_relevance": is_exact,
                 }
-            )
+            if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
+                candidate_patches = corpus.patch_tokens[int(retrieved_index)].float()
+                mask_query = corpus.mask_query_embeddings[caption_index].float()
+                patch_logits = torch.einsum("d,nd->n", mask_query, candidate_patches)
+                pooled = QCPRPatchReranker.masked_local_embedding(
+                    candidate_patches.unsqueeze(0), patch_logits.reshape(1, 1, -1)
+                )
+                recomputed_local = float(torch.einsum(
+                    "d,qbd->qb", corpus.text_embeddings[caption_index].float(), pooled
+                )[0, 0].item())
+                if local_score is None or not np.isclose(recomputed_local, local_score, atol=1e-5):
+                    raise RuntimeError("Displayed candidate mask logits do not reproduce S_local")
+                t1_path, t2_path, gt_path = _sample_paths(sample_by_id[retrieved_id])
+                t1, t2 = load_rgb(t1_path), load_rgb(t2_path)
+                soft = _candidate_mask(patch_logits, t2.shape[:2])
+                thresholded = soft >= args.mask_threshold
+                stem = f"query_{query_number:03d}_rank_{row:02d}_{retrieved_id}"
+                soft_path = overlay_dir / f"{stem}_soft.png"
+                threshold_path = overlay_dir / f"{stem}_thresholded.png"
+                Image.fromarray(np.uint8(np.clip(soft, 0, 1) * 255), mode="L").save(soft_path)
+                Image.fromarray(np.uint8(thresholded) * 255, mode="L").save(threshold_path)
+                gt = load_mask(gt_path) if gt_path else None
+                dice, iou = _per_result_overlap(soft, gt, args.mask_threshold)
+                regions = _top_regions(soft)
+                evidence = _query_evidence(query_caption, regions)
+                panel, panel_axes = plt.subplots(2, 4, figsize=(18, 9))
+                panel_axes[0, 0].imshow(t1); panel_axes[0, 0].set_title("T1")
+                panel_axes[0, 1].imshow(t2); panel_axes[0, 1].set_title("T2")
+                panel_axes[0, 2].imshow(rgb_absolute_difference(t1, t2), cmap="magma"); panel_axes[0, 2].set_title("RGB difference")
+                panel_axes[0, 3].imshow(gt if gt is not None else np.zeros(t2.shape[:2]), cmap="gray"); panel_axes[0, 3].set_title("GT mask" if gt is not None else "GT unavailable")
+                panel_axes[1, 0].imshow(t1); panel_axes[1, 0].imshow(soft, cmap="magma", alpha=.55, vmin=0, vmax=1); panel_axes[1, 0].set_title("Soft mask over T1")
+                panel_axes[1, 1].imshow(t2); panel_axes[1, 1].imshow(soft, cmap="magma", alpha=.55, vmin=0, vmax=1); panel_axes[1, 1].set_title("Soft mask over T2")
+                panel_axes[1, 2].imshow(thresholded, cmap="gray"); panel_axes[1, 2].set_title(f"Thresholded @{args.mask_threshold:g}")
+                panel_axes[1, 3].axis("off"); panel_axes[1, 3].text(0, .95, f"pair_id: {retrieved_id}\nS_global={global_score:.4f}\nS_local={local_score:.4f}\nS_final={score:.4f}\nsemantic={is_relevant}\nexact={is_exact}", va="top")
+                for axis in panel_axes.flat[:7]: axis.axis("off")
+                panel.suptitle(f"Exact query: {query_caption}")
+                panel.tight_layout(rect=(0, 0, 1, .96))
+                panel_path = visuals / f"{stem}.png"
+                panel.savefig(panel_path, dpi=140, bbox_inches="tight"); plt.close(panel)
+                result_record.update({
+                    "query": query_caption, "soft_mask_path": str(soft_path),
+                    "thresholded_mask_path": str(threshold_path), "explanation_panel_path": str(panel_path),
+                    "per_result_Dice": dice, "per_result_IoU": iou, "top_regions": regions,
+                    **evidence,
+                })
+                if corpus.temporal_explanation_logits is not None:
+                    channels = corpus.temporal_explanation_logits[int(retrieved_index)].sigmoid().T
+                    channel_paths = {}
+                    for channel_index, channel_name in enumerate(("appeared", "disappeared", "changed")):
+                        channel_mask = _candidate_mask(
+                            torch.logit(channels[channel_index].clamp(1e-6, 1 - 1e-6)), t2.shape[:2]
+                        )
+                        channel_path = overlay_dir / f"{stem}_{channel_name}.png"
+                        Image.fromarray(np.uint8(channel_mask * 255), mode="L").save(channel_path)
+                        channel_paths[f"{channel_name}_probability_map_path"] = str(channel_path)
+                    result_record.update(channel_paths)
+            retrieved.append(result_record)
         figure.suptitle(
             f"Query: {query_caption}\nRelevant rank={relevant_rank}; exact pair rank={exact_rank}"
         )
@@ -308,35 +413,6 @@ def main() -> int:
         image_name = f"query_{query_number:03d}_{query_pair_id}.png"
         figure.savefig(visuals / image_name, dpi=140, bbox_inches="tight")
         plt.close(figure)
-        overlay_name = None
-        if corpus.patch_tokens is not None and corpus.mask_query_embeddings is not None:
-            patch_logits = torch.einsum(
-                "d,nd->n",
-                corpus.mask_query_embeddings[caption_index].float(),
-                corpus.patch_tokens[query_pair_index].float(),
-            )
-            side = int(round(patch_logits.numel() ** 0.5))
-            if side * side == patch_logits.numel():
-                _, t2_path, _ = _sample_paths(sample_by_id[query_pair_id])
-                t2 = load_rgb(t2_path)
-                mask = torch.nn.functional.interpolate(
-                    patch_logits.sigmoid().reshape(1, 1, side, side),
-                    size=t2.shape[:2],
-                    mode="bilinear",
-                    align_corners=False,
-                )[0, 0].numpy()
-                overlay_name = f"query_{query_number:03d}_{query_pair_id}.png"
-                overlay_figure, overlay_axes = plt.subplots(1, 2, figsize=(10, 5))
-                overlay_axes[0].imshow(t2)
-                overlay_axes[0].set_title("T2")
-                overlay_axes[1].imshow(t2)
-                overlay_axes[1].imshow(mask, cmap="magma", alpha=0.55, vmin=0.0, vmax=1.0)
-                overlay_axes[1].set_title("QCPR query mask")
-                for axis in overlay_axes:
-                    axis.axis("off")
-                overlay_figure.tight_layout()
-                overlay_figure.savefig(overlay_dir / overlay_name, dpi=140, bbox_inches="tight")
-                plt.close(overlay_figure)
         top_global = float(global_scores[int(top_indices[0])].item()) if top_indices else None
         top_local = float(local_scores[int(top_indices[0])].item()) if local_scores is not None and top_indices else None
         top_final = float(scores[int(top_indices[0])].item()) if top_indices else None
@@ -349,7 +425,7 @@ def main() -> int:
                 "exact_pair_rank": exact_rank,
                 "retrieved": retrieved,
                 "image": image_name,
-                "mask_overlay": overlay_name,
+                "mask_overlay": retrieved[0].get("explanation_panel_path") if retrieved else None,
                 "S_global": top_global,
                 "S_local": top_local,
                 "S_final": top_final,

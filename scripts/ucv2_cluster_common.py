@@ -84,8 +84,17 @@ def build_model(config, device):
         if bool(getattr(config, "enable_patch_reranker", False))
         else None
     )
+    temporal_explanation_head = None
+    if bool(getattr(config, "enable_temporal_explanation_channels", False)):
+        temporal_explanation_head = torch.nn.Sequential(
+            torch.nn.LayerNorm(4 * 512 + 2),
+            torch.nn.Linear(4 * 512 + 2, 512),
+            torch.nn.GELU(),
+            torch.nn.Linear(512, 3),
+        )
     return UniChangeV2RetrievalModel(
-        visual, temporal, text, retrieval_head, text_adapter=text_adapter, patch_reranker=patch_reranker
+        visual, temporal, text, retrieval_head, text_adapter=text_adapter, patch_reranker=patch_reranker,
+        temporal_explanation_head=temporal_explanation_head,
     ).to(device)
 
 

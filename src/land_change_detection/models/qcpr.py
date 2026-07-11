@@ -7,6 +7,22 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 
+def temporal_patch_descriptor(per_time_tokens: Tensor) -> Tensor:
+    """Build D_p=[V1,V2,V2-V1,abs(V2-V1),coordinates]."""
+    if per_time_tokens.ndim != 4 or per_time_tokens.shape[1] != 2:
+        raise ValueError("per_time_tokens must have shape [B,2,N,D]")
+    before, after = per_time_tokens[:, 0], per_time_tokens[:, 1]
+    side = int(math.isqrt(before.shape[1]))
+    if side * side != before.shape[1]:
+        raise ValueError("Temporal explanation patches must form a square grid")
+    yy, xx = torch.meshgrid(
+        torch.linspace(0, 1, side, device=before.device, dtype=before.dtype),
+        torch.linspace(0, 1, side, device=before.device, dtype=before.dtype), indexing="ij",
+    )
+    coords = torch.stack((xx, yy), dim=-1).reshape(1, -1, 2).expand(before.shape[0], -1, -1)
+    return torch.cat((before, after, after - before, (after - before).abs(), coords), dim=-1)
+
+
 class QCPRPatchReranker(nn.Module):
     """Query-conditioned patch reranker with an auxiliary mask head."""
 
@@ -19,6 +35,14 @@ class QCPRPatchReranker(nn.Module):
         self.patch_projector = nn.Sequential(nn.LayerNorm(hidden_dim), nn.Linear(hidden_dim, retrieval_dim))
         self.query_mask_head = nn.Sequential(nn.LayerNorm(retrieval_dim), nn.Linear(retrieval_dim, retrieval_dim))
         self.logit_scale = 1.0 / math.sqrt(float(retrieval_dim))
+
+    @staticmethod
+    def masked_local_embedding(patch_tokens: Tensor, query_mask_logits: Tensor) -> Tensor:
+        """Pool candidate patches with the exact mask weights exposed to users."""
+        weights = query_mask_logits.sigmoid()
+        pooled = torch.einsum("qbn,bnd->qbd", weights, patch_tokens)
+        pooled = pooled / weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        return F.normalize(pooled, dim=-1)
 
     def project_patches(self, change_tokens: Tensor) -> Tensor:
         if change_tokens.ndim != 3:
@@ -33,13 +57,15 @@ class QCPRPatchReranker(nn.Module):
         global_score = queries @ pairs.T
         mask_queries = F.normalize(self.query_mask_head(queries), dim=-1)
         query_mask_logits = torch.einsum("qd,bnd->qbn", mask_queries, patch_tokens) / self.logit_scale
-        local_score = query_mask_logits.sigmoid().amax(dim=-1)
+        local_embeddings = self.masked_local_embedding(patch_tokens, query_mask_logits)
+        local_score = torch.einsum("qd,qbd->qb", queries, local_embeddings)
         final_score = self.alpha * global_score + self.beta * local_score
         return {
             "global_score": global_score,
             "local_score": local_score,
             "final_score": final_score,
             "query_mask_logits": query_mask_logits,
+            "local_embeddings": local_embeddings,
             "mask_query_embeddings": mask_queries / self.logit_scale,
             "score_mode": "fused",
         }
