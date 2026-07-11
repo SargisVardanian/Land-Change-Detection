@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=ucv2-patchseg-mem
 #SBATCH --account=research
-#SBATCH --partition=research
+#SBATCH --partition=premium
 #SBATCH --qos=researcher
 #SBATCH --output=/mnt/weka/%u/rs_change_project/logs/%x_%j.out
 #SBATCH --error=/mnt/weka/%u/rs_change_project/logs/%x_%j.err
