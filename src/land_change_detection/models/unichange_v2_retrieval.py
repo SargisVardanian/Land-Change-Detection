@@ -191,7 +191,12 @@ class UniChangeV2RetrievalModel(nn.Module):
             local_scores = reranked["local_score"]  # type: ignore[assignment]
             final_scores = reranked["final_score"]  # type: ignore[assignment]
             query_mask_logits = reranked["query_mask_logits"]  # type: ignore[assignment]
-            mask_query_embeddings = reranked["mask_query_embeddings"]  # type: ignore[assignment]
+            # The legacy v1 mask is a linear query/patch dot product and can be
+            # represented by one embedding per query.  QCPR v2 uses a
+            # token-conditioned query/candidate interaction, so there is no
+            # equivalent standalone mask-query embedding.
+            if self.patch_reranker.architecture_version == "v1":
+                mask_query_embeddings = reranked["mask_query_embeddings"]  # type: ignore[assignment]
             score_mode = str(reranked["score_mode"])
         logits = final_scores.T
         return UniChangeV2RetrievalOutput(

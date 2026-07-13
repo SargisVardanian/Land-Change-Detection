@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import torch
 from torch import nn
+from types import SimpleNamespace
 
+from land_change_detection.backbones.jina_v5_text import TextFeatures
 from land_change_detection.models.qcpr import QCPRPatchReranker, temporal_channel_loss_components
+from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
 from ucv2_stage1_next_core import Stage1NextConfig, make_optimizer
 
 
@@ -35,6 +38,39 @@ def test_qcpr_v2_token_conditioned_shapes_and_gradients() -> None:
     assert reranker.fusion_logits.grad is not None and torch.any(reranker.fusion_logits.grad != 0)
     assert reranker.branch_log_scales.grad is not None and torch.any(reranker.branch_log_scales.grad != 0)
     assert reranker.branch_biases.grad is not None and torch.any(reranker.branch_biases.grad != 0)
+
+
+def test_qcpr_v2_model_forward_does_not_require_legacy_mask_query_embeddings() -> None:
+    class Visual(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.image_encoder = nn.Identity()
+
+        def forward(self, images):
+            return SimpleNamespace(features=images, metadata={})
+
+    class Temporal(nn.Module):
+        def forward(self, features, temporal_valid_mask=None):
+            batch = features.shape[0]
+            return SimpleNamespace(pair_embedding=torch.randn(batch, 8), per_time_tokens=torch.randn(batch, 2, 4, 8))
+
+    class Text(nn.Module):
+        def forward(self, captions, role):
+            count = len(captions)
+            return TextFeatures(torch.randn(count, 8), torch.randn(count, 5, 8), torch.ones(count, 5, dtype=torch.bool), role, {})
+
+    class Retrieval(nn.Module):
+        def forward(self, embedding):
+            return SimpleNamespace(pair_embedding=embedding)
+
+    model = UniChangeV2RetrievalModel(
+        Visual(), Temporal(), Text(), Retrieval(),
+        patch_reranker=QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2"),
+    )
+    output = model(torch.randn(3, 2, 4, 8), ["one", "two"], torch.tensor([0, 1]))
+    assert output.score_mode == "qcpr_v2"
+    assert output.mask_query_embeddings is None
+    assert output.query_mask_logits.shape == (2, 3, 4)
 
 
 def test_qcpr_v2_token_patch_aggregation_is_not_a_single_maximum() -> None:
