@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--caption-frequency-power", type=float, default=0.5)
     parser.add_argument("--train-eval-pairs", type=int, default=1024)
     parser.add_argument("--train-eval-interval", type=int, default=2)
+    parser.add_argument("--similarity-query-chunk-size", type=int, default=64)
+    parser.add_argument("--similarity-candidate-chunk-size", type=int, default=256)
     parser.add_argument("--enable-conflict-filtering", action="store_true")
     parser.add_argument("--train-manifest", type=Path, action="append", default=[])
     parser.add_argument("--val-manifest", type=Path, action="append", default=[])
@@ -66,6 +68,8 @@ if __name__ == "__main__":
             caption_frequency_power=args.caption_frequency_power,
             train_eval_pairs=args.train_eval_pairs,
             train_eval_interval=args.train_eval_interval,
+            similarity_query_chunk_size=args.similarity_query_chunk_size,
+            similarity_candidate_chunk_size=args.similarity_candidate_chunk_size,
             enable_conflict_filtering=args.enable_conflict_filtering,
             train_manifests=tuple(args.train_manifest),
             val_manifests=tuple(args.val_manifest),
