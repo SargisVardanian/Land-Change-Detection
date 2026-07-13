@@ -173,7 +173,7 @@ def structured_auxiliary_evidence_loss(
     }
     reference = next(iter(evidence_scores.values()))
     rows = torch.arange(len(captions), device=reference.device)
-    losses = []
+    active_losses = []
     diagnostics: dict[str, float | int] = {}
     for label, (score_name, signature_key) in specifications.items():
         scores = evidence_scores[score_name]
@@ -187,10 +187,15 @@ def structured_auxiliary_evidence_loss(
         # -log(p) keeps the same objective while avoiding BCELoss, which CUDA
         # autocast intentionally rejects as numerically unsafe.
         loss = -paired[present].log().mean() if torch.any(present) else scores.sum() * 0.0
-        losses.append(loss)
+        if torch.any(present):
+            active_losses.append(loss)
         diagnostics[f"{label}_auxiliary_label_count"] = int(present.sum().item())
         diagnostics[f"{label}_auxiliary_loss"] = float(loss.detach().cpu())
-    total = torch.stack(losses).sum()
+    # Attribute availability varies strongly by batch. Averaging only active
+    # attributes keeps this objective on a stable scale instead of making a
+    # richly annotated batch receive up to five times the gradient magnitude.
+    total = torch.stack(active_losses).mean() if active_losses else reference.sum() * 0.0
+    diagnostics["structured_auxiliary_active_attribute_count"] = len(active_losses)
     diagnostics["structured_auxiliary_evidence_loss"] = float(total.detach().cpu())
     return total, diagnostics
 

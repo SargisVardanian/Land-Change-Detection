@@ -910,6 +910,7 @@ def run(
     local_margin: float = 0.1,
     conditional_instance_loss_weight: float = 0.01,
     structured_auxiliary_loss_weight: float = 0.05,
+    grad_clip_norm: float = 1.0,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -950,6 +951,7 @@ def run(
         local_margin=local_margin,
         conditional_instance_loss_weight=conditional_instance_loss_weight,
         structured_auxiliary_loss_weight=structured_auxiliary_loss_weight,
+        grad_clip_norm=grad_clip_norm,
     )
     validate_config(config)
     base._set_seed(config.seed)

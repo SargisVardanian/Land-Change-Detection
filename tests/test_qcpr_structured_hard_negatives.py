@@ -93,4 +93,17 @@ def test_auxiliary_evidence_loss_is_autocast_safe() -> None:
         loss, _ = structured_auxiliary_evidence_loss(scores, torch.tensor([0]), captions)
     loss.backward()
     assert torch.isfinite(loss)
-    assert all(score.grad is not None and torch.isfinite(score.grad).all() for score in scores.values())
+    for name in ("S_object", "S_direction", "S_location", "S_count"):
+        assert scores[name].grad is not None and torch.isfinite(scores[name].grad).all()
+    assert scores["S_relation"].grad is None
+
+
+def test_auxiliary_evidence_loss_averages_active_attributes() -> None:
+    captions = ["two houses appeared at the top and replace trees"]
+    scores = {
+        name: torch.full((1, 1), 0.5, requires_grad=True)
+        for name in ("S_object", "S_direction", "S_location", "S_count", "S_relation")
+    }
+    loss, diagnostics = structured_auxiliary_evidence_loss(scores, torch.tensor([0]), captions)
+    assert torch.allclose(loss, torch.tensor(0.5).log().neg())
+    assert diagnostics["structured_auxiliary_active_attribute_count"] == 5

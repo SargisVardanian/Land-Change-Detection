@@ -100,6 +100,7 @@ ARGS=(
   --text-max-length "$TEXT_MAX_LENGTH"
   --early-stopping-patience "${EARLY_STOPPING_PATIENCE:-4}"
   --early-stopping-min-improvement "${EARLY_STOPPING_MIN_IMPROVEMENT:-0.002}"
+  --grad-clip-norm "${GRAD_CLIP_NORM:-1.0}"
 )
 if [[ -n "${MAX_STEPS:-}" ]]; then
   ARGS+=(--max-steps "$MAX_STEPS")

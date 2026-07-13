@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--local-margin", type=float, default=0.1)
     parser.add_argument("--conditional-instance-loss-weight", type=float, default=0.01)
     parser.add_argument("--structured-auxiliary-loss-weight", type=float, default=0.05)
+    parser.add_argument("--grad-clip-norm", type=float, default=1.0)
     return parser.parse_args()
 
 
@@ -91,5 +92,6 @@ if __name__ == "__main__":
             local_margin=args.local_margin,
             conditional_instance_loss_weight=args.conditional_instance_loss_weight,
             structured_auxiliary_loss_weight=args.structured_auxiliary_loss_weight,
+            grad_clip_norm=args.grad_clip_norm,
         )
     )
