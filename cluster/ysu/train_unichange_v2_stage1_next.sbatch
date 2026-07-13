@@ -23,9 +23,10 @@ MEMORY_REPORT="${MEMORY_REPORT:?Set MEMORY_REPORT to the successful Stage-1-next
 CURRENT_COMMIT="$(git rev-parse HEAD)"
 TEMPORAL_DEPTH="${TEMPORAL_DEPTH:-6}"
 TEXT_MAX_LENGTH="${TEXT_MAX_LENGTH:-256}"
+MINIMUM_GLOBAL_BATCH="${MINIMUM_GLOBAL_BATCH:-32}"
 
 GATE_ARGS=(
-  "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 32 "$TEMPORAL_DEPTH"
+  "$SMOKE_REPORT" "$MEMORY_REPORT" "$CURRENT_COMMIT" 1 "$MINIMUM_GLOBAL_BATCH" "$TEMPORAL_DEPTH"
   --expected-text-max-length "$TEXT_MAX_LENGTH"
 )
 if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
@@ -58,8 +59,8 @@ fi
 
 BATCH_SIZE="$($PYTHON "$CODE_ROOT/scripts/ucv2_stage1_next_readiness_gate.py" "${GATE_ARGS[@]}")"
 BATCH_SIZE="${BATCH_SIZE_OVERRIDE:-$BATCH_SIZE}"
-if (( BATCH_SIZE < 32 )); then
-  echo "One-H100 Stage-1-next training requires actual batch size at least 32" >&2
+if (( BATCH_SIZE < MINIMUM_GLOBAL_BATCH )); then
+  echo "One-H100 Stage-1-next training requires actual batch size at least ${MINIMUM_GLOBAL_BATCH}" >&2
   exit 2
 fi
 

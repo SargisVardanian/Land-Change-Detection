@@ -15,6 +15,11 @@ source "${SLURM_SUBMIT_DIR}/cluster/ysu/common_env.sh"
 export CODE_ROOT="${CODE_ROOT_OVERRIDE:-$SLURM_SUBMIT_DIR}"
 export MAX_STEPS="${MAX_STEPS:-500}"
 export EPOCHS="${EPOCHS:-2}"
+# The shape-only probe passed 32, but the first full optimizer-backed pilot
+# reached 78 GiB and OOMed. Batch 24 is the single evidence-based fallback.
+export MINIMUM_GLOBAL_BATCH="${MINIMUM_GLOBAL_BATCH:-24}"
+export BATCH_SIZE_OVERRIDE="${BATCH_SIZE_OVERRIDE:-24}"
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export ENABLE_PATCH_RERANKER=1
 export QCPR_ARCHITECTURE_VERSION="${QCPR_ARCHITECTURE_VERSION:-v2}"
 export ENABLE_TEMPORAL_EXPLANATION_CHANNELS="${ENABLE_TEMPORAL_EXPLANATION_CHANNELS:-1}"
