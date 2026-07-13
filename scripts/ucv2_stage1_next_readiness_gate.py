@@ -254,6 +254,14 @@ def main() -> int:
                 errors.append("mixed patch-reranker smoke must select S2Looking")
             if int(smoke.get("retrieval_supervised_pairs", 0)) >= int(smoke.get("total_pairs_seen", 0)):
                 errors.append("mixed S2Looking smoke must exclude at least one pair from retrieval supervision")
+            localization = smoke.get("localization_validation_smoke", {})
+            if not isinstance(localization, dict) or localization.get("required") is not True:
+                errors.append("mixed S2Looking smoke must require dedicated localization validation")
+            elif localization.get("configured") is not True or localization.get("passed") is not True:
+                errors.append("mixed S2Looking localization validation smoke must be configured and pass")
+            localization_coverage = smoke.get("localization_validation_coverage", {})
+            if not isinstance(localization_coverage, dict) or localization_coverage.get("expected_datasets") != ["s2looking"]:
+                errors.append("localization validation must expect only S2Looking")
     recommended = int(memory.get("recommended_batch_size") or 0)
     required_local = math.ceil(minimum_global_batch / world_size)
     if recommended < required_local:

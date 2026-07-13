@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import torch
 from torch import Tensor
+from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
 import train_unichange_v2_retrieval as base
@@ -15,7 +16,7 @@ from land_change_detection.models.retrieval_heads import (
     stable_caption_group_ids,
 )
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
-from land_change_detection.models.qcpr import QCPRPatchReranker
+from land_change_detection.models.qcpr import QCPRPatchReranker, _structured_signature, structured_hard_negative_masks
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class RetrievalCorpus:
     score_mode: str = "global"
     qcpr_architecture_version: str = "v1"
     pair_masks: Tensor | None = None
+    changed_masks: Tensor | None = None
     segmentation_target_kinds: list[str] | None = None
     segmentation_weights: Tensor | None = None
     change_types: list[str | None] | None = None
@@ -82,6 +84,7 @@ def collect_retrieval_corpus(
     caption_group_ids_all: list[Tensor] = []
     pair_mask_fractions: list[Tensor] = []
     pair_masks: list[Tensor] = []
+    changed_masks: list[Tensor] = []
     segmentation_target_kinds: list[str] = []
     segmentation_weights: list[Tensor] = []
     change_types: list[str | None] = []
@@ -110,6 +113,9 @@ def collect_retrieval_corpus(
             raw_masks = batch.get("masks")
             if raw_masks is not None:
                 pair_masks.append(torch.as_tensor(raw_masks, dtype=torch.float32).cpu())
+            raw_changed_masks = batch.get("changed_masks")
+            if raw_changed_masks is not None:
+                changed_masks.append(torch.as_tensor(raw_changed_masks, dtype=torch.float32).cpu())
             segmentation_target_kinds.extend(str(value) for value in batch.get("segmentation_target_kinds", ["none"] * len(batch_pair_ids)))
             raw_weights = batch.get("segmentation_weights")
             segmentation_weights.append(
@@ -187,6 +193,7 @@ def collect_retrieval_corpus(
         score_mode=("qcpr_v2" if patch_tokens and getattr(getattr(model, "patch_reranker", None), "architecture_version", "v1") == "v2" else "fused" if patch_tokens and mask_query_embeddings else "global"),
         qcpr_architecture_version=str(getattr(getattr(model, "patch_reranker", None), "architecture_version", "v1")),
         pair_masks=torch.cat(pair_masks) if pair_masks else None,
+        changed_masks=torch.cat(changed_masks) if changed_masks else None,
         segmentation_target_kinds=segmentation_target_kinds,
         segmentation_weights=torch.cat(segmentation_weights) if segmentation_weights else None,
         change_types=[str(value) if value is not None else None for value in change_types],
@@ -401,6 +408,7 @@ def similarity_matrix(
     if corpus.patch_tokens is not None and (has_v1 or has_v2):
         patches = corpus.patch_tokens.float()
         local = torch.empty_like(output)
+        token_patch = torch.empty_like(output) if has_v2 else None
         for query_start in range(0, query_count, query_chunk_size):
             query_end = min(query_start + query_chunk_size, query_count)
             for candidate_start in range(0, candidate_count, candidate_chunk_size):
@@ -423,9 +431,91 @@ def similarity_matrix(
                     pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
                     local_chunk = torch.einsum("qd,qbd->qb", text[query_start:query_end].to(reranker_device), pooled)
                     local[query_start:query_end, candidate_start:candidate_end] = local_chunk.detach().cpu()
+                    top_k = max(1, min(4, logits.shape[-1]))
+                    token_patch[query_start:query_end, candidate_start:candidate_end] = (
+                        logits.sigmoid().topk(top_k, dim=-1).values.mean(dim=-1).detach().cpu()
+                    )
                 del logits
+        if has_v2:
+            reranker = corpus.qcpr_reranker
+            raw = torch.stack((output, local, token_patch), dim=-1)
+            calibrated = raw * reranker.branch_log_scales.detach().cpu().exp() + reranker.branch_biases.detach().cpu()
+            return torch.einsum("qbk,k->qb", calibrated, reranker.fusion_logits.detach().cpu().softmax(dim=0))
         return corpus.qcpr_alpha * output + corpus.qcpr_beta * local
     return output
+
+
+def retrieval_branch_similarity_matrices(
+    corpus: RetrievalCorpus,
+    *,
+    query_chunk_size: int | None = None,
+    candidate_chunk_size: int | None = None,
+) -> dict[str, Tensor]:
+    """Return independently inspectable global/local/token-patch/fused score matrices."""
+    _validate_corpus(corpus)
+    query_count = int(corpus.text_embeddings.shape[0])
+    candidate_count = int(corpus.pair_embeddings.shape[0])
+    query_chunk_size = query_chunk_size if query_chunk_size and query_chunk_size > 0 else max(query_count, 1)
+    candidate_chunk_size = candidate_chunk_size if candidate_chunk_size and candidate_chunk_size > 0 else max(candidate_count, 1)
+    global_scores = corpus.text_embeddings.float() @ corpus.pair_embeddings.float().T
+    branches = {"global": global_scores}
+    has_v1 = corpus.qcpr_architecture_version == "v1" and corpus.mask_query_embeddings is not None
+    has_v2 = (
+        corpus.qcpr_architecture_version == "v2"
+        and corpus.text_token_embeddings is not None
+        and corpus.text_attention_mask is not None
+        and corpus.qcpr_reranker is not None
+    )
+    if corpus.patch_tokens is None or not (has_v1 or has_v2):
+        branches["fused"] = global_scores
+        return branches
+    local_scores = torch.empty_like(global_scores)
+    token_patch_scores = torch.empty_like(global_scores) if has_v2 else None
+    for query_start in range(0, query_count, query_chunk_size):
+        query_end = min(query_start + query_chunk_size, query_count)
+        for candidate_start in range(0, candidate_count, candidate_chunk_size):
+            candidate_end = min(candidate_start + candidate_chunk_size, candidate_count)
+            patches = corpus.patch_tokens[candidate_start:candidate_end].float()
+            if has_v1:
+                logits = torch.einsum(
+                    "qd,bnd->qbn",
+                    corpus.mask_query_embeddings[query_start:query_end].float(),
+                    patches,
+                )
+                local_scores[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
+            else:
+                reranker = corpus.qcpr_reranker
+                device = next(reranker.parameters()).device
+                descriptor = patches.to(device)
+                token = F.normalize(
+                    reranker.token_projection(corpus.text_token_embeddings[query_start:query_end].to(device)), dim=-1
+                )
+                attention = corpus.text_attention_mask[query_start:query_end].to(device)
+                affinity = torch.einsum("bnd,qld->qbnl", descriptor, token) / reranker.logit_scale
+                affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
+                attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
+                expanded = descriptor.unsqueeze(0).expand(query_end - query_start, -1, -1, -1)
+                logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
+                pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
+                local_scores[query_start:query_end, candidate_start:candidate_end] = torch.einsum(
+                    "qd,qbd->qb", corpus.text_embeddings[query_start:query_end].to(device), pooled
+                ).detach().cpu()
+                top_k = max(1, min(4, logits.shape[-1]))
+                token_patch_scores[query_start:query_end, candidate_start:candidate_end] = (
+                    logits.sigmoid().topk(top_k, dim=-1).values.mean(dim=-1).detach().cpu()
+                )
+    branches["local"] = local_scores
+    if has_v2:
+        reranker = corpus.qcpr_reranker
+        branches["token_patch"] = token_patch_scores
+        raw = torch.stack((global_scores, local_scores, token_patch_scores), dim=-1)
+        calibrated = raw * reranker.branch_log_scales.detach().cpu().exp() + reranker.branch_biases.detach().cpu()
+        branches["fused"] = torch.einsum(
+            "qbk,k->qb", calibrated, reranker.fusion_logits.detach().cpu().softmax(dim=0)
+        )
+    else:
+        branches["fused"] = corpus.qcpr_alpha * global_scores + corpus.qcpr_beta * local_scores
+    return branches
 
 
 def _safe_metric_name(value: str) -> str:
@@ -543,6 +633,38 @@ def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
     return metrics
 
 
+def temporal_channel_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
+    metrics: dict[str, float | int] = {}
+    if (
+        corpus.temporal_explanation_logits is None
+        or corpus.pair_masks is None
+        or corpus.segmentation_weights is None
+        or corpus.change_types is None
+    ):
+        for name in ("changed", "appeared", "disappeared"):
+            metrics.update({f"mask_temporal_{name}_{key}": value for key, value in _mask_metric_summary(torch.empty(0, 1), torch.empty(0, 1)).items()})
+        return metrics
+    logits = corpus.temporal_explanation_logits.float()
+    patch_count = logits.shape[1]
+    side = int(round(patch_count**0.5))
+    if side * side != patch_count:
+        raise ValueError("Temporal channel patch grid must be square")
+    pair_targets = F.interpolate(corpus.pair_masks[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1)
+    changed_source = corpus.changed_masks if corpus.changed_masks is not None else corpus.pair_masks
+    changed_targets = F.interpolate(changed_source[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1)
+    supervised = corpus.segmentation_weights > 0
+    probabilities = logits.sigmoid().permute(0, 2, 1)
+    specifications = {
+        "changed": (0, supervised, changed_targets),
+        "appeared": (1, supervised & torch.tensor([value == "appeared" for value in corpus.change_types]), pair_targets),
+        "disappeared": (2, supervised & torch.tensor([value == "disappeared" for value in corpus.change_types]), pair_targets),
+    }
+    for name, (channel, keep, targets) in specifications.items():
+        summary = _mask_metric_summary(probabilities[keep, channel], targets[keep])
+        metrics.update({f"mask_temporal_{name}_{key}": value for key, value in summary.items()})
+    return metrics
+
+
 def stable_ranked_candidate_indices(similarities: Tensor, candidate_tie_keys: Tensor) -> Tensor:
     if similarities.ndim != 2:
         raise ValueError("similarities must be a rank-2 matrix")
@@ -587,6 +709,128 @@ def compute_retrieval_ranks(
         positive_counts=positive_counts,
         candidate_tie_keys=tie_keys,
     )
+
+
+def _score_distribution(values: Tensor, prefix: str) -> dict[str, float | int]:
+    finite = values.float()[torch.isfinite(values)]
+    if finite.numel() == 0:
+        return {f"{prefix}count": 0, f"{prefix}mean": 0.0, f"{prefix}p10": 0.0, f"{prefix}p50": 0.0, f"{prefix}p90": 0.0}
+    return {
+        f"{prefix}count": int(finite.numel()),
+        f"{prefix}mean": float(finite.mean().item()),
+        f"{prefix}p10": float(torch.quantile(finite, 0.1).item()),
+        f"{prefix}p50": float(torch.quantile(finite, 0.5).item()),
+        f"{prefix}p90": float(torch.quantile(finite, 0.9).item()),
+    }
+
+
+def _calibration_metrics(scores: Tensor, relevance: Tensor, bins: int = 10) -> dict[str, float]:
+    probabilities = scores.float().sigmoid().flatten()
+    labels = relevance.bool().float().flatten()
+    brier = (probabilities - labels).square().mean()
+    ece = probabilities.new_zeros(())
+    for index in range(bins):
+        lower = index / bins
+        upper = (index + 1) / bins
+        keep = (probabilities >= lower) & (probabilities < upper if index < bins - 1 else probabilities <= upper)
+        if torch.any(keep):
+            ece = ece + keep.float().mean() * (probabilities[keep].mean() - labels[keep].mean()).abs()
+    return {"ECE": float(ece.item()), "Brier": float(brier.item())}
+
+
+def _structured_attribute_matches(
+    corpus: RetrievalCorpus,
+    ranked: Tensor,
+) -> dict[str, float | int]:
+    candidate_captions = [""] * len(corpus.pair_ids)
+    for caption, pair_index in zip(corpus.captions, corpus.caption_to_pair.tolist(), strict=True):
+        if not candidate_captions[int(pair_index)]:
+            candidate_captions[int(pair_index)] = caption
+    query_signatures = [_structured_signature(caption) for caption in corpus.captions]
+    candidate_signatures = [_structured_signature(caption) for caption in candidate_captions]
+    attribute_keys = {
+        "object": "objects",
+        "direction": "direction",
+        "location": "locations",
+        "count": "counts",
+        "relation": "relation",
+    }
+    output: dict[str, float | int] = {}
+    for label, key in attribute_keys.items():
+        eligible = []
+        matches = {1: [], 5: [], 10: []}
+        for query_index, query in enumerate(query_signatures):
+            query_value = query[key]
+            present = bool(query_value) and query_value not in {"unknown", "none"}
+            if not present:
+                continue
+            eligible.append(query_index)
+            for k in matches:
+                found = False
+                for candidate_index in ranked[query_index, : min(k, ranked.shape[1])].tolist():
+                    candidate_value = candidate_signatures[int(candidate_index)][key]
+                    if isinstance(query_value, frozenset):
+                        found = bool(query_value & candidate_value)
+                    else:
+                        found = query_value == candidate_value
+                    if found:
+                        break
+                matches[k].append(found)
+        output[f"{label}_match_count"] = len(eligible)
+        for k, values in matches.items():
+            output[f"{label}_match_R@{k}"] = float(sum(values) / len(values)) if values else 0.0
+    return output
+
+
+def retrieval_branch_diagnostics(
+    corpus: RetrievalCorpus,
+    branch_scores: dict[str, Tensor],
+) -> dict[str, dict[str, float | int | bool]]:
+    duplicate_positive = build_duplicate_aware_positive_mask(corpus)
+    teacher = corpus.teacher_text_embeddings if corpus.teacher_text_embeddings is not None else corpus.text_embeddings
+    semantic_relevance = semantic_teacher_relevance_matrix(
+        teacher,
+        corpus.captions,
+        corpus.caption_to_pair.long(),
+        corpus.caption_group_ids.long(),
+        pair_count=len(corpus.pair_ids),
+        top_k=0,
+    )
+    hard_masks = structured_hard_negative_masks(corpus.captions, corpus.caption_to_pair, len(corpus.pair_ids))
+    hard_negative = torch.stack(tuple(hard_masks.values())).any(dim=0)
+    tie_keys = _candidate_tie_keys(corpus.pair_ids, len(corpus.pair_ids))
+    random_negative_indices = []
+    for query_index in range(len(corpus.captions)):
+        candidates = tie_keys.argsort(stable=True)
+        choice = next((int(index) for index in candidates.tolist() if not duplicate_positive[query_index, index]), -1)
+        random_negative_indices.append(choice)
+    output: dict[str, dict[str, float | int | bool]] = {}
+    for branch, scores in branch_scores.items():
+        ranked = stable_ranked_candidate_indices(scores, tie_keys)
+        inverse = torch.empty_like(ranked)
+        inverse.scatter_(1, ranked, torch.arange(ranked.shape[1]).view(1, -1).expand_as(ranked))
+        duplicate_ranks = inverse.masked_fill(~duplicate_positive, ranked.shape[1]).amin(dim=1) + 1
+        exact_ranks = inverse[torch.arange(ranked.shape[0]), corpus.caption_to_pair.long()] + 1
+        positive_scores = scores[duplicate_positive]
+        random_values = [scores[index, candidate] for index, candidate in enumerate(random_negative_indices) if candidate >= 0]
+        random_scores = torch.stack(random_values) if random_values else scores.new_empty(0)
+        hard_scores = scores[hard_negative]
+        best_positive = scores.masked_fill(~duplicate_positive, float("-inf")).max(dim=1).values
+        best_negative = scores.masked_fill(duplicate_positive, float("-inf")).max(dim=1).values
+        ranked_scores = scores.gather(1, ranked)
+        metrics: dict[str, float | int | bool] = {}
+        metrics.update(_semantic_retrieval_summary(scores, semantic_relevance))
+        metrics.update(_rank_summary(duplicate_ranks, "duplicate_aware_"))
+        metrics.update(_rank_summary(exact_ranks, "exact_pair_"))
+        metrics.update(_score_distribution(positive_scores, "positive_score_"))
+        metrics.update(_score_distribution(random_scores, "random_negative_score_"))
+        metrics.update(_score_distribution(hard_scores, "hard_negative_score_"))
+        metrics.update(_margin_summary(best_positive - best_negative, "best_positive_minus_best_negative_"))
+        metrics.update(_margin_summary(ranked_scores[:, 0] - ranked_scores[:, 1], "top1_minus_top2_"))
+        metrics.update(_calibration_metrics(scores, duplicate_positive))
+        metrics.update(_structured_attribute_matches(corpus, ranked))
+        output[branch] = metrics
+    return output
 
 
 def compute_retrieval_metrics(
@@ -871,6 +1115,7 @@ def compute_retrieval_metrics(
             metrics.update(_masked_rank_summary(exact, mask, f"{prefix}exact_"))
 
     metrics.update(supervised_mask_metrics(corpus))
+    metrics.update(temporal_channel_mask_metrics(corpus))
 
     return metrics, similarities
 

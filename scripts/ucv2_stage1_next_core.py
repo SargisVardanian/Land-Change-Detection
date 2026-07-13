@@ -20,9 +20,17 @@ from land_change_detection.models.retrieval_heads import (
     classify_caption_semantics,
     normalize_caption_text,
     semantic_text_to_pair_set_loss,
+    semantic_teacher_relevance_matrix,
     stable_caption_group_ids,
+    structured_fna_relevance_matrix,
 )
-from land_change_detection.models.qcpr import segmentation_loss_components, temporal_channel_loss_components
+from land_change_detection.models.qcpr import (
+    conditional_instance_discrimination_loss,
+    local_positive_negative_margin_loss,
+    segmentation_loss_components,
+    structured_auxiliary_evidence_loss,
+    temporal_channel_loss_components,
+)
 from land_change_detection.run_metadata import file_sha256, path_fingerprint
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import (
@@ -66,6 +74,7 @@ class Stage1NextConfig:
     synthetic_data: bool = False
     train_manifests: tuple[str, ...] = ()
     val_manifests: tuple[str, ...] = ()
+    localization_val_manifests: tuple[str, ...] = ()
     dataset_config: str | None = None
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45")
     allowed_caption_sources: tuple[str, ...] = ()
@@ -113,6 +122,10 @@ class Stage1NextConfig:
     disappeared_channel_loss_weight: float = 0.2
     temporal_reversal_consistency_loss_weight: float = 0.05
     structured_fna_weight: float = 0.0
+    local_margin_loss_weight: float = 0.1
+    local_margin: float = 0.1
+    conditional_instance_loss_weight: float = 0.01
+    structured_auxiliary_loss_weight: float = 0.05
 
 
 class FrequencyBalancedCaptionCollator:
@@ -428,9 +441,37 @@ def save_checkpoint(
     metrics: dict[str, Any],
     selection_metric: str | None = None,
     selection_value: float | None = None,
+    temporal_supervised_pairs: int = 0,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + f".tmp.{os.getpid()}")
+    temporal_head = getattr(getattr(model, "patch_reranker", None), "temporal_channel_head", None)
+    temporal_gradients = [] if temporal_head is None else [parameter.grad for parameter in temporal_head.parameters() if parameter.requires_grad]
+    temporal_gradient_finite = bool(temporal_gradients) and all(
+        gradient is not None and torch.isfinite(gradient).all().item() for gradient in temporal_gradients
+    )
+    temporal_gradient_nonzero = bool(temporal_gradients) and any(
+        gradient is not None and torch.any(gradient != 0).item() for gradient in temporal_gradients
+    )
+    temporal_channels_available = config.qcpr_architecture_version == "v2"
+    temporal_channels_trained = bool(
+        temporal_channels_available
+        and config.enable_temporal_explanation_channels
+        and temporal_supervised_pairs > 0
+        and temporal_gradient_finite
+        and temporal_gradient_nonzero
+    )
+    temporal_channel_provenance = {
+        "supervision": {
+            "enabled": bool(config.enable_temporal_explanation_channels),
+            "supervised_pairs": int(temporal_supervised_pairs),
+            "sources": ["query-specific appeared/disappeared labels", "generic changed masks"],
+        },
+        "gradients": {
+            "temporal_channel_head_finite": temporal_gradient_finite,
+            "temporal_channel_head_nonzero": temporal_gradient_nonzero,
+        },
+    }
     torch.save(
         {
             "stage1_next": True,
@@ -447,6 +488,9 @@ def save_checkpoint(
             "metrics": metrics,
             "selection_metric": selection_metric,
             "selection_value": selection_value,
+            "temporal_channels_available": temporal_channels_available,
+            "temporal_channels_trained": temporal_channels_trained,
+            "temporal_channel_provenance": temporal_channel_provenance,
         },
         tmp,
     )
@@ -495,6 +539,8 @@ def validate_config(config: Stage1NextConfig) -> None:
         raise ValueError("QCPR loss weights must be non-negative")
     if not 0.0 <= config.structured_fna_weight <= 1.0:
         raise ValueError("structured_fna_weight must be in [0, 1]")
+    if config.local_margin_loss_weight < 0 or config.local_margin < 0 or config.conditional_instance_loss_weight < 0 or config.structured_auxiliary_loss_weight < 0:
+        raise ValueError("QCPR ranking auxiliary loss weights and margins must be non-negative")
     if config.text_to_pair_weight + config.pair_to_text_weight <= 0:
         raise ValueError("at least one loss direction weight must be positive")
     if sorted(config.mask_fraction_boundaries) != list(config.mask_fraction_boundaries):
@@ -512,10 +558,14 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
     val_manifests = tuple(config_val or config.val_manifests)
     if config_weights:
         object.__setattr__(config, "dataset_sampling_weights", tuple(f"{name}={value}" for name, value in sorted(config_weights.items())))
-    for key in ("allowed_caption_sources", "semantic_soft_target_weight", "semantic_teacher_top_k", "semantic_teacher_temperature", "structured_fna_weight"):
+    for key in (
+        "allowed_caption_sources", "localization_val_manifests", "semantic_soft_target_weight",
+        "semantic_teacher_top_k", "semantic_teacher_temperature", "structured_fna_weight",
+        "local_margin_loss_weight", "local_margin", "conditional_instance_loss_weight", "structured_auxiliary_loss_weight",
+    ):
         if key in config_options:
             value = config_options[key]
-            object.__setattr__(config, key, tuple(value) if key == "allowed_caption_sources" else value)
+            object.__setattr__(config, key, tuple(value) if key in {"allowed_caption_sources", "localization_val_manifests"} else value)
     if config_train:
         object.__setattr__(config, "train_manifests", tuple(config_train))
     if config_val:
@@ -640,33 +690,65 @@ def _dataset_index_counts(dataset: Dataset) -> dict[str, int]:
 def _mixed_subset_coverage_details(
     dataset: Dataset,
     *,
-    configured_weights: dict[str, float],
+    expected_datasets: set[str],
     max_pairs: int | None,
     subset_name: str,
 ) -> dict[str, Any]:
-    positive_weights = {str(name): float(value) for name, value in sorted(configured_weights.items()) if float(value) > 0.0}
+    expected = sorted(str(name) for name in expected_datasets)
     selected_counts = _dataset_index_counts(dataset)
     available_counts = dict(sorted(getattr(dataset, "selection_metadata", {}).get("available_counts_by_dataset", {}).items()))
+    if not available_counts:
+        available_counts = dict(selected_counts)
     omitted_datasets = list(getattr(dataset, "selection_metadata", {}).get("omitted_datasets", []))
-    missing_weighted = [name for name in positive_weights if selected_counts.get(name, 0) <= 0]
-    passed = not missing_weighted
+    missing_expected = [name for name in expected if selected_counts.get(name, 0) <= 0]
+    passed = not missing_expected
     details = {
         "subset_name": subset_name,
         "requested_max_pairs": max_pairs,
+        "expected_datasets": expected,
+        "available_datasets": sorted(name for name, count in available_counts.items() if int(count) > 0),
+        "selected_datasets": sorted(name for name, count in selected_counts.items() if int(count) > 0),
         "sample_counts_by_dataset": selected_counts,
-        "configured_positive_sampling_weights": positive_weights,
         "available_counts_by_dataset": available_counts,
         "omitted_datasets": omitted_datasets,
-        "missing_weighted_datasets": missing_weighted,
+        "missing_expected_datasets": missing_expected,
         "mixed_subset_coverage_passed": passed,
     }
     if not passed:
         raise ValueError(
-            f"Mixed-smoke coverage error for {subset_name}: max_pairs={max_pairs} omitted positively weighted datasets "
-            f"{missing_weighted}; selected_counts_by_dataset={selected_counts}; configured_positive_sampling_weights={positive_weights}; "
+            f"Mixed-smoke coverage error for {subset_name}: max_pairs={max_pairs}; "
+            f"expected_datasets={expected}; available_datasets={details['available_datasets']}; "
+            f"selected_datasets={details['selected_datasets']}; missing_expected_datasets={missing_expected}; "
+            f"available_counts_by_dataset={available_counts}; selected_counts_by_dataset={selected_counts}; "
             f"omitted_datasets={omitted_datasets}"
         )
     return details
+
+
+def _expected_train_datasets(full_train: Dataset, configured_weights: dict[str, float]) -> set[str]:
+    available = {name for name, count in _dataset_index_counts(full_train).items() if count > 0}
+    positive = {str(name) for name, weight in configured_weights.items() if float(weight) > 0.0}
+    return positive & available
+
+
+def _expected_manifest_datasets(full_dataset: Dataset) -> set[str]:
+    return {name for name, count in _dataset_index_counts(full_dataset).items() if count > 0}
+
+
+def build_localization_validation_datasets(config: Stage1NextConfig) -> tuple[Dataset | None, Dataset | None]:
+    manifests = tuple(config.localization_val_manifests)
+    if not manifests:
+        return None, None
+    allowed_sources = set(config.allowed_caption_sources) if config.allowed_caption_sources else None
+    common = {
+        "split": config.val_split,
+        "image_size": config.image_size,
+        "output_grid": config.output_grid,
+        "allowed_caption_sources": allowed_sources,
+    }
+    selected = TemporalCaptionManifestDataset(manifests, max_pairs=config.max_val_samples, **common)
+    full = TemporalCaptionManifestDataset(manifests, max_pairs=None, **common)
+    return selected, full
 
 
 def _sample_mask_fraction(sample: Any) -> float:
@@ -822,6 +904,10 @@ def run(
     qcpr_local_loss_weight: float = 1.0,
     query_segmentation_loss_weight: float = 0.2,
     structured_fna_weight: float = 0.0,
+    local_margin_loss_weight: float = 0.1,
+    local_margin: float = 0.1,
+    conditional_instance_loss_weight: float = 0.01,
+    structured_auxiliary_loss_weight: float = 0.05,
 ) -> int:
     device = strict_device("cuda")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -856,6 +942,10 @@ def run(
         qcpr_local_loss_weight=qcpr_local_loss_weight,
         query_segmentation_loss_weight=query_segmentation_loss_weight,
         structured_fna_weight=structured_fna_weight,
+        local_margin_loss_weight=local_margin_loss_weight,
+        local_margin=local_margin,
+        conditional_instance_loss_weight=conditional_instance_loss_weight,
+        structured_auxiliary_loss_weight=structured_auxiliary_loss_weight,
     )
     validate_config(config)
     base._set_seed(config.seed)
@@ -989,6 +1079,7 @@ def run(
 
     history_path = output_dir / "metrics_history.jsonl"
     epochs_since_composite = 0
+    temporal_supervised_pairs_total = 0
     for epoch in range(start_epoch, config.epochs):
         train_loader = make_train_loader(train, config, frequencies, epoch)
         torch.cuda.reset_peak_memory_stats(device)
@@ -1048,8 +1139,57 @@ def run(
                         structured_fna_weight=config.structured_fna_weight,
                         return_diagnostics=True,
                     )
+                    local_margin_loss = retrieval_loss.new_zeros(())
+                    conditional_identity_loss = retrieval_loss.new_zeros(())
+                    structured_auxiliary_loss = retrieval_loss.new_zeros(())
+                    if config.qcpr_architecture_version == "v2" and output.local_scores is not None:
+                        selected_local_scores = output.local_scores[selected_queries][:, selected_pairs]
+                        broad_semantic_positive_mask = structured_fna_relevance_matrix(
+                            selected_captions,
+                            selected_mapping,
+                            selected_groups,
+                            pair_count=len(selected_pairs),
+                        ) > 0
+                        broad_semantic_positive_mask |= semantic_teacher_relevance_matrix(
+                            output.teacher_text_embedding[selected_queries],
+                            selected_captions,
+                            selected_mapping,
+                            selected_groups,
+                            pair_count=len(selected_pairs),
+                            top_k=0,
+                        ) > 0
+                        local_margin_loss, local_margin_diagnostics = local_positive_negative_margin_loss(
+                            selected_local_scores,
+                            selected_mapping,
+                            selected_captions,
+                            margin=config.local_margin,
+                            latent_positive_mask=broad_semantic_positive_mask,
+                        )
+                        conditional_identity_loss = conditional_instance_discrimination_loss(
+                            selected_final_scores if selected_final_scores is not None else selected_local_scores,
+                            selected_mapping,
+                            broad_semantic_positive_mask,
+                        )
+                        loss_diagnostics.update(local_margin_diagnostics)
+                        auxiliary_names = {
+                            "S_object": output.object_scores,
+                            "S_direction": output.direction_scores,
+                            "S_location": output.location_scores,
+                            "S_count": output.count_scores,
+                            "S_relation": output.relation_scores,
+                        }
+                        if all(value is not None for value in auxiliary_names.values()):
+                            structured_auxiliary_loss, auxiliary_diagnostics = structured_auxiliary_evidence_loss(
+                                {name: value[selected_queries][:, selected_pairs] for name, value in auxiliary_names.items()},
+                                selected_mapping,
+                                selected_captions,
+                            )
+                            loss_diagnostics.update(auxiliary_diagnostics)
                 else:
                     retrieval_loss = output.pair_embedding.sum() * 0.0
+                    local_margin_loss = retrieval_loss.new_zeros(())
+                    conditional_identity_loss = retrieval_loss.new_zeros(())
+                    structured_auxiliary_loss = retrieval_loss.new_zeros(())
                     loss_diagnostics = {
                         "retrieval_supervised_pairs": 0,
                         "retrieval_supervised_queries": 0,
@@ -1090,6 +1230,7 @@ def run(
                         output.temporal_explanation_logits, batch["masks"], batch["changed_masks"], batch["segmentation_target_kinds"],
                         batch["segmentation_weights"], batch["change_types"], reverse_output.temporal_explanation_logits,
                     )
+                    temporal_supervised_pairs_total += int(temporal_losses["temporal_supervised_pairs"])
                 total_localization_loss = (
                     config.query_segmentation_loss_weight * total_segmentation_loss
                     + config.changed_channel_loss_weight * temporal_losses["changed_channel_loss"]
@@ -1097,11 +1238,20 @@ def run(
                     + config.disappeared_channel_loss_weight * temporal_losses["disappeared_channel_loss"]
                     + config.temporal_reversal_consistency_loss_weight * temporal_losses["temporal_reversal_consistency_loss"]
                 )
-                loss = config.qcpr_local_loss_weight * retrieval_loss + total_localization_loss
+                loss = (
+                    config.qcpr_local_loss_weight * retrieval_loss
+                    + config.local_margin_loss_weight * local_margin_loss
+                    + config.conditional_instance_loss_weight * conditional_identity_loss
+                    + config.structured_auxiliary_loss_weight * structured_auxiliary_loss
+                    + total_localization_loss
+                )
                 loss_diagnostics.update(
                     {
                         "retrieval_loss": float(retrieval_loss.detach().cpu()),
                         "qcpr_local_loss": float(retrieval_loss.detach().cpu()) if config.enable_patch_reranker else 0.0,
+                        "local_positive_negative_margin_loss": float(local_margin_loss.detach().cpu()),
+                        "conditional_instance_discrimination_loss": float(conditional_identity_loss.detach().cpu()),
+                        "structured_auxiliary_evidence_loss": float(structured_auxiliary_loss.detach().cpu()),
                         "query_segmentation_loss": float(segmentation["query_specific_segmentation_loss"].detach().cpu()),
                         "query_specific_segmentation_loss": float(segmentation["query_specific_segmentation_loss"].detach().cpu()),
                         "generic_change_segmentation_loss": float(segmentation["generic_change_segmentation_loss"].detach().cpu()),
@@ -1193,6 +1343,7 @@ def run(
                     step=step,
                     best_scores=best_scores,
                     metrics={},
+                    temporal_supervised_pairs=temporal_supervised_pairs_total,
                 )
             if config.max_steps is not None and step >= config.max_steps:
                 break
@@ -1276,6 +1427,7 @@ def run(
                     metrics=epoch_record,
                     selection_metric=name,
                     selection_value=score,
+                    temporal_supervised_pairs=temporal_supervised_pairs_total,
                 )
                 _append_history(
                     history_path,
@@ -1302,6 +1454,7 @@ def run(
                         metrics=epoch_record,
                         selection_metric="composite",
                         selection_value=score,
+                        temporal_supervised_pairs=temporal_supervised_pairs_total,
                     )
                     _append_history(
                         history_path,
@@ -1326,6 +1479,7 @@ def run(
             step=step,
             best_scores=best_scores,
             metrics=epoch_record,
+            temporal_supervised_pairs=temporal_supervised_pairs_total,
         )
         base._write_json(
             output_dir / "training_report.json",

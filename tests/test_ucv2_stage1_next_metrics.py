@@ -4,7 +4,14 @@ import torch
 from torch.nn import functional as F
 
 from land_change_detection.models.retrieval_heads import stable_caption_group_ids
-from ucv2_retrieval_metrics import RetrievalCorpus, compute_retrieval_metrics, compute_retrieval_ranks
+from land_change_detection.models.qcpr import QCPRPatchReranker
+from ucv2_retrieval_metrics import (
+    RetrievalCorpus,
+    compute_retrieval_metrics,
+    compute_retrieval_ranks,
+    retrieval_branch_diagnostics,
+    retrieval_branch_similarity_matrices,
+)
 
 
 def _tie_corpus() -> RetrievalCorpus:
@@ -157,6 +164,75 @@ def test_chunked_retrieval_matches_full_matrix_for_multiple_chunk_sizes():
         assert torch.equal(chunked.ranked_candidate_indices, full.ranked_candidate_indices)
         assert torch.equal(chunked.duplicate_aware_ranks, full.duplicate_aware_ranks)
         assert torch.equal(chunked.exact_pair_ranks, full.exact_pair_ranks)
+
+
+def test_branch_diagnostics_report_required_ranking_calibration_and_attributes():
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]), dim=-1),
+        text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]), dim=-1),
+        teacher_text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]), dim=-1),
+        caption_to_pair=torch.arange(3),
+        caption_group_ids=stable_caption_group_ids([
+            "two houses appeared at the top",
+            "two houses disappeared at the top",
+            "one road appeared at the bottom",
+        ]),
+        pair_ids=["a", "b", "c"],
+        captions=[
+            "two houses appeared at the top",
+            "two houses disappeared at the top",
+            "one road appeared at the bottom",
+        ],
+        pair_mask_fractions=torch.ones(3),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+    )
+    branches = retrieval_branch_similarity_matrices(corpus, query_chunk_size=1, candidate_chunk_size=1)
+    diagnostics = retrieval_branch_diagnostics(corpus, branches)
+    assert set(diagnostics) == {"global", "fused"}
+    for metrics in diagnostics.values():
+        for key in (
+            "semantic_recall@1", "semantic_recall@5", "semantic_recall@10", "semantic_nDCG@10",
+            "duplicate_aware_R@1", "exact_pair_R@1", "positive_score_mean",
+            "random_negative_score_p90", "hard_negative_score_p50",
+            "best_positive_minus_best_negative_mean", "top1_minus_top2_mean", "ECE", "Brier",
+            "object_match_R@5", "direction_match_R@5", "location_match_R@5", "count_match_R@5",
+            "relation_match_R@5",
+        ):
+            assert key in metrics
+
+
+def test_v2_global_local_token_and_fused_chunked_scores_match_unchunked() -> None:
+    torch.manual_seed(7)
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.randn(3, 8), dim=-1),
+        text_embeddings=F.normalize(torch.randn(2, 8), dim=-1),
+        teacher_text_embeddings=F.normalize(torch.randn(2, 8), dim=-1),
+        caption_to_pair=torch.tensor([0, 1]),
+        caption_group_ids=stable_caption_group_ids(["two houses appeared at the top", "one road disappeared"]),
+        pair_ids=["a", "b", "c"],
+        captions=["two houses appeared at the top", "one road disappeared"],
+        pair_mask_fractions=torch.ones(3),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        patch_tokens=F.normalize(torch.randn(3, 4, 8), dim=-1),
+        text_token_embeddings=F.normalize(torch.randn(2, 5, 8), dim=-1),
+        text_attention_mask=torch.ones(2, 5, dtype=torch.bool),
+        qcpr_architecture_version="v2",
+        qcpr_reranker=reranker,
+        score_mode="qcpr_v2",
+    )
+    full = retrieval_branch_similarity_matrices(corpus)
+    chunked = retrieval_branch_similarity_matrices(corpus, query_chunk_size=1, candidate_chunk_size=2)
+    assert set(full) == {"global", "local", "token_patch", "fused"}
+    for name in full:
+        assert torch.isfinite(full[name]).all()
+        assert torch.allclose(full[name], chunked[name], atol=1e-6, rtol=1e-6)
+    diagnostics = retrieval_branch_diagnostics(corpus, full)
+    assert set(diagnostics) == {"global", "local", "token_patch", "fused"}
 
 
 def test_metrics_are_derived_from_same_rank_tensor_and_are_monotonic():

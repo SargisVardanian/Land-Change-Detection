@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import resource
 import time
 from pathlib import Path
@@ -18,13 +19,20 @@ from torch.utils.data import DataLoader
 
 import train_unichange_v2_retrieval as base
 from land_change_detection.data.unichange_mci import UniChangeMciDataset
-from land_change_detection.models.retrieval_heads import normalize_caption_text
-from land_change_detection.models.qcpr import QCPRPatchReranker
+from land_change_detection.models.retrieval_heads import normalize_caption_text, semantic_teacher_relevance_matrix
+from land_change_detection.models.qcpr import QCPRPatchReranker, _structured_signature, structured_hard_negative_masks
+from land_change_detection.run_metadata import file_sha256
 from land_change_detection.temporal_caption_manifest import manifest_file_fingerprint
 from land_change_detection.training.temporal_caption_dataset import TemporalCaptionManifestDataset, load_dataset_config, parse_dataset_weights
 from land_change_detection.visualization import mask_rgba_overlay, rgb_absolute_difference
 from ucv2_cluster_common import build_model, strict_device
-from ucv2_retrieval_metrics import collect_retrieval_corpus, compute_retrieval_metrics, compute_retrieval_ranks
+from ucv2_retrieval_metrics import (
+    collect_retrieval_corpus,
+    compute_retrieval_metrics,
+    compute_retrieval_ranks,
+    retrieval_branch_diagnostics,
+    retrieval_branch_similarity_matrices,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,6 +75,17 @@ def _sample_paths(sample) -> tuple[str, str, str | None]:
     return str(sample.image_before), str(sample.image_after), str(sample.binary_change_mask)
 
 
+def _assert_no_nonfinite(value, path: str = "report") -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(f"Non-finite evaluation artifact value at {path}: {value}")
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _assert_no_nonfinite(item, f"{path}.{key}")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _assert_no_nonfinite(item, f"{path}[{index}]")
+
+
 def render_pair(axes, sample, heading: str, score: float | None = None) -> None:
     t1_path, t2_path, mask_path = _sample_paths(sample)
     t1 = load_rgb(t1_path)
@@ -95,6 +114,39 @@ def _candidate_mask(logits: torch.Tensor, shape: tuple[int, int]) -> np.ndarray:
     return torch.nn.functional.interpolate(
         logits.sigmoid().reshape(1, 1, side, side), size=shape, mode="bilinear", align_corners=False
     )[0, 0].detach().cpu().numpy()
+
+
+def temporal_channel_render_status(checkpoint: dict, architecture_version: str) -> dict[str, object]:
+    if architecture_version == "v1":
+        return {
+            "temporal_channels_available": False,
+            "temporal_channels_trained": False,
+            "label": "Unavailable for QCPR v1",
+            "supervision_provenance": None,
+            "gradient_provenance": None,
+        }
+    provenance = checkpoint.get("temporal_channel_provenance", {})
+    trained = bool(checkpoint.get("temporal_channels_trained", False))
+    return {
+        "temporal_channels_available": True,
+        "temporal_channels_trained": trained,
+        "label": "Temporal channels" if trained else "Untrained for QCPR v2",
+        "supervision_provenance": provenance.get("supervision"),
+        "gradient_provenance": provenance.get("gradients"),
+    }
+
+
+def render_temporal_channel_panels(axes, channel_maps: dict[str, np.ndarray], status: dict[str, object]) -> None:
+    can_explain = bool(status["temporal_channels_available"] and status["temporal_channels_trained"])
+    for column, channel_name in enumerate(("changed", "appeared", "disappeared")):
+        if can_explain:
+            axes[column].imshow(channel_maps[channel_name], cmap="magma", vmin=0, vmax=1)
+            axes[column].set_title(f"{channel_name} probability")
+        else:
+            axes[column].set_facecolor("#b8b8b8")
+            axes[column].text(0.5, 0.5, str(status["label"]), ha="center", va="center", wrap=True)
+            axes[column].set_title(channel_name)
+        axes[column].axis("off")
 
 
 def _result_logits(corpus, query_index: int, candidate_index: int) -> torch.Tensor:
@@ -283,6 +335,7 @@ def main() -> int:
         )
     model = build_model(config, device)
     model.load_state_dict(checkpoint["model"], strict=True)
+    temporal_channel_status = temporal_channel_render_status(checkpoint, config.qcpr_architecture_version)
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
     rank_result = compute_retrieval_ranks(
@@ -291,13 +344,23 @@ def main() -> int:
     metrics, similarities = compute_retrieval_metrics(
         corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size, rank_result=rank_result
     )
-    global_similarities = corpus.text_embeddings.float() @ corpus.pair_embeddings.float().T
-    local_similarities = None
-    if corpus.patch_tokens is not None and corpus.qcpr_beta > 0:
-        if corpus.qcpr_beta > 0:
-            local_similarities = (similarities - corpus.qcpr_alpha * global_similarities) / corpus.qcpr_beta
-        else:
-            local_similarities = torch.zeros_like(similarities)
+    branch_scores = retrieval_branch_similarity_matrices(
+        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
+    )
+    branch_metrics = retrieval_branch_diagnostics(corpus, branch_scores)
+    global_similarities = branch_scores["global"]
+    local_similarities = branch_scores.get("local")
+    if not torch.allclose(similarities, branch_scores["fused"], atol=1e-5, rtol=1e-5):
+        raise RuntimeError("Fused evaluator scores disagree with independently computed branch scores")
+    teacher_embeddings = corpus.teacher_text_embeddings if corpus.teacher_text_embeddings is not None else corpus.text_embeddings
+    semantic_relevance = semantic_teacher_relevance_matrix(
+        teacher_embeddings,
+        corpus.captions,
+        corpus.caption_to_pair.long(),
+        corpus.caption_group_ids.long(),
+        pair_count=len(corpus.pair_ids),
+        top_k=0,
+    ) > 0
     pair_index = {pair_id: index for index, pair_id in enumerate(corpus.pair_ids)}
     sample_by_id = _sample_map(dataset)
     query_items = _query_items(args, dataset, pair_index)
@@ -307,6 +370,55 @@ def main() -> int:
     overlay_dir = args.output_dir / "qcpr_mask_overlays"
     if local_similarities is not None:
         overlay_dir.mkdir(parents=True, exist_ok=True)
+    latent_positive_audit_path = args.output_dir / "latent_positive_audit.jsonl"
+    hard_negative_audit_path = args.output_dir / "hard_negative_audit.jsonl"
+    candidate_captions = [""] * len(corpus.pair_ids)
+    for caption, pair in zip(corpus.captions, corpus.caption_to_pair.tolist(), strict=True):
+        if not candidate_captions[int(pair)]:
+            candidate_captions[int(pair)] = caption
+    with latent_positive_audit_path.open("w", encoding="utf-8") as latent_handle:
+        for query_index, query_caption in enumerate(corpus.captions):
+            query_signature = _structured_signature(query_caption)
+            ranked = torch.argsort(branch_scores["fused"][query_index], descending=True, stable=True)[:10]
+            for candidate_index in ranked.tolist():
+                if semantic_relevance[query_index, candidate_index]:
+                    continue
+                candidate_signature = _structured_signature(candidate_captions[candidate_index])
+                failed = []
+                for attribute, key in (("object", "objects"), ("direction", "direction"), ("location", "locations"), ("count", "counts"), ("relation", "relation")):
+                    query_value, candidate_value = query_signature[key], candidate_signature[key]
+                    if not query_value or query_value in {"unknown", "none"}:
+                        continue
+                    matched = bool(query_value & candidate_value) if isinstance(query_value, frozenset) else query_value == candidate_value
+                    if not matched:
+                        failed.append(attribute)
+                latent_handle.write(json.dumps({
+                    "query_index": query_index,
+                    "query": query_caption,
+                    "candidate_index": candidate_index,
+                    "candidate_pair_id": corpus.pair_ids[candidate_index],
+                    "candidate_caption": candidate_captions[candidate_index],
+                    "fused_score": float(branch_scores["fused"][query_index, candidate_index]),
+                    "semantic": False,
+                    "relevance_rules_failed": failed,
+                    "training_negative": False,
+                }) + "\n")
+    hard_masks = structured_hard_negative_masks(corpus.captions, corpus.caption_to_pair, len(corpus.pair_ids))
+    with hard_negative_audit_path.open("w", encoding="utf-8") as hard_handle:
+        for category, mask in hard_masks.items():
+            for query_index in torch.nonzero(mask.any(dim=1), as_tuple=False).flatten().tolist():
+                candidate_indices = torch.nonzero(mask[query_index], as_tuple=False).flatten()
+                candidate_index = int(candidate_indices[branch_scores["fused"][query_index, candidate_indices].argmax()].item())
+                hard_handle.write(json.dumps({
+                    "category": category,
+                    "query_index": query_index,
+                    "query": corpus.captions[query_index],
+                    "candidate_index": candidate_index,
+                    "candidate_pair_id": corpus.pair_ids[candidate_index],
+                    "candidate_caption": candidate_captions[candidate_index],
+                    "scores": {name: float(values[query_index, candidate_index]) for name, values in branch_scores.items()},
+                    "excluded_as_latent_positive": bool(semantic_relevance[query_index, candidate_index]),
+                }) + "\n")
     records = []
     relevance_ranks = []
     exact_ranks = []
@@ -327,12 +439,13 @@ def main() -> int:
         if not caption_candidates:
             raise RuntimeError(f"Missing query caption for {query_pair_id}")
         caption_index = caption_candidates[0]
-        relevant_mask = rank_result.positive_mask[caption_index]
+        relevant_mask = semantic_relevance[caption_index]
         scores = similarities[caption_index]
         global_scores = global_similarities[caption_index]
         local_scores = local_similarities[caption_index] if local_similarities is not None else None
         order = rank_result.ranked_candidate_indices[caption_index]
-        relevant_rank = int(rank_result.duplicate_aware_ranks[caption_index].item())
+        relevant_positions = torch.nonzero(relevant_mask[order], as_tuple=False).flatten()
+        relevant_rank = int(relevant_positions[0].item() + 1) if relevant_positions.numel() else len(corpus.pair_ids) + 1
         exact_rank = int(rank_result.exact_pair_ranks[caption_index].item())
         relevance_ranks.append(relevant_rank)
         exact_ranks.append(exact_rank)
@@ -417,9 +530,7 @@ def main() -> int:
                 panel_axes[1, 1].imshow(t2); panel_axes[1, 1].imshow(soft, cmap="magma", alpha=.55, vmin=0, vmax=1); panel_axes[1, 1].set_title("Soft mask over T2")
                 panel_axes[1, 2].imshow(thresholded, cmap="gray"); panel_axes[1, 2].set_title(f"Thresholded @{args.mask_threshold:g}")
                 panel_axes[1, 3].axis("off"); panel_axes[1, 3].text(0, .95, f"pair_id: {retrieved_id}\nS_global={global_score:.4f}\nS_local={local_score:.4f}\nS_final={score:.4f}\nsemantic={is_relevant}\nexact={is_exact}", va="top")
-                for column, channel_name in enumerate(("changed", "appeared", "disappeared")):
-                    panel_axes[2, column].imshow(render_channels[channel_name], cmap="magma", vmin=0, vmax=1)
-                    panel_axes[2, column].set_title(f"{channel_name} probability")
+                render_temporal_channel_panels(panel_axes[2, :3], render_channels, temporal_channel_status)
                 panel_axes[2, 3].axis("off")
 
                 for axis in panel_axes.flat: axis.axis("off")
@@ -434,7 +545,7 @@ def main() -> int:
                     "per_result_Dice": dice, "per_result_IoU": iou, "top_regions": regions,
                     **evidence,
                 })
-                if corpus.temporal_explanation_logits is not None:
+                if corpus.temporal_explanation_logits is not None and temporal_channel_status["temporal_channels_trained"]:
                     channels = corpus.temporal_explanation_logits[int(retrieved_index)].sigmoid().T
                     channel_paths = {}
                     for channel_index, channel_name in enumerate(("changed", "appeared", "disappeared")):
@@ -495,28 +606,70 @@ def main() -> int:
         "candidate_chunk_size": args.candidate_chunk_size,
         "num_queries": int(corpus.text_embeddings.shape[0]),
         "num_candidates": int(corpus.pair_embeddings.shape[0]),
+        "metric_query_count": int(corpus.text_embeddings.shape[0]),
+        "rendered_query_count": len(records),
+        "candidate_count": int(corpus.pair_embeddings.shape[0]),
         "peak_cpu_rss_bytes": int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024),
         "peak_gpu_allocated_bytes": corpus.peak_allocated_vram_bytes,
         "peak_gpu_reserved_bytes": corpus.peak_reserved_vram_bytes,
         "evaluator_wall_seconds": float(time.perf_counter() - evaluation_started),
+        "evaluation_wall_seconds": float(time.perf_counter() - evaluation_started),
         "ranking_passes": 1,
         "checkpoint": str(args.checkpoint),
+        "checkpoint_sha256": file_sha256(args.checkpoint),
         "stage1_next": bool(checkpoint.get("stage1_next")),
         "checkpoint_epoch": checkpoint.get("epoch", checkpoint.get("epoch_index")),
         "checkpoint_step": checkpoint.get("step"),
         "split": args.split,
         **_eval_metadata(args, dataset, data_mode),
         "corpus_metrics": metrics,
+        "retrieval_branch_metrics": branch_metrics,
+        "hard_negative_audit_path": str(hard_negative_audit_path),
+        "latent_positive_audit_path": str(latent_positive_audit_path),
+        "retrieval_branch_comparison_path": str(args.output_dir / "retrieval_branch_comparison.json"),
+        "structured_retrieval_metrics_path": str(args.output_dir / "structured_retrieval_metrics.json"),
+        "score_calibration_path": str(args.output_dir / "score_calibration.json"),
         "gallery_metrics": gallery_metrics,
         "top_k": args.top_k,
         "patch_reranker_available": corpus.patch_tokens is not None,
         "qcpr_score_mode": corpus.score_mode,
+        "qcpr_architecture_version": corpus.qcpr_architecture_version,
+        **temporal_channel_status,
         **{
             key: value
             for key, value in metrics.items()
             if key.startswith("mask_") or key in {"predicted_mask_area_mean", "target_mask_area_mean"}
         },
     }
+    _assert_no_nonfinite(report)
+    (args.output_dir / "retrieval_branch_comparison.json").write_text(
+        json.dumps(branch_metrics, indent=2), encoding="utf-8"
+    )
+    structured_metrics = {
+        branch: {
+            key: value for key, value in values.items()
+            if any(key.startswith(prefix) for prefix in ("object_match_", "direction_match_", "location_match_", "count_match_", "relation_match_"))
+        }
+        for branch, values in branch_metrics.items()
+    }
+    (args.output_dir / "structured_retrieval_metrics.json").write_text(
+        json.dumps(structured_metrics, indent=2), encoding="utf-8"
+    )
+    calibration = {
+        branch: {
+            key: value for key, value in values.items()
+            if key in {"ECE", "Brier"} or "score_" in key or "margin_" in key or key.startswith("top1_minus_top2_")
+        }
+        for branch, values in branch_metrics.items()
+    }
+    calibration["fusion_weights"] = (
+        corpus.qcpr_reranker.fusion_logits.detach().cpu().softmax(dim=0).tolist()
+        if corpus.qcpr_architecture_version == "v2" and corpus.qcpr_reranker is not None
+        else [corpus.qcpr_alpha, corpus.qcpr_beta]
+    )
+    (args.output_dir / "score_calibration.json").write_text(
+        json.dumps(calibration, indent=2), encoding="utf-8"
+    )
     (args.output_dir / "retrieval_metrics.json").write_text(
         json.dumps(report, indent=2),
         encoding="utf-8",

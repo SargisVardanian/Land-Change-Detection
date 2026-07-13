@@ -11,7 +11,7 @@ from PIL import Image
 from land_change_detection.models.qcpr import segmentation_loss_components
 from land_change_detection.temporal_caption_manifest import make_manifest_row
 from land_change_detection.training.temporal_caption_dataset import TemporalCaptionManifestDataset, _semantic_change_mask
-from ucv2_retrieval_metrics import RetrievalCorpus, supervised_mask_metrics
+from ucv2_retrieval_metrics import RetrievalCorpus, supervised_mask_metrics, temporal_channel_mask_metrics
 from ucv2_stage1_next_core import FrequencyBalancedCaptionCollator, retrieval_supervision_selection
 
 
@@ -170,6 +170,28 @@ def test_mask_metrics_exclude_unsupervised_rows_from_denominator():
     assert metrics["mask_IoU"] == 1.0
     assert metrics["predicted_mask_area_mean"] == 1.0
     assert metrics["target_mask_area_mean"] == 1.0
+
+
+def test_temporal_channel_metrics_report_changed_appeared_and_disappeared_separately():
+    logits = torch.full((2, 4, 3), -10.0)
+    logits[0, :, 0] = 10.0
+    logits[0, :, 1] = 10.0
+    logits[1, :, 0] = 10.0
+    logits[1, :, 2] = 10.0
+    corpus = RetrievalCorpus(
+        pair_embeddings=torch.ones(2, 1), text_embeddings=torch.ones(2, 1),
+        caption_to_pair=torch.tensor([0, 1]), caption_group_ids=torch.tensor([0, 1]),
+        pair_ids=["appeared", "disappeared"], captions=["appeared", "disappeared"],
+        pair_mask_fractions=torch.ones(2), encode_seconds=0.0,
+        peak_allocated_vram_bytes=0, peak_reserved_vram_bytes=0,
+        pair_masks=torch.ones(2, 2, 2), changed_masks=torch.ones(2, 2, 2),
+        segmentation_weights=torch.ones(2), segmentation_target_kinds=["query_specific", "query_specific"],
+        change_types=["appeared", "disappeared"], temporal_explanation_logits=logits,
+    )
+    metrics = temporal_channel_mask_metrics(corpus)
+    assert metrics["mask_temporal_changed_Dice"] == 1.0
+    assert metrics["mask_temporal_appeared_Dice"] == 1.0
+    assert metrics["mask_temporal_disappeared_Dice"] == 1.0
 
 
 def test_patchseg_readiness_requires_mixed_supervision_smoke_evidence(tmp_path: Path):

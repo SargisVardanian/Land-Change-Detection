@@ -9,6 +9,65 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 
+_TOKEN_GROUP_TERMS = {
+    "object": {"building", "buildings", "house", "houses", "road", "roads", "tree", "trees", "field", "fields", "water", "vegetation", "plant", "plants"},
+    "direction": {"appeared", "built", "constructed", "added", "disappeared", "removed", "demolished", "increased", "expanded", "decreased", "reduced"},
+    "location": {"top", "bottom", "upper", "lower", "left", "right", "center", "middle", "north", "south", "east", "west"},
+    "count": {"one", "two", "three", "four", "five", "single", "several", "many", "few"},
+    "relation": {"replace", "replaced", "replacing", "converted", "conversion", "place"},
+}
+
+
+def _clean_token(token: str) -> str:
+    return token.casefold().lstrip("▁ġ#").strip(".,:;!?()[]{}")
+
+
+def _token_group_metadata(tokenizer, input_ids: Tensor, attention_mask: Tensor, texts: list[str]) -> dict:
+    group_masks = {
+        name: torch.zeros_like(attention_mask, dtype=torch.bool)
+        for name in _TOKEN_GROUP_TERMS
+    }
+    for row, ids in enumerate(input_ids.detach().cpu().tolist()):
+        tokens = tokenizer.convert_ids_to_tokens(ids)
+        for column, token in enumerate(tokens):
+            cleaned = _clean_token(str(token))
+            for name, terms in _TOKEN_GROUP_TERMS.items():
+                if cleaned in terms or (name == "count" and cleaned.isdigit()):
+                    group_masks[name][row, column] = True
+    location_targets = torch.full((len(texts), 2), 0.5, device=attention_mask.device)
+    count_targets = torch.zeros(len(texts), device=attention_mask.device)
+    direction_targets = torch.zeros(len(texts), device=attention_mask.device, dtype=torch.long)
+    count_words = {"one": 1, "single": 1, "two": 2, "three": 3, "four": 4, "five": 5, "several": 3, "few": 3, "many": 5}
+    for row, text in enumerate(texts):
+        words = text.casefold().replace("-", " ").split()
+        if any(word.strip(".,:;!?()[]{}") in {"appeared", "built", "constructed", "added", "increased", "expanded"} for word in words):
+            direction_targets[row] = 1
+        elif any(word.strip(".,:;!?()[]{}") in {"disappeared", "removed", "demolished", "decreased", "reduced"} for word in words):
+            direction_targets[row] = -1
+        if any(word in words for word in ("top", "upper", "north")):
+            location_targets[row, 1] = 0.0
+        elif any(word in words for word in ("bottom", "lower", "south")):
+            location_targets[row, 1] = 1.0
+        if any(word in words for word in ("left", "west")):
+            location_targets[row, 0] = 0.0
+        elif any(word in words for word in ("right", "east")):
+            location_targets[row, 0] = 1.0
+        for word in words:
+            cleaned = word.strip(".,:;!?()[]{}")
+            if cleaned.isdigit():
+                count_targets[row] = float(cleaned)
+                break
+            if cleaned in count_words:
+                count_targets[row] = float(count_words[cleaned])
+                break
+    return {
+        "token_group_masks": group_masks,
+        "location_targets": location_targets,
+        "count_targets": count_targets,
+        "direction_targets": direction_targets,
+    }
+
+
 TextRole = Literal["query", "document"]
 GlobalProjectionMode = Literal["learned_projection", "matryoshka_truncate"]
 
@@ -145,6 +204,7 @@ class JinaV5TextEncoder(nn.Module):
             "token_dim": token_embeddings.shape[-1],
             "frozen": self.config.freeze,
             **self.config.metadata,
+            **_token_group_metadata(self.tokenizer, encoded["input_ids"], encoded["attention_mask"], texts),
         }
         return TextFeatures(
             global_embedding=global_embedding,

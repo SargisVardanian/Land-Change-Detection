@@ -23,6 +23,175 @@ def temporal_patch_descriptor(per_time_tokens: Tensor) -> Tensor:
     return torch.cat((before, after, after - before, (after - before).abs(), coords), dim=-1)
 
 
+def _structured_signature(caption: str) -> dict[str, object]:
+    from land_change_detection.models.retrieval_heads import classify_caption_semantics
+
+    semantics = classify_caption_semantics(caption)
+    if semantics["no_change"]:
+        direction = "no_change"
+    elif semantics["appeared"] or semantics["constructed"] or semantics["added"]:
+        direction = "appeared"
+    elif semantics["disappeared"] or semantics["demolished"] or semantics["removed"]:
+        direction = "disappeared"
+    elif semantics["increased"] or semantics["expanded"]:
+        direction = "increased"
+    elif semantics["decreased"] or semantics["reduced"]:
+        direction = "decreased"
+    else:
+        direction = "changed" if semantics["changed"] else "unknown"
+    normalized = caption.casefold()
+    relation = "replacement" if any(term in normalized for term in ("replace", "in place of", "converted to")) else "none"
+    aliases = {
+        "buildings": "building", "houses": "house", "roads": "road", "fields": "field",
+        "crops": "crop", "trees": "tree", "greenhouses": "greenhouse", "structures": "structure",
+    }
+    return {
+        "objects": frozenset(aliases.get(term, term) for term in semantics["object_terms"]),
+        "direction": direction,
+        "locations": frozenset(semantics["location_terms"]),
+        "counts": frozenset(semantics["count_terms"]),
+        "relation": relation,
+        "changed": bool(semantics["changed"]),
+        "no_change": bool(semantics["no_change"]),
+    }
+
+
+def structured_hard_negative_masks(captions: list[str], caption_to_pair: Tensor, pair_count: int) -> dict[str, Tensor]:
+    """Classify deterministic caption-level structured negatives for each query/candidate pair."""
+    if len(captions) != caption_to_pair.numel():
+        raise ValueError("captions and caption_to_pair must have the same query count")
+    candidate_captions = [""] * pair_count
+    for caption, pair_index in zip(captions, caption_to_pair.tolist(), strict=True):
+        if not candidate_captions[int(pair_index)]:
+            candidate_captions[int(pair_index)] = caption
+    queries = [_structured_signature(caption) for caption in captions]
+    candidates = [_structured_signature(caption) for caption in candidate_captions]
+    categories = {
+        name: torch.zeros(len(captions), pair_count, dtype=torch.bool, device=caption_to_pair.device)
+        for name in (
+            "same_object_wrong_direction",
+            "same_object_direction_wrong_location",
+            "same_object_location_wrong_count",
+            "same_broad_change_wrong_object",
+            "no_change_lookalike",
+        )
+    }
+    for query_index, query in enumerate(queries):
+        for candidate_index, candidate in enumerate(candidates):
+            if candidate_index == int(caption_to_pair[query_index]):
+                continue
+            same_object = bool(query["objects"] and query["objects"] & candidate["objects"])
+            same_direction = query["direction"] == candidate["direction"]
+            same_location = bool(query["locations"] and query["locations"] & candidate["locations"])
+            if same_object and query["direction"] not in {"unknown", "changed"} and not same_direction:
+                categories["same_object_wrong_direction"][query_index, candidate_index] = True
+            elif same_object and same_direction and query["locations"] and not same_location:
+                categories["same_object_direction_wrong_location"][query_index, candidate_index] = True
+            elif same_object and same_location and query["counts"] and query["counts"] != candidate["counts"]:
+                categories["same_object_location_wrong_count"][query_index, candidate_index] = True
+            elif query["changed"] and candidate["changed"] and query["objects"] and candidate["objects"] and not same_object:
+                categories["same_broad_change_wrong_object"][query_index, candidate_index] = True
+            elif query["changed"] and candidate["no_change"] and (same_object or not query["objects"]):
+                categories["no_change_lookalike"][query_index, candidate_index] = True
+    return categories
+
+
+def local_positive_negative_margin_loss(
+    local_scores: Tensor,
+    caption_to_pair: Tensor,
+    captions: list[str],
+    *,
+    margin: float = 0.1,
+    latent_positive_mask: Tensor | None = None,
+) -> tuple[Tensor, dict[str, float | int]]:
+    if local_scores.ndim != 2 or local_scores.shape[0] != caption_to_pair.numel():
+        raise ValueError("local_scores must have shape [Q,B]")
+    categories = structured_hard_negative_masks(captions, caption_to_pair, local_scores.shape[1])
+    if latent_positive_mask is not None:
+        if latent_positive_mask.shape != local_scores.shape:
+            raise ValueError("latent_positive_mask must match local_scores")
+        categories = {name: mask & ~latent_positive_mask.to(mask.device).bool() for name, mask in categories.items()}
+    combined = torch.stack(tuple(categories.values())).any(dim=0)
+    rows = torch.arange(local_scores.shape[0], device=local_scores.device)
+    positive = local_scores[rows, caption_to_pair.long()]
+    negative = local_scores.masked_fill(~combined, float("-inf")).max(dim=1).values
+    valid = torch.isfinite(negative)
+    per_query = F.relu(float(margin) - positive[valid] + negative[valid])
+    loss = per_query.mean() if torch.any(valid) else local_scores.sum() * 0.0
+    diagnostics: dict[str, float | int] = {
+        "local_margin_valid_queries": int(valid.sum().item()),
+        "local_positive_negative_margin_loss": float(loss.detach().cpu()),
+    }
+    for name, mask in categories.items():
+        diagnostics[f"hard_negative_{name}_count"] = int(mask.sum().item())
+        category_negative = local_scores.masked_fill(~mask, float("-inf")).max(dim=1).values
+        category_valid = torch.isfinite(category_negative)
+        category_loss = (
+            F.relu(float(margin) - positive[category_valid] + category_negative[category_valid]).mean()
+            if torch.any(category_valid)
+            else local_scores.sum() * 0.0
+        )
+        diagnostics[f"hard_negative_{name}_loss"] = float(category_loss.detach().cpu())
+    return loss, diagnostics
+
+
+def conditional_instance_discrimination_loss(
+    scores: Tensor,
+    caption_to_pair: Tensor,
+    broad_semantic_positive_mask: Tensor,
+    *,
+    margin: float = 0.02,
+) -> Tensor:
+    """Separate exact identity only among otherwise broad-semantic positives."""
+    if broad_semantic_positive_mask.shape != scores.shape:
+        raise ValueError("broad_semantic_positive_mask must match scores")
+    rows = torch.arange(scores.shape[0], device=scores.device)
+    exact_mask = torch.zeros_like(broad_semantic_positive_mask, dtype=torch.bool)
+    exact_mask[rows, caption_to_pair.long()] = True
+    alternatives = broad_semantic_positive_mask.bool() & ~exact_mask
+    alternative_score = scores.masked_fill(~alternatives, float("-inf")).max(dim=1).values
+    valid = torch.isfinite(alternative_score)
+    if not torch.any(valid):
+        return scores.sum() * 0.0
+    exact_score = scores[rows, caption_to_pair.long()]
+    return F.relu(float(margin) - exact_score[valid] + alternative_score[valid]).mean()
+
+
+def structured_auxiliary_evidence_loss(
+    evidence_scores: dict[str, Tensor],
+    caption_to_pair: Tensor,
+    captions: list[str],
+) -> tuple[Tensor, dict[str, float | int]]:
+    """Supervise paired attribute evidence only for captions carrying that label."""
+    signatures = [_structured_signature(caption) for caption in captions]
+    specifications = {
+        "object": ("S_object", "objects"),
+        "direction": ("S_direction", "direction"),
+        "location": ("S_location", "locations"),
+        "count": ("S_count", "counts"),
+        "relation": ("S_relation", "relation"),
+    }
+    reference = next(iter(evidence_scores.values()))
+    rows = torch.arange(len(captions), device=reference.device)
+    losses = []
+    diagnostics: dict[str, float | int] = {}
+    for label, (score_name, signature_key) in specifications.items():
+        scores = evidence_scores[score_name]
+        present = torch.tensor(
+            [bool(signature[signature_key]) and signature[signature_key] not in {"unknown", "none"} for signature in signatures],
+            device=scores.device,
+            dtype=torch.bool,
+        )
+        paired = scores[rows, caption_to_pair.long()].clamp(1e-6, 1.0 - 1e-6)
+        loss = F.binary_cross_entropy(paired[present], torch.ones_like(paired[present])) if torch.any(present) else scores.sum() * 0.0
+        losses.append(loss)
+        diagnostics[f"{label}_auxiliary_label_count"] = int(present.sum().item())
+        diagnostics[f"{label}_auxiliary_loss"] = float(loss.detach().cpu())
+    total = torch.stack(losses).sum()
+    diagnostics["structured_auxiliary_evidence_loss"] = float(total.detach().cpu())
+    return total, diagnostics
+
+
 class QCPRPatchReranker(nn.Module):
     """Query-conditioned patch reranker with an auxiliary mask head."""
 
@@ -43,6 +212,10 @@ class QCPRPatchReranker(nn.Module):
             self.token_projection = nn.Linear(retrieval_dim, retrieval_dim)
             self.interaction_mlp = nn.Sequential(nn.LayerNorm(3 * retrieval_dim), nn.Linear(3 * retrieval_dim, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, 1))
             self.temporal_channel_head = nn.Sequential(nn.LayerNorm(retrieval_dim), nn.Linear(retrieval_dim, retrieval_dim), nn.GELU(), nn.Linear(retrieval_dim, 3))
+            initial_weights = torch.tensor([alpha, beta, max(0.05 * (alpha + beta), 1e-3)], dtype=torch.float32)
+            self.fusion_logits = nn.Parameter(initial_weights.log())
+            self.branch_log_scales = nn.Parameter(torch.zeros(3))
+            self.branch_biases = nn.Parameter(torch.zeros(3))
             for parameter in self.patch_projector.parameters():
                 parameter.requires_grad_(False)
             for parameter in self.query_mask_head.parameters():
@@ -80,7 +253,15 @@ class QCPRPatchReranker(nn.Module):
             "score_mode": "fused",
         }
 
-    def score_v2(self, query_embeddings: Tensor, query_token_embeddings: Tensor, query_attention_mask: Tensor, pair_embeddings: Tensor, per_time_tokens: Tensor) -> dict[str, Tensor | str]:
+    def score_v2(
+        self,
+        query_embeddings: Tensor,
+        query_token_embeddings: Tensor,
+        query_attention_mask: Tensor,
+        pair_embeddings: Tensor,
+        per_time_tokens: Tensor,
+        query_metadata: dict | None = None,
+    ) -> dict[str, Tensor | str]:
         if self.architecture_version != "v2":
             raise RuntimeError("score_v2 requires qcpr architecture v2")
         descriptors = F.normalize(self.temporal_descriptor_mlp(temporal_patch_descriptor(per_time_tokens)), dim=-1)
@@ -90,18 +271,105 @@ class QCPRPatchReranker(nn.Module):
         attended_query = torch.einsum("qbnl,qld->qbnd", affinity.softmax(dim=-1), token_embeddings)
         descriptor = descriptors.unsqueeze(0).expand(query_embeddings.shape[0], -1, -1, -1)
         query_mask_logits = self.interaction_mlp(torch.cat((descriptor, attended_query, descriptor * attended_query), dim=-1)).squeeze(-1)
+        temporal_explanation_logits = self.temporal_channel_head(descriptors)
         local_embeddings = self.masked_local_embedding(descriptors, query_mask_logits)
         queries = F.normalize(query_embeddings, dim=-1)
         global_score = queries @ F.normalize(pair_embeddings, dim=-1).T
         local_score = torch.einsum("qd,qbd->qb", queries, local_embeddings)
+        patch_probabilities = query_mask_logits.sigmoid()
+        top_k = max(1, min(4, patch_probabilities.shape[-1]))
+        token_patch_score = patch_probabilities.topk(top_k, dim=-1).values.mean(dim=-1)
+        raw_scores = torch.stack((global_score, local_score, token_patch_score), dim=-1)
+        calibrated_scores = raw_scores * self.branch_log_scales.exp() + self.branch_biases
+        fusion_weights = self.fusion_logits.softmax(dim=0)
+        final_score = torch.einsum("qbk,k->qb", calibrated_scores, fusion_weights)
+
+        metadata = query_metadata or {}
+        token_group_masks = metadata.get("token_group_masks", {})
+
+        def group_patch_score(name: str) -> Tensor:
+            group_mask = token_group_masks.get(name)
+            if group_mask is None:
+                return global_score.new_zeros(global_score.shape)
+            group_mask = group_mask.to(token_embeddings.device).bool() & query_attention_mask.bool()
+            weights = group_mask.to(token_embeddings.dtype)
+            pooled = torch.einsum("ql,qld->qd", weights, token_embeddings)
+            pooled = F.normalize(pooled / weights.sum(dim=1, keepdim=True).clamp_min(1.0), dim=-1)
+            evidence = torch.einsum("qd,bnd->qbn", pooled, descriptors).sigmoid()
+            k = max(1, min(4, evidence.shape[-1]))
+            score = evidence.topk(k, dim=-1).values.mean(dim=-1)
+            return score * group_mask.any(dim=1).to(score.dtype)[:, None]
+
+        object_score = group_patch_score("object")
+        relation_score = group_patch_score("relation")
+        direction_base = group_patch_score("direction")
+        temporal_probabilities = temporal_explanation_logits.sigmoid().permute(2, 0, 1)
+        direction_targets = metadata.get("direction_targets")
+        direction_score = direction_base
+        if direction_targets is not None:
+            targets = direction_targets.to(direction_base.device).long()
+            selected_channels = temporal_probabilities[0].unsqueeze(0).expand(query_embeddings.shape[0], -1, -1).clone()
+            selected_channels = torch.where(
+                (targets == 1)[:, None, None], temporal_probabilities[1].unsqueeze(0), selected_channels
+            )
+            selected_channels = torch.where(
+                (targets == -1)[:, None, None], temporal_probabilities[2].unsqueeze(0), selected_channels
+            )
+            mask_weights = query_mask_logits.sigmoid()
+            channel_evidence = (selected_channels * mask_weights).sum(dim=-1) / mask_weights.sum(dim=-1).clamp_min(1e-6)
+            direction_score = direction_base * channel_evidence
+
+        location_score = global_score.new_zeros(global_score.shape)
+        location_targets = metadata.get("location_targets")
+        location_mask = token_group_masks.get("location")
+        if location_targets is not None and location_mask is not None:
+            side = int(math.isqrt(descriptors.shape[1]))
+            yy, xx = torch.meshgrid(
+                torch.linspace(0, 1, side, device=descriptors.device, dtype=descriptors.dtype),
+                torch.linspace(0, 1, side, device=descriptors.device, dtype=descriptors.dtype), indexing="ij",
+            )
+            coords = torch.stack((xx, yy), dim=-1).reshape(1, 1, -1, 2)
+            targets = location_targets.to(descriptors.device, descriptors.dtype)[:, None, None, :]
+            proximity = torch.exp(-4.0 * (coords - targets).square().sum(dim=-1))
+            weights = query_mask_logits.sigmoid()
+            location_score = (weights * proximity).sum(dim=-1) / weights.sum(dim=-1).clamp_min(1e-6)
+            location_score = location_score * location_mask.to(location_score.device).any(dim=1).to(location_score.dtype)[:, None]
+
+        count_score = global_score.new_zeros(global_score.shape)
+        count_targets = metadata.get("count_targets")
+        if count_targets is not None:
+            side = int(math.isqrt(query_mask_logits.shape[-1]))
+            heat = query_mask_logits.sigmoid().reshape(query_mask_logits.shape[0] * query_mask_logits.shape[1], 1, side, side)
+            neighborhood_max = F.max_pool2d(heat, kernel_size=3, stride=1, padding=1)
+            soft_peaks = heat * torch.sigmoid(20.0 * (heat - neighborhood_max)) * torch.sigmoid(10.0 * (heat - 0.5))
+            distinct_regions = soft_peaks.sum(dim=(1, 2, 3)).reshape(query_mask_logits.shape[:2])
+            targets = count_targets.to(distinct_regions.device, distinct_regions.dtype)
+            count_score = torch.exp(-torch.abs(distinct_regions - targets[:, None]) / targets[:, None].clamp_min(1.0))
+            count_score = count_score * (targets > 0).to(count_score.dtype)[:, None]
         return {
             "global_score": global_score,
             "local_score": local_score,
-            "token_patch_score": query_mask_logits.sigmoid().amax(dim=-1),
-            "final_score": self.alpha * global_score + self.beta * local_score,
+            "token_patch_score": token_patch_score,
+            "global_score_calibrated": calibrated_scores[..., 0],
+            "local_score_calibrated": calibrated_scores[..., 1],
+            "token_patch_score_calibrated": calibrated_scores[..., 2],
+            "fusion_weights": fusion_weights,
+            "final_score": final_score,
+            "S_global_raw": global_score,
+            "S_local_raw": local_score,
+            "S_token_patch_raw": token_patch_score,
+            "S_global_calibrated": calibrated_scores[..., 0],
+            "S_local_calibrated": calibrated_scores[..., 1],
+            "S_token_patch_calibrated": calibrated_scores[..., 2],
+            "S_final": final_score,
+            "S_object": object_score,
+            "S_direction": direction_score,
+            "S_location": location_score,
+            "S_count": count_score,
+            "S_relation": relation_score,
             "query_mask_logits": query_mask_logits,
             "patch_tokens": descriptors,
-            "temporal_explanation_logits": self.temporal_channel_head(descriptors),
+            "temporal_explanation_logits": temporal_explanation_logits,
             "score_mode": "qcpr_v2",
         }
 

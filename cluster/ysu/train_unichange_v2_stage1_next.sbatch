@@ -109,6 +109,10 @@ if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
     --qcpr-local-loss-weight "${QCPR_LOCAL_LOSS_WEIGHT:-1.0}"
     --query-segmentation-loss-weight "${QUERY_SEGMENTATION_LOSS_WEIGHT:-0.2}"
     --structured-fna-weight "${STRUCTURED_FNA_WEIGHT:-0.0}"
+    --local-margin-loss-weight "${LOCAL_MARGIN_LOSS_WEIGHT:-0.1}"
+    --local-margin "${LOCAL_MARGIN:-0.1}"
+    --conditional-instance-loss-weight "${CONDITIONAL_INSTANCE_LOSS_WEIGHT:-0.01}"
+    --structured-auxiliary-loss-weight "${STRUCTURED_AUXILIARY_LOSS_WEIGHT:-0.05}"
   )
 fi
 if [[ "${ENABLE_TEMPORAL_EXPLANATION_CHANNELS:-0}" == "1" ]]; then

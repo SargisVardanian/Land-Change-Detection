@@ -21,8 +21,54 @@ def test_qcpr_v2_token_conditioned_shapes_and_gradients() -> None:
     output = reranker.score_v2(torch.randn(2, 8), torch.randn(2, 5, 8), torch.ones(2, 5, dtype=torch.bool), torch.randn(3, 8), torch.randn(3, 2, 4, 8))
     assert output["query_mask_logits"].shape == (2, 3, 4)
     assert output["temporal_explanation_logits"].shape == (3, 4, 3)
+    assert torch.allclose(output["final_score"], output["S_final"])
+    assert torch.allclose(output["S_token_patch_raw"], output["token_patch_score"])
+    assert not torch.allclose(
+        output["final_score"],
+        output["fusion_weights"][0] * output["S_global_calibrated"]
+        + output["fusion_weights"][1] * output["S_local_calibrated"],
+    )
+    assert torch.all(output["fusion_weights"] > 0)
+    assert torch.allclose(output["fusion_weights"].sum(), torch.tensor(1.0))
     output["final_score"].sum().backward()
     assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in reranker.interaction_mlp.parameters())
+    assert reranker.fusion_logits.grad is not None and torch.any(reranker.fusion_logits.grad != 0)
+    assert reranker.branch_log_scales.grad is not None and torch.any(reranker.branch_log_scales.grad != 0)
+    assert reranker.branch_biases.grad is not None and torch.any(reranker.branch_biases.grad != 0)
+
+
+def test_qcpr_v2_token_patch_aggregation_is_not_a_single_maximum() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    output = reranker.score_v2(
+        torch.randn(1, 8),
+        torch.randn(1, 4, 8),
+        torch.ones(1, 4, dtype=torch.bool),
+        torch.randn(1, 8),
+        torch.randn(1, 2, 16, 8),
+    )
+    maximum = output["query_mask_logits"].sigmoid().amax(dim=-1)
+    assert torch.all(output["token_patch_score"] <= maximum)
+    assert not torch.allclose(output["token_patch_score"], maximum)
+
+
+def test_qcpr_v2_reports_token_group_grounding_scores() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    attention = torch.ones(2, 6, dtype=torch.bool)
+    group_masks = {name: torch.zeros_like(attention) for name in ("object", "direction", "location", "count", "relation")}
+    for index, name in enumerate(group_masks):
+        group_masks[name][:, index + 1] = True
+    output = reranker.score_v2(
+        torch.randn(2, 8), torch.randn(2, 6, 8), attention, torch.randn(3, 8), torch.randn(3, 2, 16, 8),
+        query_metadata={
+            "token_group_masks": group_masks,
+            "direction_targets": torch.tensor([1, -1]),
+            "location_targets": torch.tensor([[0.5, 0.0], [1.0, 0.5]]),
+            "count_targets": torch.tensor([2.0, 3.0]),
+        },
+    )
+    for name in ("S_object", "S_direction", "S_location", "S_count", "S_relation"):
+        assert output[name].shape == (2, 3)
+        assert torch.isfinite(output[name]).all()
 
 
 def test_direction_losses_use_real_supervision_and_reversal_swap() -> None:

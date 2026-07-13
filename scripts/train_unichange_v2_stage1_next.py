@@ -40,6 +40,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qcpr-local-loss-weight", type=float, default=1.0)
     parser.add_argument("--query-segmentation-loss-weight", type=float, default=0.2)
     parser.add_argument("--structured-fna-weight", type=float, default=0.0)
+    parser.add_argument("--local-margin-loss-weight", type=float, default=0.1)
+    parser.add_argument("--local-margin", type=float, default=0.1)
+    parser.add_argument("--conditional-instance-loss-weight", type=float, default=0.01)
+    parser.add_argument("--structured-auxiliary-loss-weight", type=float, default=0.05)
     return parser.parse_args()
 
 
@@ -79,5 +83,9 @@ if __name__ == "__main__":
             qcpr_local_loss_weight=args.qcpr_local_loss_weight,
             query_segmentation_loss_weight=args.query_segmentation_loss_weight,
             structured_fna_weight=args.structured_fna_weight,
+            local_margin_loss_weight=args.local_margin_loss_weight,
+            local_margin=args.local_margin,
+            conditional_instance_loss_weight=args.conditional_instance_loss_weight,
+            structured_auxiliary_loss_weight=args.structured_auxiliary_loss_weight,
         )
     )

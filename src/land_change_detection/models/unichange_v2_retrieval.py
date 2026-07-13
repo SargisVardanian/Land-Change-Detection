@@ -26,6 +26,15 @@ class UniChangeV2RetrievalOutput:
     global_scores: Tensor | None = None
     local_scores: Tensor | None = None
     token_patch_scores: Tensor | None = None
+    global_calibrated_scores: Tensor | None = None
+    local_calibrated_scores: Tensor | None = None
+    token_patch_calibrated_scores: Tensor | None = None
+    fusion_weights: Tensor | None = None
+    object_scores: Tensor | None = None
+    direction_scores: Tensor | None = None
+    location_scores: Tensor | None = None
+    count_scores: Tensor | None = None
+    relation_scores: Tensor | None = None
     final_scores: Tensor | None = None
     query_mask_logits: Tensor | None = None
     mask_query_embeddings: Tensor | None = None
@@ -143,6 +152,11 @@ class UniChangeV2RetrievalModel(nn.Module):
         patch_tokens = None
         local_scores = None
         token_patch_scores = None
+        global_calibrated_scores = None
+        local_calibrated_scores = None
+        token_patch_calibrated_scores = None
+        fusion_weights = None
+        object_scores = direction_scores = location_scores = count_scores = relation_scores = None
         final_scores = global_scores
         query_mask_logits = None
         mask_query_embeddings = None
@@ -150,10 +164,26 @@ class UniChangeV2RetrievalModel(nn.Module):
         score_mode = "global"
         if self.patch_reranker is not None:
             if self.patch_reranker.architecture_version == "v2":
-                reranked = self.patch_reranker.score_v2(text_embedding, text_features.token_embeddings.to(pair_embedding.device), text_features.attention_mask.to(pair_embedding.device), pair_embedding, temporal.per_time_tokens)
+                reranked = self.patch_reranker.score_v2(
+                    text_embedding,
+                    text_features.token_embeddings.to(pair_embedding.device),
+                    text_features.attention_mask.to(pair_embedding.device),
+                    pair_embedding,
+                    temporal.per_time_tokens,
+                    query_metadata=text_features.metadata,
+                )
                 patch_tokens = reranked["patch_tokens"]
                 temporal_explanation_logits = reranked["temporal_explanation_logits"]
                 token_patch_scores = reranked["token_patch_score"]
+                global_calibrated_scores = reranked["global_score_calibrated"]
+                local_calibrated_scores = reranked["local_score_calibrated"]
+                token_patch_calibrated_scores = reranked["token_patch_score_calibrated"]
+                fusion_weights = reranked["fusion_weights"]
+                object_scores = reranked["S_object"]
+                direction_scores = reranked["S_direction"]
+                location_scores = reranked["S_location"]
+                count_scores = reranked["S_count"]
+                relation_scores = reranked["S_relation"]
             else:
                 patch_tokens = self.patch_reranker.project_patches(temporal.change_tokens)
                 reranked = self.patch_reranker.score(text_embedding, pair_embedding, patch_tokens)
@@ -176,6 +206,15 @@ class UniChangeV2RetrievalModel(nn.Module):
             global_scores=global_scores,
             local_scores=local_scores,
             token_patch_scores=token_patch_scores,
+            global_calibrated_scores=global_calibrated_scores,
+            local_calibrated_scores=local_calibrated_scores,
+            token_patch_calibrated_scores=token_patch_calibrated_scores,
+            fusion_weights=fusion_weights,
+            object_scores=object_scores,
+            direction_scores=direction_scores,
+            location_scores=location_scores,
+            count_scores=count_scores,
+            relation_scores=relation_scores,
             final_scores=final_scores,
             query_mask_logits=query_mask_logits,
             mask_query_embeddings=mask_query_embeddings,

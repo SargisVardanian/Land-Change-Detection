@@ -17,6 +17,7 @@ if __name__ == "__main__":
     parser.add_argument("temporal_depth", type=int, nargs="?", default=6)
     parser.add_argument("--train-manifest", type=Path, action="append", default=[])
     parser.add_argument("--val-manifest", type=Path, action="append", default=[])
+    parser.add_argument("--localization-val-manifest", type=Path, action="append", default=[])
     parser.add_argument("--dataset-config", type=Path, default=None)
     parser.add_argument("--dataset-weight", action="append", default=None)
     parser.add_argument("--text-max-length", type=int, default=256)
@@ -35,6 +36,7 @@ if __name__ == "__main__":
         temporal_depth=temporal_depth,
         train_manifests=tuple(args.train_manifest),
         val_manifests=tuple(args.val_manifest),
+        localization_val_manifests=tuple(args.localization_val_manifest),
         dataset_config=args.dataset_config,
         dataset_sampling_weights=tuple(args.dataset_weight or ("levir_mci=0.55", "second_cc=0.45")),
         text_max_length=args.text_max_length,

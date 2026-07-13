@@ -40,6 +40,8 @@ ARGS=(
   --num-workers "${NUM_WORKERS:-4}"
   --top-k "${TOP_K:-5}"
   --max-queries "${MAX_QUERIES:-48}"
+  --query-chunk-size "${QUERY_CHUNK_SIZE:-64}"
+  --candidate-chunk-size "${CANDIDATE_CHUNK_SIZE:-256}"
   --device cuda
 )
 if [[ -n "${DATASET_CONFIG:-}" ]]; then
@@ -66,7 +68,9 @@ fi
 PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" \
   "${CODE_ROOT}/scripts/render_unichange_v2_retrieval.py" "${ARGS[@]}"
 
-PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" \
-  "${CODE_ROOT}/scripts/plot_unichange_v2_training.py" \
-  --history "${RUN_DIR}/metrics_history.jsonl" \
-  --output-dir "${RUN_DIR}"
+if [[ "${SKIP_TRAINING_PLOTS:-0}" != "1" ]]; then
+  PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" \
+    "${CODE_ROOT}/scripts/plot_unichange_v2_training.py" \
+    --history "${RUN_DIR}/metrics_history.jsonl" \
+    --output-dir "${RUN_DIR}"
+fi

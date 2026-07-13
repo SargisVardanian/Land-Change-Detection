@@ -383,10 +383,15 @@ def load_dataset_config(path: str | Path | None) -> tuple[list[str], list[str], 
     options: dict[str, Any] = {}
     for key in (
         "allowed_caption_sources",
+        "localization_val_manifests",
         "semantic_soft_target_weight",
         "semantic_teacher_top_k",
         "semantic_teacher_temperature",
         "structured_fna_weight",
+        "local_margin_loss_weight",
+        "local_margin",
+        "conditional_instance_loss_weight",
+        "structured_auxiliary_loss_weight",
     ):
         if key in payload:
             options[key] = payload[key]

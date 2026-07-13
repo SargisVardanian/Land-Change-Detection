@@ -11,9 +11,17 @@ import torch
 import train_unichange_v2_retrieval as base
 from land_change_detection.models.retrieval_heads import (
     semantic_text_to_pair_set_loss,
+    semantic_teacher_relevance_matrix,
     stable_caption_group_ids,
+    structured_fna_relevance_matrix,
 )
-from land_change_detection.models.qcpr import segmentation_loss_components, temporal_channel_loss_components
+from land_change_detection.models.qcpr import (
+    conditional_instance_discrimination_loss,
+    local_positive_negative_margin_loss,
+    segmentation_loss_components,
+    structured_auxiliary_evidence_loss,
+    temporal_channel_loss_components,
+)
 from land_change_detection.training.temporal_caption_dataset import parse_dataset_weights
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
@@ -21,7 +29,10 @@ from ucv2_stage1_next_core import (
     Stage1NextConfig,
     _build_stage1_full_count_datasets,
     _dataset_index_counts,
+    _expected_manifest_datasets,
+    _expected_train_datasets,
     _mixed_subset_coverage_details,
+    build_localization_validation_datasets,
     caption_frequencies,
     make_eval_loader,
     make_optimizer,
@@ -41,6 +52,7 @@ def run(
     temporal_depth: int = 6,
     train_manifests: tuple[Path, ...] = (),
     val_manifests: tuple[Path, ...] = (),
+    localization_val_manifests: tuple[Path, ...] = (),
     dataset_config: Path | None = None,
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45"),
     text_max_length: int = 256,
@@ -69,6 +81,7 @@ def run(
         smoke=True,
         train_manifests=tuple(str(path) for path in train_manifests),
         val_manifests=tuple(str(path) for path in val_manifests),
+        localization_val_manifests=tuple(str(path) for path in localization_val_manifests),
         dataset_config=str(dataset_config) if dataset_config else None,
         dataset_sampling_weights=dataset_sampling_weights,
         text_max_length=text_max_length,
@@ -91,6 +104,7 @@ def run(
 
     train, val = _build_stage1_datasets(config)
     full_train, full_val = _build_stage1_full_count_datasets(config)
+    localization_val, full_localization_val = build_localization_validation_datasets(config)
     from ucv2_stage1_next_core import _assert_stage1_disjoint
 
     _assert_stage1_disjoint(train, val)
@@ -100,27 +114,40 @@ def run(
     validation_sample_counts = _dataset_index_counts(val)
     train_mixed_subset_coverage: dict[str, object] = {}
     validation_mixed_subset_coverage: dict[str, object] = {}
+    localization_validation_coverage: dict[str, object] = {}
     mixed_subset_coverage_passed = data_metadata["data_mode"] != "mixed"
     if data_metadata["data_mode"] == "mixed":
         train_mixed_subset_coverage = _mixed_subset_coverage_details(
             train,
-            configured_weights=configured_dataset_weights,
+            expected_datasets=_expected_train_datasets(full_train, configured_dataset_weights),
             max_pairs=config.max_train_samples,
             subset_name="train",
         )
         validation_mixed_subset_coverage = _mixed_subset_coverage_details(
             val,
-            configured_weights=configured_dataset_weights,
+            expected_datasets=_expected_manifest_datasets(full_val),
             max_pairs=config.max_val_samples,
-            subset_name="validation",
+            subset_name="retrieval_validation",
         )
         mixed_subset_coverage_passed = bool(
             train_mixed_subset_coverage.get("mixed_subset_coverage_passed")
             and validation_mixed_subset_coverage.get("mixed_subset_coverage_passed")
         )
+    if localization_val is not None and full_localization_val is not None:
+        localization_validation_coverage = _mixed_subset_coverage_details(
+            localization_val,
+            expected_datasets=_expected_manifest_datasets(full_localization_val),
+            max_pairs=config.max_val_samples,
+            subset_name="localization_validation",
+        )
+        mixed_subset_coverage_passed = bool(
+            mixed_subset_coverage_passed
+            and localization_validation_coverage.get("mixed_subset_coverage_passed")
+        )
     frequencies = caption_frequencies(train)
     train_loader = make_train_loader(train, config, frequencies, epoch=0)
     val_loader = make_eval_loader(val, config)
+    localization_val_loader = make_eval_loader(localization_val, config) if localization_val is not None else None
     model = build_model(config, device)
     optimizer = make_optimizer(model, config)
     scheduler = base._make_scheduler(optimizer, config.max_steps or 10, config)
@@ -140,6 +167,7 @@ def run(
     segmentation_pairs_seen = 0
     query_specific_pairs_seen = 0
     generic_pairs_seen = 0
+    temporal_supervised_pairs_seen = 0
     for batch in cycle(train_loader):
         if step >= 10:
             break
@@ -193,8 +221,55 @@ def run(
                     ),
                     structured_fna_weight=config.structured_fna_weight,
                 )
+                local_margin_loss = retrieval_loss.new_zeros(())
+                conditional_identity_loss = retrieval_loss.new_zeros(())
+                structured_auxiliary_loss = retrieval_loss.new_zeros(())
+                if config.qcpr_architecture_version == "v2" and output.local_scores is not None:
+                    selected_local_scores = output.local_scores[selected_queries][:, selected_pairs]
+                    broad_semantic_positive_mask = structured_fna_relevance_matrix(
+                        selected_captions,
+                        selected_mapping,
+                        selected_groups,
+                        pair_count=len(selected_pairs),
+                    ) > 0
+                    broad_semantic_positive_mask |= semantic_teacher_relevance_matrix(
+                        output.teacher_text_embedding[selected_queries],
+                        selected_captions,
+                        selected_mapping,
+                        selected_groups,
+                        pair_count=len(selected_pairs),
+                        top_k=0,
+                    ) > 0
+                    local_margin_loss, _ = local_positive_negative_margin_loss(
+                        selected_local_scores,
+                        selected_mapping,
+                        selected_captions,
+                        margin=config.local_margin,
+                        latent_positive_mask=broad_semantic_positive_mask,
+                    )
+                    conditional_identity_loss = conditional_instance_discrimination_loss(
+                        selected_final_scores if selected_final_scores is not None else selected_local_scores,
+                        selected_mapping,
+                        broad_semantic_positive_mask,
+                    )
+                    auxiliary_names = {
+                        "S_object": output.object_scores,
+                        "S_direction": output.direction_scores,
+                        "S_location": output.location_scores,
+                        "S_count": output.count_scores,
+                        "S_relation": output.relation_scores,
+                    }
+                    if all(value is not None for value in auxiliary_names.values()):
+                        structured_auxiliary_loss, _ = structured_auxiliary_evidence_loss(
+                            {name: value[selected_queries][:, selected_pairs] for name, value in auxiliary_names.items()},
+                            selected_mapping,
+                            selected_captions,
+                        )
             else:
                 retrieval_loss = output.pair_embedding.sum() * 0.0
+                local_margin_loss = retrieval_loss.new_zeros(())
+                conditional_identity_loss = retrieval_loss.new_zeros(())
+                structured_auxiliary_loss = retrieval_loss.new_zeros(())
             segmentation = (
                 segmentation_loss_components(
                     output.query_mask_logits,
@@ -227,7 +302,14 @@ def run(
                     batch["segmentation_target_kinds"], batch["segmentation_weights"], batch["change_types"],
                     reverse_output.temporal_explanation_logits,
                 )
-            loss = retrieval_loss + config.query_segmentation_loss_weight * segmentation["total_segmentation_loss"]
+                temporal_supervised_pairs_seen += int(temporal_losses["temporal_supervised_pairs"])
+            loss = (
+                retrieval_loss
+                + config.local_margin_loss_weight * local_margin_loss
+                + config.conditional_instance_loss_weight * conditional_identity_loss
+                + config.structured_auxiliary_loss_weight * structured_auxiliary_loss
+                + config.query_segmentation_loss_weight * segmentation["total_segmentation_loss"]
+            )
             if temporal_losses is not None:
                 loss = loss + config.changed_channel_loss_weight * temporal_losses["changed_channel_loss"]
                 loss = loss + config.appeared_channel_loss_weight * temporal_losses["appeared_channel_loss"]
@@ -263,6 +345,16 @@ def run(
                             "finite": all(parameter.grad is None or torch.isfinite(parameter.grad).all() for parameter in parameters),
                             "nonzero": any(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in parameters),
                         }
+                    fusion_parameters = [
+                        model.patch_reranker.fusion_logits,
+                        model.patch_reranker.branch_log_scales,
+                        model.patch_reranker.branch_biases,
+                    ]
+                    gradient_audit["fusion_calibration"] = {
+                        "has_grad": all(parameter.grad is not None for parameter in fusion_parameters),
+                        "finite": all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in fusion_parameters),
+                        "nonzero": all(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in fusion_parameters),
+                    }
         optimizer.step()
         scheduler.step()
         losses.append(float(loss.detach().cpu()))
@@ -281,6 +373,7 @@ def run(
         step=step,
         best_scores={},
         metrics=metrics,
+        temporal_supervised_pairs=temporal_supervised_pairs_seen,
     )
     roundtrip = base._checkpoint_roundtrip(
         model,
@@ -291,9 +384,43 @@ def run(
         device,
         config,
     )
+    localization_required = bool(
+        full_train is not None
+        and "s2looking" in _expected_train_datasets(full_train, configured_dataset_weights)
+    )
+    localization_smoke = {
+        "required": localization_required,
+        "configured": localization_val_loader is not None,
+        "passed": localization_val_loader is None and not localization_required,
+        "sample_counts_by_dataset": _dataset_index_counts(localization_val) if localization_val is not None else {},
+    }
+    if localization_val_loader is not None:
+        model.eval()
+        localization_batch = base._move_batch(next(iter(localization_val_loader)), device)
+        with torch.no_grad(), base._amp_context(device, config.use_bf16):
+            localization_output = model(
+                localization_batch["images"],
+                localization_batch["captions"],
+                localization_batch["caption_to_pair"],
+                localization_batch["temporal_valid_mask"],
+            )
+        localization_smoke.update(
+            {
+                "passed": bool(
+                    localization_output.query_mask_logits is not None
+                    and torch.isfinite(localization_output.query_mask_logits).all().item()
+                    and set(localization_batch["dataset_names"]) == {"s2looking"}
+                    and bool(localization_batch["segmentation_supervision"].all().item())
+                    and not bool(localization_batch["retrieval_supervision"].any().item())
+                    and set(localization_validation_coverage.get("expected_datasets", [])) == {"s2looking"}
+                ),
+                "batch_pair_count": len(localization_batch["pair_ids"]),
+                "query_count": len(localization_batch["captions"]),
+            }
+        )
     frozen_grad_violations, missing_gradients = base._audit_failures(gradient_audit)
     gradient_audit_passed = not frozen_grad_violations and not missing_gradients
-    qcpr_audit_names = (("temporal_descriptor_mlp", "token_projection", "interaction_mlp", "temporal_channel_head") if config.qcpr_architecture_version == "v2" else ("patch_projector", "query_mask_head"))
+    qcpr_audit_names = (("temporal_descriptor_mlp", "token_projection", "interaction_mlp", "fusion_calibration", "temporal_channel_head") if config.qcpr_architecture_version == "v2" else ("patch_projector", "query_mask_head"))
     qcpr_gradient_audit_passed = not enable_patch_reranker or all(
         bool(gradient_audit.get(name, {}).get("has_grad"))
         and bool(gradient_audit.get(name, {}).get("finite"))
@@ -312,7 +439,7 @@ def run(
         int(train_sample_counts.get("s2looking", 0)) > 0
         and retrieval_pairs_seen < total_pairs_seen
     )
-    status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and qcpr_gradient_audit_passed and checkpoint_roundtrip_passed and supervision_evidence_passed and s2_mixed_evidence_passed else "FAIL"
+    status = "PASS" if finite_loss and step == 10 and gradient_audit_passed and qcpr_gradient_audit_passed and checkpoint_roundtrip_passed and supervision_evidence_passed and s2_mixed_evidence_passed and localization_smoke["passed"] else "FAIL"
     device_type = device.type
     bf16_active = bool(device_type == "cuda" and config.use_bf16 and torch.cuda.is_bf16_supported())
     metadata = run_metadata()
@@ -328,6 +455,7 @@ def run(
         and checkpoint_roundtrip_passed
         and supervision_evidence_passed
         and s2_mixed_evidence_passed
+        and localization_smoke["passed"]
     )
     report = {
         **metadata,
@@ -374,6 +502,8 @@ def run(
         "mixed_subset_coverage_passed": mixed_subset_coverage_passed,
         "train_mixed_subset_coverage": train_mixed_subset_coverage,
         "validation_mixed_subset_coverage": validation_mixed_subset_coverage,
+        "localization_validation_coverage": localization_validation_coverage,
+        "localization_validation_smoke": localization_smoke,
         "train_val_disjoint": True,
         "steps_completed": step,
         "total_pairs_seen": total_pairs_seen,

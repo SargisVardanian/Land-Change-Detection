@@ -21,6 +21,7 @@ from ucv2_stage1_next_core import (
     _selection_scores,
 )
 from land_change_detection.temporal_caption_manifest import SCHEMA_VERSION
+from land_change_detection.models.qcpr import QCPRPatchReranker
 
 
 def _config() -> Stage1NextConfig:
@@ -121,6 +122,33 @@ def test_checkpoint_save_roundtrip_records_selection_metadata(tmp_path):
     assert payload["selection_metric"] == "composite"
     assert payload["selection_value"] == 0.7
     model.load_state_dict(payload["model"])
+
+
+def test_v2_checkpoint_records_temporal_supervision_and_gradient_provenance(tmp_path):
+    class Model(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.patch_reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4, architecture_version="v2")
+
+    model = Model()
+    for parameter in model.patch_reranker.temporal_channel_head.parameters():
+        parameter.grad = torch.ones_like(parameter)
+    optimizer = torch.optim.AdamW(model.parameters())
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda _: 1.0)
+    config = replace(
+        _config(), qcpr_architecture_version="v2", enable_patch_reranker=True,
+        enable_temporal_explanation_channels=True,
+    )
+    path = tmp_path / "trained_v2.pt"
+    save_checkpoint(
+        path, model, optimizer, scheduler, config, epoch_index=1, next_batch_index=0,
+        step=1, best_scores={}, metrics={}, temporal_supervised_pairs=3,
+    )
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    assert payload["temporal_channels_available"] is True
+    assert payload["temporal_channels_trained"] is True
+    assert payload["temporal_channel_provenance"]["supervision"]["supervised_pairs"] == 3
+    assert payload["temporal_channel_provenance"]["gradients"]["temporal_channel_head_nonzero"] is True
 
 
 def test_stage1_next_does_not_introduce_pair_to_pair_or_exact_selection_modules():
@@ -262,37 +290,79 @@ def test_stage1_next_readiness_gate_rejects_text_max_length_mismatch(tmp_path):
     assert "text_max_length" in result.stderr
 
 
-def test_mixed_subset_coverage_details_passes_when_smoke_subset_keeps_weighted_datasets():
+def _coverage_dataset(selected: dict[str, int], available: dict[str, int] | None = None):
+    available = available or selected
+    indices = {}
+    offset = 0
+    for name, count in selected.items():
+        indices[name] = list(range(offset, offset + count))
+        offset += count
+    return SimpleNamespace(
+        indices_by_dataset=indices,
+        selection_metadata={
+            "available_counts_by_dataset": available,
+            "omitted_datasets": sorted(set(available) - set(selected)),
+        },
+    )
+
+
+def test_train_subset_missing_s2looking_fails():
+    dataset = _coverage_dataset(
+        {"levir_mci": 10, "second_cc": 10},
+        {"levir_mci": 100, "second_cc": 100, "s2looking": 100},
+    )
+    with pytest.raises(ValueError, match="missing_expected_datasets=\\['s2looking'\\]"):
+        _mixed_subset_coverage_details(
+            dataset,
+            expected_datasets={"levir_mci", "second_cc", "s2looking"},
+            max_pairs=20,
+            subset_name="train",
+        )
+
+
+def test_retrieval_validation_without_s2looking_passes():
     dataset = SimpleNamespace(
         indices_by_dataset={"levir_mci": list(range(10)), "second_cc": list(range(10, 20))},
         selection_metadata={"available_counts_by_dataset": {"levir_mci": 100, "second_cc": 100}, "omitted_datasets": []},
     )
     details = _mixed_subset_coverage_details(
         dataset,
-        configured_weights={"levir_mci": 0.55, "second_cc": 0.45},
+        expected_datasets={"levir_mci", "second_cc"},
         max_pairs=20,
-        subset_name="train",
+        subset_name="retrieval_validation",
     )
     assert details["sample_counts_by_dataset"] == {"levir_mci": 10, "second_cc": 10}
-    assert details["configured_positive_sampling_weights"] == {"levir_mci": 0.55, "second_cc": 0.45}
+    assert details["expected_datasets"] == ["levir_mci", "second_cc"]
     assert details["mixed_subset_coverage_passed"] is True
 
 
-def test_mixed_subset_coverage_details_fails_early_when_positive_weight_dataset_is_omitted():
-    dataset = SimpleNamespace(
-        indices_by_dataset={"levir_mci": [0]},
-        selection_metadata={
-            "available_counts_by_dataset": {"levir_mci": 100, "second_cc": 100},
-            "omitted_datasets": ["second_cc"],
-        },
-    )
-    with pytest.raises(ValueError, match="Mixed-smoke coverage error"):
+@pytest.mark.parametrize("missing", ["levir_mci", "second_cc"])
+def test_retrieval_validation_missing_expected_dataset_fails(missing):
+    selected = {name: 2 for name in {"levir_mci", "second_cc"} - {missing}}
+    dataset = _coverage_dataset(selected, {"levir_mci": 100, "second_cc": 100})
+    with pytest.raises(ValueError) as error:
         _mixed_subset_coverage_details(
             dataset,
-            configured_weights={"levir_mci": 0.55, "second_cc": 0.45},
-            max_pairs=1,
-            subset_name="train",
+            expected_datasets={"levir_mci", "second_cc"},
+            max_pairs=2,
+            subset_name="retrieval_validation",
         )
+    message = str(error.value)
+    assert f"missing_expected_datasets=['{missing}']" in message
+    assert "expected_datasets=" in message
+    assert "available_datasets=" in message
+    assert "selected_datasets=" in message
+
+
+def test_localization_validation_with_s2looking_passes():
+    details = _mixed_subset_coverage_details(
+        _coverage_dataset({"s2looking": 4}),
+        expected_datasets={"s2looking"},
+        max_pairs=4,
+        subset_name="localization_validation",
+    )
+    assert details["mixed_subset_coverage_passed"] is True
+    assert details["selected_datasets"] == ["s2looking"]
 
 
 def _manifest(path: Path, dataset: str, count: int, *, splits: tuple[str, ...] = ("train", "val")) -> None:

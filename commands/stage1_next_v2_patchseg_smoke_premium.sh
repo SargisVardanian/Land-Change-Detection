@@ -16,5 +16,6 @@ export CODE_ROOT="${CODE_ROOT_OVERRIDE:-$SLURM_SUBMIT_DIR}"
 export ENABLE_PATCH_RERANKER=1
 export QCPR_ARCHITECTURE_VERSION="${QCPR_ARCHITECTURE_VERSION:-v2}"
 export ENABLE_TEMPORAL_EXPLANATION_CHANNELS="${ENABLE_TEMPORAL_EXPLANATION_CHANNELS:-1}"
+export DATASET_CONFIG="${DATASET_CONFIG:-${RS_PROJECT_ROOT}/configs/qcpr_a78bf8bd/e1_s2looking_masks.json}"
 export RUN_DIR="${RUN_DIR:-${RS_PROJECT_ROOT}/runs/unichange_v2_patchseg_smoke_${SLURM_JOB_ID}}"
 bash "${CODE_ROOT}/cluster/ysu/smoke_unichange_v2_stage1_next.sbatch"
