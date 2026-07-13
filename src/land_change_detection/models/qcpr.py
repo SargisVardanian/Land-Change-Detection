@@ -183,7 +183,10 @@ def structured_auxiliary_evidence_loss(
             dtype=torch.bool,
         )
         paired = scores[rows, caption_to_pair.long()].clamp(1e-6, 1.0 - 1e-6)
-        loss = F.binary_cross_entropy(paired[present], torch.ones_like(paired[present])) if torch.any(present) else scores.sum() * 0.0
+        # ``paired`` is already a probability. Writing positive-label BCE as
+        # -log(p) keeps the same objective while avoiding BCELoss, which CUDA
+        # autocast intentionally rejects as numerically unsafe.
+        loss = -paired[present].log().mean() if torch.any(present) else scores.sum() * 0.0
         losses.append(loss)
         diagnostics[f"{label}_auxiliary_label_count"] = int(present.sum().item())
         diagnostics[f"{label}_auxiliary_loss"] = float(loss.detach().cpu())

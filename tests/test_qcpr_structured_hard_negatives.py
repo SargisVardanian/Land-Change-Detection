@@ -81,3 +81,16 @@ def test_auxiliary_evidence_losses_only_use_available_attribute_labels() -> None
     assert diagnostics["location_auxiliary_label_count"] == 1
     assert diagnostics["count_auxiliary_label_count"] == 1
     assert diagnostics["relation_auxiliary_label_count"] == 0
+
+
+def test_auxiliary_evidence_loss_is_autocast_safe() -> None:
+    captions = ["two houses appeared at the top"]
+    scores = {
+        name: torch.full((1, 1), 0.75, requires_grad=True)
+        for name in ("S_object", "S_direction", "S_location", "S_count", "S_relation")
+    }
+    with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+        loss, _ = structured_auxiliary_evidence_loss(scores, torch.tensor([0]), captions)
+    loss.backward()
+    assert torch.isfinite(loss)
+    assert all(score.grad is not None and torch.isfinite(score.grad).all() for score in scores.values())
