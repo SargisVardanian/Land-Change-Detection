@@ -282,8 +282,14 @@ class QCPRPatchReranker(nn.Module):
         affinity = affinity.masked_fill(~query_attention_mask[:, None, None, :].bool(), -1e4)
         attended_query = torch.einsum("qbnl,qld->qbnd", affinity.softmax(dim=-1), token_embeddings)
         descriptor = descriptors.unsqueeze(0).expand(query_embeddings.shape[0], -1, -1, -1)
-        query_mask_logits = self.interaction_mlp(torch.cat((descriptor, attended_query, descriptor * attended_query), dim=-1)).squeeze(-1)
         temporal_explanation_logits = self.temporal_channel_head(descriptors)
+        query_mask_logits = self.interaction_mlp(torch.cat((descriptor, attended_query, descriptor * attended_query), dim=-1)).squeeze(-1)
+        # The interaction branch is a text-conditioned residual over learnt
+        # generic-change evidence.  This prevents sparse foreground masks from
+        # being minimised by an all-empty query mask while retaining text
+        # selectivity in the residual. Direction-specific channels still enter
+        # S_direction below rather than being conflated with generic change.
+        query_mask_logits = query_mask_logits + temporal_explanation_logits[..., 0].unsqueeze(0)
         local_embeddings = self.masked_local_embedding(descriptors, query_mask_logits)
         queries = F.normalize(query_embeddings, dim=-1)
         global_score = queries @ F.normalize(pair_embeddings, dim=-1).T

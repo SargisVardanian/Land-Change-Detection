@@ -435,6 +435,8 @@ def similarity_matrix(
                     attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
                     expanded = descriptor.unsqueeze(0).expand(query_end - query_start, -1, -1, -1)
                     logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
+                    if corpus.temporal_explanation_logits is not None:
+                        logits = logits + corpus.temporal_explanation_logits[candidate_start:candidate_end, :, 0].to(reranker_device).unsqueeze(0)
                     pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
                     local_chunk = torch.einsum("qd,qbd->qb", text[query_start:query_end].to(reranker_device), pooled)
                     local[query_start:query_end, candidate_start:candidate_end] = local_chunk.detach().cpu()
@@ -512,6 +514,8 @@ def retrieval_branch_similarity_matrices(
                 attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
                 expanded = descriptor.unsqueeze(0).expand(query_end - query_start, -1, -1, -1)
                 logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
+                if corpus.temporal_explanation_logits is not None:
+                    logits = logits + corpus.temporal_explanation_logits[candidate_start:candidate_end, :, 0].to(device).unsqueeze(0)
                 pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
                 local_scores[query_start:query_end, candidate_start:candidate_end] = torch.einsum(
                     "qd,qbd->qb", query_global, pooled
@@ -629,8 +633,11 @@ def paired_candidate_mask_logits(
         affinity = torch.einsum("qnd,qld->qnl", descriptor, token) / reranker.logit_scale
         affinity = affinity.masked_fill(~attention[:, None, :].bool(), -1e4)
         attended = torch.einsum("qnl,qld->qnd", affinity.softmax(-1), token)
+        logits = reranker.interaction_mlp(torch.cat((descriptor, attended, descriptor * attended), dim=-1))
+        if corpus.temporal_explanation_logits is not None:
+            logits = logits + corpus.temporal_explanation_logits[candidate_indices[start:end], :, 0].to(device).unsqueeze(-1)
         outputs.append(
-            reranker.interaction_mlp(torch.cat((descriptor, attended, descriptor * attended), dim=-1))
+            logits
             .squeeze(-1)
             .detach()
             .cpu()

@@ -41,6 +41,21 @@ def test_qcpr_v2_token_conditioned_shapes_and_gradients() -> None:
     assert "branch_biases" in dict(reranker.named_buffers())
 
 
+def test_qcpr_v2_query_mask_uses_changed_channel_as_temporal_prior() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    with torch.no_grad():
+        for parameter in reranker.interaction_mlp.parameters():
+            parameter.zero_()
+        for parameter in reranker.temporal_channel_head.parameters():
+            parameter.zero_()
+        reranker.temporal_channel_head[-1].bias[0] = 2.0
+    output = reranker.score_v2(
+        torch.randn(2, 8), torch.randn(2, 5, 8), torch.ones(2, 5, dtype=torch.bool),
+        torch.randn(3, 8), torch.randn(3, 2, 4, 8),
+    )
+    assert torch.allclose(output["query_mask_logits"], torch.full((2, 3, 4), 2.0))
+
+
 def test_qcpr_v2_model_forward_does_not_require_legacy_mask_query_embeddings() -> None:
     class Visual(nn.Module):
         def __init__(self) -> None:

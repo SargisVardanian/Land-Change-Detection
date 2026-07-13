@@ -22,10 +22,11 @@ def select_threshold(rows: list[dict], target_clipping_fraction: float = 0.2) ->
         raise ValueError("No finite train-step gradient norms found")
     values = torch.tensor(norms, dtype=torch.float64)
     threshold = float(torch.quantile(values, 1.0 - target_clipping_fraction).item())
-    module_keys = sorted({key for row in rows for key in row if key.startswith("grad_norm_") and key != "grad_norm_before_clip"})
+    train_rows = [row for row in rows if row.get("record_type") in (None, "train_step")]
+    module_keys = sorted({key for row in train_rows for key in row if key.startswith("grad_norm_") and key != "grad_norm_before_clip"})
     modules = {}
     for key in module_keys:
-        module_values = torch.tensor([float(row[key]) for row in rows if key in row and math.isfinite(float(row[key]))], dtype=torch.float64)
+        module_values = torch.tensor([float(row[key]) for row in train_rows if key in row and math.isfinite(float(row[key]))], dtype=torch.float64)
         if module_values.numel():
             modules[key.removeprefix("grad_norm_")] = {
                 "count": int(module_values.numel()),

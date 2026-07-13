@@ -275,6 +275,31 @@ def test_v2_paired_mask_logits_chunked_match_unchunked() -> None:
     assert torch.allclose(full, chunked, atol=1e-6, rtol=1e-6)
 
 
+def test_v2_paired_mask_logits_include_temporal_changed_prior() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4, architecture_version="v2")
+    with torch.no_grad():
+        for parameter in reranker.interaction_mlp.parameters():
+            parameter.zero_()
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.randn(2, 4), dim=-1),
+        text_embeddings=F.normalize(torch.randn(2, 4), dim=-1),
+        caption_to_pair=torch.tensor([0, 1]), caption_group_ids=torch.arange(2),
+        pair_ids=["a", "b"], captions=["a", "b"], pair_mask_fractions=torch.ones(2),
+        encode_seconds=0.0, peak_allocated_vram_bytes=0, peak_reserved_vram_bytes=0,
+        patch_tokens=F.normalize(torch.randn(2, 4, 4), dim=-1),
+        text_token_embeddings=F.normalize(torch.randn(2, 3, 4), dim=-1),
+        text_attention_mask=torch.ones(2, 3, dtype=torch.bool),
+        temporal_explanation_logits=torch.tensor([
+            [[1.0, 0.0, 0.0]] * 4,
+            [[2.0, 0.0, 0.0]] * 4,
+        ]),
+        qcpr_architecture_version="v2", qcpr_reranker=reranker, score_mode="qcpr_v2",
+    )
+    logits = paired_candidate_mask_logits(corpus, torch.tensor([0, 1]), torch.tensor([0, 1]), pair_chunk_size=1)
+    assert torch.allclose(logits[0], torch.ones(4))
+    assert torch.allclose(logits[1], torch.full((4,), 2.0))
+
+
 def test_metrics_are_derived_from_same_rank_tensor_and_are_monotonic():
     corpus = _tie_corpus()
     ranks = compute_retrieval_ranks(corpus)
