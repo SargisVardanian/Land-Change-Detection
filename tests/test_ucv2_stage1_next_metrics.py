@@ -9,6 +9,7 @@ from ucv2_retrieval_metrics import (
     RetrievalCorpus,
     compute_retrieval_metrics,
     compute_retrieval_ranks,
+    paired_candidate_mask_logits,
     retrieval_branch_diagnostics,
     retrieval_branch_similarity_matrices,
 )
@@ -238,6 +239,40 @@ def test_v2_global_local_token_and_fused_chunked_scores_match_unchunked() -> Non
     assert set(diagnostics) == {"global", "local", "token_patch", "fused"}
     supplied = compute_retrieval_ranks(corpus, similarities=full["fused"])
     assert torch.equal(supplied.ranked_candidate_indices, compute_retrieval_ranks(corpus).ranked_candidate_indices)
+
+
+def test_v2_paired_mask_logits_chunked_match_unchunked() -> None:
+    torch.manual_seed(11)
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.randn(5, 8), dim=-1),
+        text_embeddings=F.normalize(torch.randn(5, 8), dim=-1),
+        caption_to_pair=torch.arange(5),
+        caption_group_ids=torch.arange(5),
+        pair_ids=[str(index) for index in range(5)],
+        captions=[str(index) for index in range(5)],
+        pair_mask_fractions=torch.ones(5),
+        encode_seconds=0.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        patch_tokens=F.normalize(torch.randn(5, 4, 8), dim=-1),
+        text_token_embeddings=F.normalize(torch.randn(5, 9, 8), dim=-1),
+        text_attention_mask=torch.tensor([
+            [False, True, True, True, False, False, False, False, False],
+            [False, False, True, True, True, False, False, False, False],
+            [False, True, True, True, True, True, False, False, False],
+            [False, False, False, True, True, True, True, False, False],
+            [False, True, True, True, True, True, True, True, False],
+        ]),
+        qcpr_architecture_version="v2",
+        qcpr_reranker=reranker,
+        score_mode="qcpr_v2",
+    )
+    indices = torch.arange(5)
+    full = paired_candidate_mask_logits(corpus, indices, indices, pair_chunk_size=0)
+    chunked = paired_candidate_mask_logits(corpus, indices, indices, pair_chunk_size=2)
+    assert torch.isfinite(chunked).all()
+    assert torch.allclose(full, chunked, atol=1e-6, rtol=1e-6)
 
 
 def test_metrics_are_derived_from_same_rank_tensor_and_are_monotonic():

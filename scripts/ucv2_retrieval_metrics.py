@@ -588,26 +588,54 @@ def _mask_metric_summary_with_splits(predictions: Tensor, targets: Tensor) -> di
 
 
 @torch.inference_mode()
-def paired_candidate_mask_logits(corpus: RetrievalCorpus, query_indices: Tensor, candidate_indices: Tensor) -> Tensor:
-    """Faithful aligned logits without allocating QxBxN."""
-    patches = corpus.patch_tokens[candidate_indices].float()
+def paired_candidate_mask_logits(
+    corpus: RetrievalCorpus,
+    query_indices: Tensor,
+    candidate_indices: Tensor,
+    *,
+    pair_chunk_size: int = 16,
+) -> Tensor:
+    """Faithful aligned logits without allocating QxBxN or all paired interactions."""
+    if query_indices.shape != candidate_indices.shape:
+        raise ValueError("query_indices and candidate_indices must have identical shapes")
+    if pair_chunk_size <= 0:
+        pair_chunk_size = max(int(query_indices.numel()), 1)
+    if query_indices.numel() == 0:
+        patch_count = int(corpus.patch_tokens.shape[1])
+        return torch.empty((0, patch_count), dtype=torch.float32)
     if corpus.qcpr_architecture_version == "v1":
-        return torch.einsum("qd,qnd->qn", corpus.mask_query_embeddings[query_indices].float(), patches)
+        outputs = []
+        for start in range(0, query_indices.numel(), pair_chunk_size):
+            end = min(start + pair_chunk_size, query_indices.numel())
+            patches = corpus.patch_tokens[candidate_indices[start:end]].float()
+            queries = corpus.mask_query_embeddings[query_indices[start:end]].float()
+            outputs.append(torch.einsum("qd,qnd->qn", queries, patches))
+        return torch.cat(outputs, dim=0)
     reranker = corpus.qcpr_reranker
     device = next(reranker.parameters()).device
-    descriptor = patches.to(device)
-    attention_cpu = corpus.text_attention_mask[query_indices].bool()
-    active_columns = attention_cpu.any(dim=0).nonzero(as_tuple=False).flatten()
-    token_start = int(active_columns[0]) if active_columns.numel() else 0
-    token_end = int(active_columns[-1]) + 1 if active_columns.numel() else 1
-    token = torch.nn.functional.normalize(
-        reranker.token_projection(corpus.text_token_embeddings[query_indices, token_start:token_end].to(device)), dim=-1
-    )
-    attention = attention_cpu[:, token_start:token_end].to(device)
-    affinity = torch.einsum("qnd,qld->qnl", descriptor, token) / reranker.logit_scale
-    affinity = affinity.masked_fill(~attention[:, None, :].bool(), -1e4)
-    attended = torch.einsum("qnl,qld->qnd", affinity.softmax(-1), token)
-    return reranker.interaction_mlp(torch.cat((descriptor, attended, descriptor * attended), dim=-1)).squeeze(-1).detach().cpu()
+    outputs = []
+    for start in range(0, query_indices.numel(), pair_chunk_size):
+        end = min(start + pair_chunk_size, query_indices.numel())
+        chunk_queries = query_indices[start:end]
+        descriptor = corpus.patch_tokens[candidate_indices[start:end]].float().to(device)
+        attention_cpu = corpus.text_attention_mask[chunk_queries].bool()
+        active_columns = attention_cpu.any(dim=0).nonzero(as_tuple=False).flatten()
+        token_start = int(active_columns[0]) if active_columns.numel() else 0
+        token_end = int(active_columns[-1]) + 1 if active_columns.numel() else 1
+        token = torch.nn.functional.normalize(
+            reranker.token_projection(corpus.text_token_embeddings[chunk_queries, token_start:token_end].to(device)), dim=-1
+        )
+        attention = attention_cpu[:, token_start:token_end].to(device)
+        affinity = torch.einsum("qnd,qld->qnl", descriptor, token) / reranker.logit_scale
+        affinity = affinity.masked_fill(~attention[:, None, :].bool(), -1e4)
+        attended = torch.einsum("qnl,qld->qnd", affinity.softmax(-1), token)
+        outputs.append(
+            reranker.interaction_mlp(torch.cat((descriptor, attended, descriptor * attended), dim=-1))
+            .squeeze(-1)
+            .detach()
+            .cpu()
+        )
+    return torch.cat(outputs, dim=0)
 
 
 def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
