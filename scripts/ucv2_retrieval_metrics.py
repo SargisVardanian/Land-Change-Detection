@@ -380,6 +380,7 @@ def build_duplicate_aware_positive_mask(corpus: RetrievalCorpus) -> Tensor:
     return positives
 
 
+@torch.inference_mode()
 def similarity_matrix(
     corpus: RetrievalCorpus,
     *,
@@ -405,6 +406,12 @@ def similarity_matrix(
             )
     has_v1 = corpus.qcpr_architecture_version == "v1" and corpus.mask_query_embeddings is not None
     has_v2 = corpus.qcpr_architecture_version == "v2" and corpus.text_token_embeddings is not None and corpus.text_attention_mask is not None and corpus.qcpr_reranker is not None
+    if corpus.patch_tokens is not None and has_v2:
+        return retrieval_branch_similarity_matrices(
+            corpus,
+            query_chunk_size=query_chunk_size,
+            candidate_chunk_size=candidate_chunk_size,
+        )["fused"]
     if corpus.patch_tokens is not None and (has_v1 or has_v2):
         patches = corpus.patch_tokens.float()
         local = torch.empty_like(output)
@@ -445,6 +452,7 @@ def similarity_matrix(
     return output
 
 
+@torch.inference_mode()
 def retrieval_branch_similarity_matrices(
     corpus: RetrievalCorpus,
     *,
@@ -473,6 +481,20 @@ def retrieval_branch_similarity_matrices(
     token_patch_scores = torch.empty_like(global_scores) if has_v2 else None
     for query_start in range(0, query_count, query_chunk_size):
         query_end = min(query_start + query_chunk_size, query_count)
+        token = attention = query_global = None
+        if has_v2:
+            reranker = corpus.qcpr_reranker
+            device = next(reranker.parameters()).device
+            attention_cpu = corpus.text_attention_mask[query_start:query_end].bool()
+            active_columns = attention_cpu.any(dim=0).nonzero(as_tuple=False).flatten()
+            if active_columns.numel() == 0:
+                token_start, token_end = 0, 1
+            else:
+                token_start, token_end = int(active_columns[0]), int(active_columns[-1]) + 1
+            token_source = corpus.text_token_embeddings[query_start:query_end, token_start:token_end].to(device)
+            token = F.normalize(reranker.token_projection(token_source), dim=-1)
+            attention = attention_cpu[:, token_start:token_end].to(device)
+            query_global = corpus.text_embeddings[query_start:query_end].to(device)
         for candidate_start in range(0, candidate_count, candidate_chunk_size):
             candidate_end = min(candidate_start + candidate_chunk_size, candidate_count)
             patches = corpus.patch_tokens[candidate_start:candidate_end].float()
@@ -484,13 +506,7 @@ def retrieval_branch_similarity_matrices(
                 )
                 local_scores[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
             else:
-                reranker = corpus.qcpr_reranker
-                device = next(reranker.parameters()).device
                 descriptor = patches.to(device)
-                token = F.normalize(
-                    reranker.token_projection(corpus.text_token_embeddings[query_start:query_end].to(device)), dim=-1
-                )
-                attention = corpus.text_attention_mask[query_start:query_end].to(device)
                 affinity = torch.einsum("bnd,qld->qbnl", descriptor, token) / reranker.logit_scale
                 affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
                 attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
@@ -498,7 +514,7 @@ def retrieval_branch_similarity_matrices(
                 logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
                 pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
                 local_scores[query_start:query_end, candidate_start:candidate_end] = torch.einsum(
-                    "qd,qbd->qb", corpus.text_embeddings[query_start:query_end].to(device), pooled
+                    "qd,qbd->qb", query_global, pooled
                 ).detach().cpu()
                 top_k = max(1, min(4, logits.shape[-1]))
                 token_patch_scores[query_start:query_end, candidate_start:candidate_end] = (
@@ -684,12 +700,17 @@ def compute_retrieval_ranks(
     *,
     query_chunk_size: int | None = None,
     candidate_chunk_size: int | None = None,
+    similarities: Tensor | None = None,
 ) -> RetrievalRankResult:
-    similarities = similarity_matrix(
-        corpus,
-        query_chunk_size=query_chunk_size,
-        candidate_chunk_size=candidate_chunk_size,
-    )
+    if similarities is None:
+        similarities = similarity_matrix(
+            corpus,
+            query_chunk_size=query_chunk_size,
+            candidate_chunk_size=candidate_chunk_size,
+        )
+    expected_shape = (int(corpus.text_embeddings.shape[0]), int(corpus.pair_embeddings.shape[0]))
+    if similarities.shape != expected_shape:
+        raise ValueError(f"similarities must have shape {expected_shape}, got {tuple(similarities.shape)}")
     positives = build_duplicate_aware_positive_mask(corpus)
     positive_counts = positives.sum(dim=1).long()
     if not torch.all(positive_counts > 0):

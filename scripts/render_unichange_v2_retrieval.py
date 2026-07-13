@@ -338,14 +338,17 @@ def main() -> int:
     temporal_channel_status = temporal_channel_render_status(checkpoint, config.qcpr_architecture_version)
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
-    rank_result = compute_retrieval_ranks(
+    branch_scores = retrieval_branch_similarity_matrices(
         corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
+    )
+    rank_result = compute_retrieval_ranks(
+        corpus,
+        query_chunk_size=args.query_chunk_size,
+        candidate_chunk_size=args.candidate_chunk_size,
+        similarities=branch_scores["fused"],
     )
     metrics, similarities = compute_retrieval_metrics(
         corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size, rank_result=rank_result
-    )
-    branch_scores = retrieval_branch_similarity_matrices(
-        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
     )
     branch_metrics = retrieval_branch_diagnostics(corpus, branch_scores)
     global_similarities = branch_scores["global"]

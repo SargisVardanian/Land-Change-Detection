@@ -219,8 +219,11 @@ def test_v2_global_local_token_and_fused_chunked_scores_match_unchunked() -> Non
         peak_allocated_vram_bytes=0,
         peak_reserved_vram_bytes=0,
         patch_tokens=F.normalize(torch.randn(3, 4, 8), dim=-1),
-        text_token_embeddings=F.normalize(torch.randn(2, 5, 8), dim=-1),
-        text_attention_mask=torch.ones(2, 5, dtype=torch.bool),
+        text_token_embeddings=F.normalize(torch.randn(2, 8, 8), dim=-1),
+        text_attention_mask=torch.tensor([
+            [False, False, True, True, True, False, False, False],
+            [False, True, True, True, True, True, False, False],
+        ]),
         qcpr_architecture_version="v2",
         qcpr_reranker=reranker,
         score_mode="qcpr_v2",
@@ -233,6 +236,8 @@ def test_v2_global_local_token_and_fused_chunked_scores_match_unchunked() -> Non
         assert torch.allclose(full[name], chunked[name], atol=1e-6, rtol=1e-6)
     diagnostics = retrieval_branch_diagnostics(corpus, full)
     assert set(diagnostics) == {"global", "local", "token_patch", "fused"}
+    supplied = compute_retrieval_ranks(corpus, similarities=full["fused"])
+    assert torch.equal(supplied.ranked_candidate_indices, compute_retrieval_ranks(corpus).ranked_candidate_indices)
 
 
 def test_metrics_are_derived_from_same_rank_tensor_and_are_monotonic():
