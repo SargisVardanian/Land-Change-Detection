@@ -170,6 +170,26 @@ def test_mask_metrics_exclude_unsupervised_rows_from_denominator():
     assert metrics["mask_IoU"] == 1.0
     assert metrics["predicted_mask_area_mean"] == 1.0
     assert metrics["target_mask_area_mean"] == 1.0
+    assert metrics["mask_nonempty_count"] == 1
+    assert metrics["mask_empty_count"] == 0
+
+
+def test_mask_metrics_expose_empty_target_false_positive_collapse() -> None:
+    corpus = RetrievalCorpus(
+        pair_embeddings=torch.ones(2, 1), text_embeddings=torch.ones(2, 1),
+        caption_to_pair=torch.tensor([0, 1]), caption_group_ids=torch.tensor([0, 1]),
+        pair_ids=["nonempty", "empty"], captions=["q1", "q2"], pair_mask_fractions=torch.tensor([1.0, 0.0]),
+        encode_seconds=0.0, peak_allocated_vram_bytes=0, peak_reserved_vram_bytes=0,
+        patch_tokens=torch.ones(2, 1, 1), mask_query_embeddings=torch.ones(2, 1),
+        pair_masks=torch.tensor([[[1.0]], [[0.0]]]), segmentation_target_kinds=["query_specific", "query_specific"],
+        segmentation_weights=torch.ones(2), change_types=["appeared", "appeared"],
+    )
+    metrics = supervised_mask_metrics(corpus)
+    assert metrics["mask_nonempty_count"] == 1
+    assert metrics["mask_nonempty_Dice"] == 1.0
+    assert metrics["mask_empty_count"] == 1
+    assert metrics["mask_empty_target_false_positive_rate"] == 1.0
+    assert metrics["mask_empty_target_pixel_false_positive_rate"] == 1.0
 
 
 def test_temporal_channel_metrics_report_changed_appeared_and_disappeared_separately():
@@ -192,6 +212,8 @@ def test_temporal_channel_metrics_report_changed_appeared_and_disappeared_separa
     assert metrics["mask_temporal_changed_Dice"] == 1.0
     assert metrics["mask_temporal_appeared_Dice"] == 1.0
     assert metrics["mask_temporal_disappeared_Dice"] == 1.0
+    assert metrics["mask_temporal_appeared_nonempty_count"] == 1
+    assert metrics["mask_temporal_disappeared_nonempty_count"] == 1
 
 
 def test_patchseg_readiness_requires_mixed_supervision_smoke_evidence(tmp_path: Path):

@@ -1095,6 +1095,7 @@ def run(
         epoch_steps = 0
         epoch_pair_count = 0
         grad_norms: list[float] = []
+        module_grad_norm_history: dict[str, list[float]] = {}
         clipped_steps = 0
 
         for batch_index, batch in enumerate(train_loader):
@@ -1278,18 +1279,44 @@ def run(
             if not torch.isfinite(loss):
                 raise RuntimeError(f"Non-finite loss at step {step}: {float(loss.detach().cpu())}")
             loss.backward()
-            gradient_modules = {}
-            for module_name, module in model.named_children():
-                trainable_module_parameters = [parameter for parameter in module.parameters() if parameter.requires_grad]
-                if not trainable_module_parameters:
-                    continue
+            def summarize_gradients(parameters) -> dict[str, float | int | bool]:
+                trainable_module_parameters = [parameter for parameter in parameters if parameter.requires_grad]
                 gradients = [parameter.grad for parameter in trainable_module_parameters if parameter.grad is not None]
-                gradient_modules[module_name] = {
+                norm = math.sqrt(sum(float(gradient.detach().float().square().sum().cpu()) for gradient in gradients))
+                return {
                     "parameter_count": len(trainable_module_parameters),
                     "gradient_count": len(gradients),
                     "finite": bool(gradients) and all(bool(torch.isfinite(gradient).all()) for gradient in gradients),
                     "nonzero": any(bool(torch.any(gradient != 0)) for gradient in gradients),
+                    "grad_norm_before_clip": norm,
                 }
+
+            gradient_groups = {
+                module_name: list(module.parameters())
+                for module_name, module in model.named_children()
+                if any(parameter.requires_grad for parameter in module.parameters())
+            }
+            if config.enable_patch_reranker and model.patch_reranker is not None and config.qcpr_architecture_version == "v2":
+                reranker = model.patch_reranker
+                gradient_groups.update({
+                    "qcpr_temporal_descriptor": list(reranker.temporal_descriptor_mlp.parameters()),
+                    "qcpr_token_projection": list(reranker.token_projection.parameters()),
+                    "qcpr_interaction": list(reranker.interaction_mlp.parameters()),
+                    "qcpr_temporal_channel": list(reranker.temporal_channel_head.parameters()),
+                    "qcpr_fusion_calibration": [reranker.fusion_logits, reranker.branch_log_scales],
+                })
+            gradient_modules = {}
+            for module_name, parameters in gradient_groups.items():
+                trainable_module_parameters = [parameter for parameter in parameters if parameter.requires_grad]
+                if not trainable_module_parameters:
+                    continue
+                gradient_modules[module_name] = summarize_gradients(trainable_module_parameters)
+            module_gradient_norms = {
+                f"grad_norm_{module_name}": float(details["grad_norm_before_clip"])
+                for module_name, details in gradient_modules.items()
+            }
+            for name, value in module_gradient_norms.items():
+                module_grad_norm_history.setdefault(name, []).append(value)
             base._write_json(output_dir / "gradient_flow_audit.json", {"step": step, "modules": gradient_modules})
             patch_projector_grad_present = False
             query_mask_head_grad_present = False
@@ -1329,11 +1356,13 @@ def run(
                     "captions": len(batch["captions"]),
                     "grad_norm_before_clip": grad_norm,
                     "gradient_was_clipped": grad_norm > config.grad_clip_norm,
+                    "grad_clip_norm": config.grad_clip_norm,
                     "patch_projector_grad_present": patch_projector_grad_present,
                     "query_mask_head_grad_present": query_mask_head_grad_present,
                     "logit_scale": float(model.retrieval_head.similarity_scale().detach().cpu()),
                     "effective_temperature": float(1.0 / model.retrieval_head.similarity_scale().detach().cpu()),
                     **loss_diagnostics,
+                    **module_gradient_norms,
                     "learning_rates": [float(group["lr"]) for group in optimizer.param_groups],
                 },
             )
@@ -1374,6 +1403,13 @@ def run(
             )
 
         grad_tensor = torch.tensor(grad_norms, dtype=torch.float32)
+        module_grad_summary: dict[str, float] = {}
+        for name, values in module_grad_norm_history.items():
+            value_tensor = torch.tensor(values, dtype=torch.float32)
+            module_grad_summary[f"{name}_mean"] = float(value_tensor.mean().item())
+            module_grad_summary[f"{name}_p50"] = float(torch.quantile(value_tensor, 0.5).item())
+            module_grad_summary[f"{name}_p90"] = float(torch.quantile(value_tensor, 0.9).item())
+            module_grad_summary[f"{name}_max"] = float(value_tensor.max().item())
         epoch_record: dict[str, Any] = {
             "record_type": "epoch",
             "epoch": epoch + 1,
@@ -1391,6 +1427,7 @@ def run(
             "grad_norm_p90": float(torch.quantile(grad_tensor, 0.9).item()) if grad_tensor.numel() else 0.0,
             "grad_norm_max": float(grad_tensor.max().item()) if grad_tensor.numel() else 0.0,
             "gradient_clipping_fraction": clipped_steps / max(epoch_steps, 1),
+            **module_grad_summary,
             "logit_scale": float(model.retrieval_head.similarity_scale().detach().cpu()),
             "effective_temperature": float(1.0 / model.retrieval_head.similarity_scale().detach().cpu()),
             "optimizer_groups": [

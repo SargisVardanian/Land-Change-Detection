@@ -670,6 +670,22 @@ def main() -> int:
         if corpus.qcpr_architecture_version == "v2" and corpus.qcpr_reranker is not None
         else [corpus.qcpr_alpha, corpus.qcpr_beta]
     )
+    if corpus.qcpr_architecture_version == "v2" and corpus.qcpr_reranker is not None:
+        calibration["branch_log_scales"] = corpus.qcpr_reranker.branch_log_scales.detach().cpu().tolist()
+        calibration["branch_positive_scales"] = corpus.qcpr_reranker.branch_log_scales.detach().cpu().exp().tolist()
+        calibration["branch_fixed_biases"] = corpus.qcpr_reranker.branch_biases.detach().cpu().tolist()
+    correlations: dict[str, float] = {}
+    branch_names = [name for name in ("global", "local", "token_patch", "fused") if name in branch_scores]
+    for left_index, left_name in enumerate(branch_names):
+        left = branch_scores[left_name].float().flatten()
+        for right_name in branch_names[left_index + 1:]:
+            right = branch_scores[right_name].float().flatten()
+            if left.numel() > 1 and float(left.std()) > 0.0 and float(right.std()) > 0.0:
+                value = float(torch.corrcoef(torch.stack((left, right)))[0, 1].item())
+            else:
+                value = 0.0
+            correlations[f"{left_name}__{right_name}"] = value
+    calibration["branch_score_correlations"] = correlations
     (args.output_dir / "score_calibration.json").write_text(
         json.dumps(calibration, indent=2), encoding="utf-8"
     )

@@ -566,6 +566,28 @@ def _mask_metric_summary(predictions: Tensor, targets: Tensor) -> dict[str, floa
     }
 
 
+def _mask_metric_summary_with_splits(predictions: Tensor, targets: Tensor) -> dict[str, float | int]:
+    """Report aggregate, non-empty-target, and empty-target collapse diagnostics."""
+    summary = _mask_metric_summary(predictions, targets)
+    if predictions.numel() == 0:
+        nonempty = empty = torch.zeros(0, dtype=torch.bool)
+    else:
+        nonempty = (targets >= 0.5).flatten(1).any(dim=1)
+        empty = ~nonempty
+    for split_name, keep in (("nonempty", nonempty), ("empty", empty)):
+        split = _mask_metric_summary(predictions[keep], targets[keep])
+        summary.update({f"{split_name}_{key}": value for key, value in split.items()})
+    if torch.any(empty):
+        predicted_empty = predictions[empty] >= 0.5
+        summary["empty_target_false_positive_rate"] = float(predicted_empty.flatten(1).any(dim=1).float().mean().item())
+        summary["empty_target_pixel_false_positive_rate"] = float(predicted_empty.float().mean().item())
+    else:
+        summary["empty_target_false_positive_rate"] = 0.0
+        summary["empty_target_pixel_false_positive_rate"] = 0.0
+    return summary
+
+
+@torch.inference_mode()
 def paired_candidate_mask_logits(corpus: RetrievalCorpus, query_indices: Tensor, candidate_indices: Tensor) -> Tensor:
     """Faithful aligned logits without allocating QxBxN."""
     patches = corpus.patch_tokens[candidate_indices].float()
@@ -574,8 +596,14 @@ def paired_candidate_mask_logits(corpus: RetrievalCorpus, query_indices: Tensor,
     reranker = corpus.qcpr_reranker
     device = next(reranker.parameters()).device
     descriptor = patches.to(device)
-    token = torch.nn.functional.normalize(reranker.token_projection(corpus.text_token_embeddings[query_indices].to(device)), dim=-1)
-    attention = corpus.text_attention_mask[query_indices].to(device)
+    attention_cpu = corpus.text_attention_mask[query_indices].bool()
+    active_columns = attention_cpu.any(dim=0).nonzero(as_tuple=False).flatten()
+    token_start = int(active_columns[0]) if active_columns.numel() else 0
+    token_end = int(active_columns[-1]) + 1 if active_columns.numel() else 1
+    token = torch.nn.functional.normalize(
+        reranker.token_projection(corpus.text_token_embeddings[query_indices, token_start:token_end].to(device)), dim=-1
+    )
+    attention = attention_cpu[:, token_start:token_end].to(device)
     affinity = torch.einsum("qnd,qld->qnl", descriptor, token) / reranker.logit_scale
     affinity = affinity.masked_fill(~attention[:, None, :].bool(), -1e4)
     attended = torch.einsum("qnl,qld->qnd", affinity.softmax(-1), token)
@@ -584,7 +612,7 @@ def paired_candidate_mask_logits(corpus: RetrievalCorpus, query_indices: Tensor,
 
 def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
     """Mask metrics for true supervised targets only; unsupervised rows never enter denominators."""
-    empty = _mask_metric_summary(torch.empty(0, 1), torch.empty(0, 1))
+    empty = _mask_metric_summary_with_splits(torch.empty(0, 1), torch.empty(0, 1))
     metrics: dict[str, float | int] = {f"mask_{key}": value for key, value in empty.items()}
     metrics["predicted_mask_area_mean"] = 0.0
     metrics["target_mask_area_mean"] = 0.0
@@ -623,7 +651,7 @@ def supervised_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | int]:
     )[:, 0].flatten(1)
 
     def add_summary(prefix: str, mask: Tensor) -> None:
-        summary = _mask_metric_summary(predictions[mask], targets[mask])
+        summary = _mask_metric_summary_with_splits(predictions[mask], targets[mask])
         metrics.update({f"{prefix}{key}": value for key, value in summary.items()})
 
     all_mask = torch.ones(query_indices.numel(), dtype=torch.bool)
@@ -658,7 +686,7 @@ def temporal_channel_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | 
         or corpus.change_types is None
     ):
         for name in ("changed", "appeared", "disappeared"):
-            metrics.update({f"mask_temporal_{name}_{key}": value for key, value in _mask_metric_summary(torch.empty(0, 1), torch.empty(0, 1)).items()})
+            metrics.update({f"mask_temporal_{name}_{key}": value for key, value in _mask_metric_summary_with_splits(torch.empty(0, 1), torch.empty(0, 1)).items()})
         return metrics
     logits = corpus.temporal_explanation_logits.float()
     patch_count = logits.shape[1]
@@ -676,7 +704,7 @@ def temporal_channel_mask_metrics(corpus: RetrievalCorpus) -> dict[str, float | 
         "disappeared": (2, supervised & torch.tensor([value == "disappeared" for value in corpus.change_types]), pair_targets),
     }
     for name, (channel, keep, targets) in specifications.items():
-        summary = _mask_metric_summary(probabilities[keep, channel], targets[keep])
+        summary = _mask_metric_summary_with_splits(probabilities[keep, channel], targets[keep])
         metrics.update({f"mask_temporal_{name}_{key}": value for key, value in summary.items()})
     return metrics
 

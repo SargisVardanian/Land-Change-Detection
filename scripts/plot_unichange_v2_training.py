@@ -168,6 +168,34 @@ def plot_hard_negative_coverage(step_rows: list[dict], output: Path) -> None:
     plt.close(figure)
 
 
+def plot_module_gradient_norms(step_rows: list[dict], output: Path) -> None:
+    if not step_rows:
+        return
+    steps = [int(row["step"]) for row in step_rows]
+    keys = (
+        ("grad_norm_temporal_encoder", "Temporal encoder"),
+        ("grad_norm_text_adapter", "Text adapter"),
+        ("grad_norm_qcpr_interaction", "QCPR interaction"),
+        ("grad_norm_qcpr_temporal_channel", "Temporal channel head"),
+        ("grad_norm_qcpr_fusion_calibration", "Fusion/calibration"),
+    )
+    available = [(key, label) for key, label in keys if any(key in row for row in step_rows)]
+    if not available:
+        return
+    figure = plt.figure(figsize=(12, 6.5))
+    for key, label in available:
+        values = [float(row.get(key, 0.0)) for row in step_rows]
+        plt.plot(steps, _rolling(values), label=label)
+    plt.xlabel("Step")
+    plt.ylabel("Gradient L2 norm before clipping")
+    plt.title("Per-module gradient norms")
+    plt.grid(True, alpha=0.25)
+    plt.legend()
+    plt.tight_layout()
+    figure.savefig(output, dpi=170)
+    plt.close(figure)
+
+
 def main() -> int:
     args = parse_args()
     rows = load_rows(args.history)
@@ -182,6 +210,7 @@ def main() -> int:
     plot_training_objectives(step_rows, args.output_dir / "training_objectives.png")
     plot_optimization_diagnostics(step_rows, args.output_dir / "optimization_diagnostics.png", resolved_config.get("grad_clip_norm"))
     plot_hard_negative_coverage(step_rows, args.output_dir / "hard_negative_coverage.png")
+    plot_module_gradient_norms(step_rows, args.output_dir / "module_gradient_norms.png")
 
     best = max(epoch_rows, key=lambda row: float(row.get("text_to_pair_R@1", -1.0))) if epoch_rows else None
     summary = {
@@ -198,6 +227,7 @@ def main() -> int:
             "training_objectives": str(args.output_dir / "training_objectives.png"),
             "optimization_diagnostics": str(args.output_dir / "optimization_diagnostics.png"),
             "hard_negative_coverage": str(args.output_dir / "hard_negative_coverage.png"),
+            "module_gradient_norms": str(args.output_dir / "module_gradient_norms.png"),
         },
     }
     (args.output_dir / "training_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
