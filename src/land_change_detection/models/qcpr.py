@@ -218,7 +218,11 @@ class QCPRPatchReranker(nn.Module):
             initial_weights = torch.tensor([alpha, beta, max(0.05 * (alpha + beta), 1e-3)], dtype=torch.float32)
             self.fusion_logits = nn.Parameter(initial_weights.log())
             self.branch_log_scales = nn.Parameter(torch.zeros(3))
-            self.branch_biases = nn.Parameter(torch.zeros(3))
+            # Per-branch constants collapse to one candidate-independent
+            # offset after normalized fusion. Ranking losses are invariant to
+            # that offset, so treating these values as trainable creates an
+            # unidentifiable parameter with an exactly-zero real gradient.
+            self.register_buffer("branch_biases", torch.zeros(3))
             for parameter in self.patch_projector.parameters():
                 parameter.requires_grad_(False)
             for parameter in self.query_mask_head.parameters():

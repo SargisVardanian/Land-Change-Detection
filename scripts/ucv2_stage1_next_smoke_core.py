@@ -348,12 +348,14 @@ def run(
                     fusion_parameters = [
                         model.patch_reranker.fusion_logits,
                         model.patch_reranker.branch_log_scales,
-                        model.patch_reranker.branch_biases,
                     ]
                     gradient_audit["fusion_calibration"] = {
                         "has_grad": all(parameter.grad is not None for parameter in fusion_parameters),
                         "finite": all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in fusion_parameters),
                         "nonzero": all(parameter.grad is not None and torch.any(parameter.grad != 0) for parameter in fusion_parameters),
+                        "trainable_parameters": ["fusion_logits", "branch_log_scales"],
+                        "fixed_branch_biases": True,
+                        "fixed_branch_biases_reason": "candidate-independent fused offsets are unidentifiable under ranking losses",
                     }
         optimizer.step()
         scheduler.step()

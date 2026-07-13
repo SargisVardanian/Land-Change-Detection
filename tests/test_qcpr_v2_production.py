@@ -37,7 +37,8 @@ def test_qcpr_v2_token_conditioned_shapes_and_gradients() -> None:
     assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in reranker.interaction_mlp.parameters())
     assert reranker.fusion_logits.grad is not None and torch.any(reranker.fusion_logits.grad != 0)
     assert reranker.branch_log_scales.grad is not None and torch.any(reranker.branch_log_scales.grad != 0)
-    assert reranker.branch_biases.grad is not None and torch.any(reranker.branch_biases.grad != 0)
+    assert "branch_biases" not in dict(reranker.named_parameters())
+    assert "branch_biases" in dict(reranker.named_buffers())
 
 
 def test_qcpr_v2_model_forward_does_not_require_legacy_mask_query_embeddings() -> None:
