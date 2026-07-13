@@ -40,8 +40,8 @@ ARGS=(
   --num-workers "${NUM_WORKERS:-4}"
   --top-k "${TOP_K:-5}"
   --max-queries "${MAX_QUERIES:-48}"
-  --query-chunk-size "${QUERY_CHUNK_SIZE:-64}"
-  --candidate-chunk-size "${CANDIDATE_CHUNK_SIZE:-256}"
+  --query-chunk-size "${QUERY_CHUNK_SIZE:-16}"
+  --candidate-chunk-size "${CANDIDATE_CHUNK_SIZE:-32}"
   --device cuda
 )
 if [[ -n "${DATASET_CONFIG:-}" ]]; then

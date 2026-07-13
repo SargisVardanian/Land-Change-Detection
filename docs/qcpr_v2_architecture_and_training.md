@@ -81,7 +81,7 @@ The 500-step pilot established the following evidence:
 
 - batch 32 OOMed during full optimizer-backed training;
 - batch 24 completed 500 steps on one H100;
-- validation must use query/candidate chunking (64/256);
+- QCPR v2 validation must use query/candidate chunking (16/32); the v1-safe 64/256 setting materializes much larger token-conditioned interaction tensors and OOMs;
 - the old auxiliary sum over attributes was over-scaled;
 - gradient norm before clipping had median 7.70 and p90 10.91, so clip=1 activated on every pilot step.
 
@@ -90,8 +90,8 @@ The prepared deterministic full-training path therefore uses:
 ```text
 batch_size = 24
 bf16 = true
-query_chunk_size = 64
-candidate_chunk_size = 256
+query_chunk_size = 16
+candidate_chunk_size = 32
 grad_clip_norm = 5.0 for new training (1.0 only when faithfully finalizing the old pilot)
 structured auxiliary reduction = mean over active attributes
 initialization = immutable QCPR v1 checkpoint
