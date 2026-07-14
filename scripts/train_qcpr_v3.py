@@ -25,6 +25,7 @@ from land_change_detection.models.qcpr_v3_losses import query_mask_loss, query_m
 from land_change_detection.models.qcpr_v3_phases import apply_phase_to_model, resolve_training_phase
 from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, assert_teacher_not_in_optimizer, build_v3_and_teacher
 from land_change_detection.models.qcpr_v3_teacher import teacher_preservation_losses
+from land_change_detection.models.qcpr_v3_adapters import CanonicalV3Inputs, evaluator_score, renderer_score, trainer_score
 
 
 def _seed(value: int) -> None:
@@ -52,6 +53,15 @@ def _save_panel(path: Path, images: torch.Tensor, mask_logits: torch.Tensor, tar
         array = np.stack([array, array, array], axis=-1)
         tiles.append((array.clip(0, 1) * 255).astype(np.uint8))
     Image.fromarray(np.concatenate(tiles, axis=1)).save(path)
+
+
+def _assert_cuda_selection(selection: dict[str, torch.Tensor], device: torch.device) -> None:
+    """Smoke-visible enforcement of the collator-to-CUDA indexing boundary."""
+    if device.type != "cuda":
+        raise RuntimeError("real QCPR v3 run must use CUDA")
+    for name, tensor in selection.items():
+        if tensor.device != device:
+            raise RuntimeError(f"retrieval selection {name} is on {tensor.device}, expected {device}")
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -96,15 +106,17 @@ def run(args: argparse.Namespace) -> dict:
                 iterator = iter(loader); batch = next(iterator)
             attempts += 1
             names = {str(name) for name in batch.get("dataset_names", [])}
-            if step > 1 or not args.required_dataset or args.required_dataset in names:
+            required = {name for name in args.required_datasets.split(",") if name}
+            if step > 1 or required.issubset(names):
                 break
             if attempts > len(loader):
-                raise RuntimeError(f"required smoke dataset {args.required_dataset!r} was not found")
+                raise RuntimeError(f"required smoke datasets {sorted(required)!r} were not found together")
         observed_datasets.update(names)
         images = batch["images"].to(device, non_blocking=True)
         mapping = batch["caption_to_pair"].to(device)
         temporal_mask = batch["temporal_valid_mask"].to(device)
         selection = legacy_data.retrieval_supervision_selection(batch, device)
+        _assert_cuda_selection(selection, device)
         optimizer.zero_grad(set_to_none=True)
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
             result = student(images, batch["captions"], mapping, temporal_mask)
@@ -141,6 +153,18 @@ def run(args: argparse.Namespace) -> dict:
             target_panel = F.interpolate(batch["masks"][first_pair:first_pair + 1].float().unsqueeze(1), result.scores.decoded_mask_logits.shape[-2:], mode="nearest")[0, 0]
             _save_panel(output / "soft_segmentation_panel.png", images, result.scores.decoded_mask_logits[first_query, first_pair], target_panel)
             _save_panel(output / "retrieval_panel.png", images, result.scores.decoded_mask_logits[first_query, first_pair], target_panel)
+            with torch.no_grad():
+                canonical = CanonicalV3Inputs(
+                    global_query_embeddings=result.text_embedding.detach(),
+                    text_token_embeddings=result.text_token_embeddings.detach(),
+                    text_attention_mask=result.text_attention_mask.detach(),
+                    pair_embeddings=result.pair_embedding.detach(),
+                    per_time_tokens=result.per_time_tokens.detach(),
+                )
+                parity = (trainer_score(student, canonical), evaluator_score(student, canonical), renderer_score(student, canonical))
+                for candidate in parity[1:]:
+                    torch.testing.assert_close(parity[0].reranked_score, candidate.reranked_score)
+                    torch.testing.assert_close(parity[0].decoded_mask_logits, candidate.decoded_mask_logits)
         margin = _positive_margin(selected_scores(result.scores.local_score.detach()), selection["selected_mapping"]) if selection["selected_queries"].numel() else torch.tensor(float("nan"))
         row = {"step": step, "loss": float(total.detach()), "grad_norm": float(norm), "local_margin": float(margin)}
         row.update({name: float(value.detach()) for name, value in losses.items()})
@@ -156,6 +180,7 @@ def run(args: argparse.Namespace) -> dict:
         "status": "PASS", "phase": profile.to_dict(), "initialization": asdict(initialization),
         "optimizer_audit": optimizer_audit, "history": history,
         "observed_datasets": sorted(observed_datasets),
+        "cuda_device_contract": {name: str(tensor.device) for name, tensor in selection.items()},
         "peak_gpu_allocated": torch.cuda.max_memory_allocated(), "peak_gpu_reserved": torch.cuda.max_memory_reserved(),
         "git_sha": os.popen("git rev-parse HEAD").read().strip(), "checkpoint": str(checkpoint),
     }
@@ -177,7 +202,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0.05)
     parser.add_argument("--grad-clip-norm", type=float, default=1.0)
-    parser.add_argument("--required-dataset", default="")
+    parser.add_argument("--required-datasets", default="")
     return parser.parse_args()
 
 

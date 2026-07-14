@@ -19,9 +19,9 @@ test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git status --porcelain)"
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
 mkdir -p /mnt/weka/svardanyan/rs_change_project/logs
-"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/global" --phase global_recovery --steps 1 --batch-size 8
-"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/late" --phase late_interaction --steps 1 --batch-size 8
-"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/mask" --phase mask_grounding --steps 1 --batch-size 8 --required-dataset s2looking
+"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/global" --phase global_recovery --steps 1 --batch-size 8 --required-datasets levir_mci,second_cc
+"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/late" --phase late_interaction --steps 1 --batch-size 8 --required-datasets levir_mci,second_cc
+"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/mask" --phase mask_grounding --steps 1 --batch-size 8 --required-datasets s2looking
 "$PYTHON" - "$OUTPUT_DIR" <<'PY'
 import json,sys
 from pathlib import Path

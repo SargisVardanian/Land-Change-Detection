@@ -244,21 +244,44 @@ class FrequencyBalancedCaptionCollator:
 
 
 def retrieval_supervision_selection(batch: dict[str, Any], device: torch.device) -> dict[str, Tensor]:
-    """Shared retrieval filter used by production training and smoke."""
+    """Select retrieval-supervised pairs with one explicit tensor-device contract.
+
+    ``retrieval_supervision`` and ``caption_to_pair`` may arrive from a CPU
+    collator even when model outputs are on CUDA.  Every tensor used for
+    indexing is moved to ``device`` before any indexing operation; Python
+    metadata such as captions and pair IDs deliberately remains on CPU.
+    """
     pair_mask = batch["retrieval_supervision"].to(device=device, dtype=torch.bool)
-    caption_mask = pair_mask[batch["caption_to_pair"].long()]
+    caption_to_pair = batch["caption_to_pair"].to(device=device, dtype=torch.long)
+    if pair_mask.ndim != 1:
+        raise ValueError(f"retrieval_supervision must be rank-1, got {tuple(pair_mask.shape)}")
+    if caption_to_pair.ndim != 1:
+        raise ValueError(f"caption_to_pair must be rank-1, got {tuple(caption_to_pair.shape)}")
+    pair_count = pair_mask.numel()
+    if caption_to_pair.numel() and (
+        int(caption_to_pair.min().item()) < 0 or int(caption_to_pair.max().item()) >= pair_count
+    ):
+        raise ValueError(f"caption_to_pair values must be in [0, {pair_count}), got out-of-range values")
+
+    caption_mask = pair_mask.index_select(0, caption_to_pair)
     selected_pairs = torch.nonzero(pair_mask, as_tuple=False).flatten()
     selected_queries = torch.nonzero(caption_mask, as_tuple=False).flatten()
     inverse = torch.full((pair_mask.numel(),), -1, dtype=torch.long, device=device)
-    inverse[selected_pairs] = torch.arange(selected_pairs.numel(), device=device)
-    selected_mapping = inverse[batch["caption_to_pair"][selected_queries].long()]
-    return {
+    inverse.index_copy_(0, selected_pairs, torch.arange(selected_pairs.numel(), device=device))
+    selected_pair_indices = caption_to_pair.index_select(0, selected_queries)
+    selected_mapping = inverse.index_select(0, selected_pair_indices)
+    if bool((selected_mapping < 0).any()):
+        raise RuntimeError("selected_mapping contains an unsupervised or negative compact pair index")
+    result = {
         "pair_mask": pair_mask,
         "caption_mask": caption_mask,
         "selected_pairs": selected_pairs,
         "selected_queries": selected_queries,
         "selected_mapping": selected_mapping,
     }
+    if any(tensor.device != device for tensor in result.values()):
+        raise RuntimeError(f"retrieval supervision selection returned a tensor outside requested device {device}")
+    return result
 
 
 def _captions_from_sample(sample: Any) -> list[str]:
