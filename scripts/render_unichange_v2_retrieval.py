@@ -55,6 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--query-chunk-size", type=int, default=64)
     parser.add_argument("--candidate-chunk-size", type=int, default=256)
+    parser.add_argument("--rerank-top-n", type=int, default=0)
     parser.add_argument("--mask-threshold", type=float, default=0.5)
     return parser.parse_args()
 
@@ -344,13 +345,16 @@ def main() -> int:
     model.eval()
     corpus = collect_retrieval_corpus(model, loader, device, config)
     branch_scores = retrieval_branch_similarity_matrices(
-        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size
+        corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size,
+        rerank_top_n=args.rerank_top_n,
     )
+    ranking_branch = "reranked" if "reranked" in branch_scores else "fused"
+    ranking_scores = branch_scores[ranking_branch]
     rank_result = compute_retrieval_ranks(
         corpus,
         query_chunk_size=args.query_chunk_size,
         candidate_chunk_size=args.candidate_chunk_size,
-        similarities=branch_scores["fused"],
+        similarities=ranking_scores,
     )
     metrics, similarities = compute_retrieval_metrics(
         corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size, rank_result=rank_result
@@ -358,8 +362,8 @@ def main() -> int:
     branch_metrics = retrieval_branch_diagnostics(corpus, branch_scores)
     global_similarities = branch_scores["global"]
     local_similarities = branch_scores.get("local")
-    if not torch.allclose(similarities, branch_scores["fused"], atol=1e-5, rtol=1e-5):
-        raise RuntimeError("Fused evaluator scores disagree with independently computed branch scores")
+    if not torch.allclose(similarities, ranking_scores, atol=1e-5, rtol=1e-5):
+        raise RuntimeError("Selected evaluator scores disagree with independently computed branch scores")
     teacher_embeddings = corpus.teacher_text_embeddings if corpus.teacher_text_embeddings is not None else corpus.text_embeddings
     semantic_relevance = semantic_teacher_relevance_matrix(
         teacher_embeddings,
@@ -387,7 +391,7 @@ def main() -> int:
     with latent_positive_audit_path.open("w", encoding="utf-8") as latent_handle:
         for query_index, query_caption in enumerate(corpus.captions):
             query_signature = _structured_signature(query_caption)
-            ranked = torch.argsort(branch_scores["fused"][query_index], descending=True, stable=True)[:10]
+            ranked = torch.argsort(ranking_scores[query_index], descending=True, stable=True)[:10]
             for candidate_index in ranked.tolist():
                 if semantic_relevance[query_index, candidate_index]:
                     continue
@@ -406,7 +410,7 @@ def main() -> int:
                     "candidate_index": candidate_index,
                     "candidate_pair_id": corpus.pair_ids[candidate_index],
                     "candidate_caption": candidate_captions[candidate_index],
-                    "fused_score": float(branch_scores["fused"][query_index, candidate_index]),
+                    "ranking_score": float(ranking_scores[query_index, candidate_index]),
                     "semantic": False,
                     "relevance_rules_failed": failed,
                     "training_negative": False,
@@ -416,7 +420,7 @@ def main() -> int:
         for category, mask in hard_masks.items():
             for query_index in torch.nonzero(mask.any(dim=1), as_tuple=False).flatten().tolist():
                 candidate_indices = torch.nonzero(mask[query_index], as_tuple=False).flatten()
-                candidate_index = int(candidate_indices[branch_scores["fused"][query_index, candidate_indices].argmax()].item())
+                candidate_index = int(candidate_indices[ranking_scores[query_index, candidate_indices].argmax()].item())
                 hard_handle.write(json.dumps({
                     "category": category,
                     "query_index": query_index,
@@ -612,6 +616,8 @@ def main() -> int:
     report = {
         "query_chunk_size": args.query_chunk_size,
         "candidate_chunk_size": args.candidate_chunk_size,
+        "rerank_top_n": args.rerank_top_n,
+        "ranking_branch": ranking_branch,
         "num_queries": int(corpus.text_embeddings.shape[0]),
         "num_candidates": int(corpus.pair_embeddings.shape[0]),
         "metric_query_count": int(corpus.text_embeddings.shape[0]),
@@ -680,7 +686,7 @@ def main() -> int:
         calibration["branch_positive_scales"] = corpus.qcpr_reranker.branch_log_scales.detach().cpu().exp().tolist()
         calibration["branch_fixed_biases"] = corpus.qcpr_reranker.branch_biases.detach().cpu().tolist()
     correlations: dict[str, float] = {}
-    branch_names = [name for name in ("global", "local", "token_patch", "fused") if name in branch_scores]
+    branch_names = [name for name in ("global", "local", "token_patch", "fused", "reranked") if name in branch_scores]
     for left_index, left_name in enumerate(branch_names):
         left = branch_scores[left_name].float().flatten()
         for right_name in branch_names[left_index + 1:]:

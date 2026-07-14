@@ -40,7 +40,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--qcpr-alpha", type=float, default=1.0)
     parser.add_argument("--qcpr-beta", type=float, default=0.25)
     parser.add_argument("--qcpr-local-loss-weight", type=float, default=1.0)
+    parser.add_argument("--fused-retrieval-loss-weight", type=float, default=0.25)
+    parser.add_argument("--global-embedding-preservation-weight", type=float, default=0.0)
+    parser.add_argument("--freeze-global-retrieval", action="store_true")
+    parser.add_argument("--text-adapter-lr", type=float, default=2e-5)
     parser.add_argument("--query-segmentation-loss-weight", type=float, default=0.2)
+    parser.add_argument("--changed-channel-loss-weight", type=float, default=0.2)
+    parser.add_argument("--appeared-channel-loss-weight", type=float, default=0.2)
+    parser.add_argument("--disappeared-channel-loss-weight", type=float, default=0.2)
+    parser.add_argument("--temporal-reversal-consistency-loss-weight", type=float, default=0.05)
     parser.add_argument("--structured-fna-weight", type=float, default=0.0)
     parser.add_argument("--local-margin-loss-weight", type=float, default=0.1)
     parser.add_argument("--local-margin", type=float, default=0.1)
@@ -86,7 +94,15 @@ if __name__ == "__main__":
             qcpr_alpha=args.qcpr_alpha,
             qcpr_beta=args.qcpr_beta,
             qcpr_local_loss_weight=args.qcpr_local_loss_weight,
+            fused_retrieval_loss_weight=args.fused_retrieval_loss_weight,
+            global_embedding_preservation_weight=args.global_embedding_preservation_weight,
+            freeze_global_retrieval=args.freeze_global_retrieval,
+            text_adapter_lr=args.text_adapter_lr,
             query_segmentation_loss_weight=args.query_segmentation_loss_weight,
+            changed_channel_loss_weight=args.changed_channel_loss_weight,
+            appeared_channel_loss_weight=args.appeared_channel_loss_weight,
+            disappeared_channel_loss_weight=args.disappeared_channel_loss_weight,
+            temporal_reversal_consistency_loss_weight=args.temporal_reversal_consistency_loss_weight,
             structured_fna_weight=args.structured_fna_weight,
             local_margin_loss_weight=args.local_margin_loss_weight,
             local_margin=args.local_margin,

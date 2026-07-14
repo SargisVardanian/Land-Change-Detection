@@ -37,6 +37,9 @@ PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" "${C
   --num-workers "${NUM_WORKERS:-4}" \
   --top-k "${TOP_K:-5}" \
   --max-queries "${MAX_QUERIES:-48}" \
+  --query-chunk-size "${QUERY_CHUNK_SIZE:-64}" \
+  --candidate-chunk-size "${CANDIDATE_CHUNK_SIZE:-256}" \
+  --rerank-top-n "${RERANK_TOP_N:-0}" \
   --device cuda
 
 PYTHONPATH="${CODE_ROOT}/src:${CODE_ROOT}/scripts:${CODE_ROOT}" "${PYTHON}" "${CODE_ROOT}/scripts/plot_unichange_v2_training.py" \

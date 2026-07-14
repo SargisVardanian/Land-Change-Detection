@@ -12,6 +12,7 @@ from typing import Any
 
 import torch
 from torch import Tensor, nn
+from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset, Subset
 
 import train_unichange_v2_retrieval as base
@@ -116,6 +117,9 @@ class Stage1NextConfig:
     qcpr_alpha: float = 1.0
     qcpr_beta: float = 0.25
     qcpr_local_loss_weight: float = 1.0
+    fused_retrieval_loss_weight: float = 0.25
+    global_embedding_preservation_weight: float = 0.0
+    freeze_global_retrieval: bool = False
     query_segmentation_loss_weight: float = 0.2
     changed_channel_loss_weight: float = 0.2
     appeared_channel_loss_weight: float = 0.2
@@ -423,6 +427,19 @@ def make_optimizer(model: nn.Module, config: Stage1NextConfig) -> torch.optim.Op
     return torch.optim.AdamW(groups)
 
 
+def freeze_global_retrieval_modules(model: nn.Module) -> list[str]:
+    """Freeze the v1-compatible candidate generator before local-reranker training."""
+    frozen: list[str] = []
+    for name in ("temporal_encoder", "retrieval_head", "text_adapter"):
+        module = getattr(model, name, None)
+        if module is None:
+            continue
+        for parameter in module.parameters():
+            parameter.requires_grad_(False)
+        frozen.append(name)
+    return frozen
+
+
 def trainable_stage1_parameters(model: nn.Module) -> list[nn.Parameter]:
     return [parameter for parameter in model.parameters() if parameter.requires_grad]
 
@@ -535,7 +552,7 @@ def validate_config(config: Stage1NextConfig) -> None:
         raise ValueError("qcpr_architecture_version must be v1 or v2")
     if config.enable_temporal_explanation_channels and config.qcpr_architecture_version != "v2":
         raise ValueError("temporal explanation channels require QCPR v2")
-    if config.qcpr_local_loss_weight < 0 or config.query_segmentation_loss_weight < 0:
+    if config.qcpr_local_loss_weight < 0 or config.fused_retrieval_loss_weight < 0 or config.global_embedding_preservation_weight < 0 or config.query_segmentation_loss_weight < 0:
         raise ValueError("QCPR loss weights must be non-negative")
     if not 0.0 <= config.structured_fna_weight <= 1.0:
         raise ValueError("structured_fna_weight must be in [0, 1]")
@@ -561,7 +578,9 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
     for key in (
         "allowed_caption_sources", "localization_val_manifests", "semantic_soft_target_weight",
         "semantic_teacher_top_k", "semantic_teacher_temperature", "structured_fna_weight",
-        "local_margin_loss_weight", "local_margin", "conditional_instance_loss_weight", "structured_auxiliary_loss_weight",
+        "fused_retrieval_loss_weight", "global_embedding_preservation_weight",
+        "freeze_global_retrieval", "local_margin_loss_weight", "local_margin",
+        "conditional_instance_loss_weight", "structured_auxiliary_loss_weight",
     ):
         if key in config_options:
             value = config_options[key]
@@ -851,6 +870,9 @@ def _critical_resume_config(config: Stage1NextConfig) -> dict[str, Any]:
         "qcpr_alpha",
         "qcpr_beta",
         "qcpr_local_loss_weight",
+        "fused_retrieval_loss_weight",
+        "global_embedding_preservation_weight",
+        "freeze_global_retrieval",
         "query_segmentation_loss_weight",
         "structured_fna_weight",
     )
@@ -904,7 +926,15 @@ def run(
     qcpr_alpha: float = 1.0,
     qcpr_beta: float = 0.25,
     qcpr_local_loss_weight: float = 1.0,
+    fused_retrieval_loss_weight: float = 0.25,
+    global_embedding_preservation_weight: float = 0.0,
+    freeze_global_retrieval: bool = False,
+    text_adapter_lr: float = 2e-5,
     query_segmentation_loss_weight: float = 0.2,
+    changed_channel_loss_weight: float = 0.2,
+    appeared_channel_loss_weight: float = 0.2,
+    disappeared_channel_loss_weight: float = 0.2,
+    temporal_reversal_consistency_loss_weight: float = 0.05,
     structured_fna_weight: float = 0.0,
     local_margin_loss_weight: float = 0.1,
     local_margin: float = 0.1,
@@ -945,7 +975,15 @@ def run(
         qcpr_alpha=qcpr_alpha,
         qcpr_beta=qcpr_beta,
         qcpr_local_loss_weight=qcpr_local_loss_weight,
+        fused_retrieval_loss_weight=fused_retrieval_loss_weight,
+        global_embedding_preservation_weight=global_embedding_preservation_weight,
+        freeze_global_retrieval=freeze_global_retrieval,
+        text_adapter_lr=text_adapter_lr,
         query_segmentation_loss_weight=query_segmentation_loss_weight,
+        changed_channel_loss_weight=changed_channel_loss_weight,
+        appeared_channel_loss_weight=appeared_channel_loss_weight,
+        disappeared_channel_loss_weight=disappeared_channel_loss_weight,
+        temporal_reversal_consistency_loss_weight=temporal_reversal_consistency_loss_weight,
         structured_fna_weight=structured_fna_weight,
         local_margin_loss_weight=local_margin_loss_weight,
         local_margin=local_margin,
@@ -1013,6 +1051,9 @@ def run(
         initialization_missing = list(incompatible.missing_keys)
         initialization_unexpected = list(incompatible.unexpected_keys)
         initialized_from_v1_modules = sorted({name.split(".", 1)[0] for name in initialization_payload["model"]})
+    frozen_global_modules: list[str] = []
+    if config.freeze_global_retrieval:
+        frozen_global_modules = freeze_global_retrieval_modules(model)
     optimizer = make_optimizer(model, config)
     scheduler = base._make_scheduler(optimizer, total_steps, config)
 
@@ -1061,6 +1102,7 @@ def run(
         "visual_backbone_checkpoint": path_fingerprint(Path(config.universat_checkpoint)),
         "text_checkpoint": path_fingerprint(Path(config.jina_model)),
         "modules_loaded_from_checkpoint": initialized_from_v1_modules,
+        "frozen_global_modules": frozen_global_modules,
         "randomly_initialized_parameters": random_names,
         "frozen_parameters": frozen_names,
         "trainable_parameters": trainable_names,
@@ -1125,7 +1167,7 @@ def run(
                         if output.final_scores is not None and config.enable_patch_reranker
                         else None
                     )
-                    retrieval_loss, loss_diagnostics = semantic_text_to_pair_set_loss(
+                    global_retrieval_loss, loss_diagnostics = semantic_text_to_pair_set_loss(
                         output.pair_embedding[selected_pairs],
                         output.text_embedding[selected_queries],
                         output.teacher_text_embedding[selected_queries],
@@ -1138,14 +1180,33 @@ def run(
                         semantic_soft_target_weight=config.semantic_soft_target_weight,
                         semantic_teacher_top_k=config.semantic_teacher_top_k,
                         semantic_teacher_temperature=config.semantic_teacher_temperature,
-                        logits_text_to_pair=(
-                            selected_final_scores * model.retrieval_head.similarity_scale()
-                            if selected_final_scores is not None
-                            else None
-                        ),
                         structured_fna_weight=config.structured_fna_weight,
                         return_diagnostics=True,
                     )
+                    fused_retrieval_loss = global_retrieval_loss.new_zeros(())
+                    if selected_final_scores is not None:
+                        fused_retrieval_loss, fused_loss_diagnostics = semantic_text_to_pair_set_loss(
+                            output.pair_embedding[selected_pairs],
+                            output.text_embedding[selected_queries],
+                            output.teacher_text_embedding[selected_queries],
+                            selected_captions,
+                            selected_mapping,
+                            selected_groups,
+                            logit_scale=model.retrieval_head.similarity_scale(),
+                            text_to_pair_weight=config.text_to_pair_weight,
+                            pair_to_text_weight=config.pair_to_text_weight,
+                            semantic_soft_target_weight=config.semantic_soft_target_weight,
+                            semantic_teacher_top_k=config.semantic_teacher_top_k,
+                            semantic_teacher_temperature=config.semantic_teacher_temperature,
+                            logits_text_to_pair=selected_final_scores * model.retrieval_head.similarity_scale(),
+                            structured_fna_weight=config.structured_fna_weight,
+                            return_diagnostics=True,
+                        )
+                        loss_diagnostics.update(_prefix_metrics(fused_loss_diagnostics, "fused_"))
+                    retrieval_loss = global_retrieval_loss + config.fused_retrieval_loss_weight * fused_retrieval_loss
+                    embedding_preservation_loss = 1.0 - F.cosine_similarity(
+                        output.text_embedding[selected_queries], output.teacher_text_embedding[selected_queries], dim=-1
+                    ).mean()
                     local_margin_loss = retrieval_loss.new_zeros(())
                     conditional_identity_loss = retrieval_loss.new_zeros(())
                     structured_auxiliary_loss = retrieval_loss.new_zeros(())
@@ -1194,6 +1255,8 @@ def run(
                             loss_diagnostics.update(auxiliary_diagnostics)
                 else:
                     retrieval_loss = output.pair_embedding.sum() * 0.0
+                    global_retrieval_loss = retrieval_loss
+                    fused_retrieval_loss = retrieval_loss
                     local_margin_loss = retrieval_loss.new_zeros(())
                     conditional_identity_loss = retrieval_loss.new_zeros(())
                     structured_auxiliary_loss = retrieval_loss.new_zeros(())
@@ -1250,11 +1313,17 @@ def run(
                     + config.local_margin_loss_weight * local_margin_loss
                     + config.conditional_instance_loss_weight * conditional_identity_loss
                     + config.structured_auxiliary_loss_weight * structured_auxiliary_loss
+                    + config.global_embedding_preservation_weight * embedding_preservation_loss
                     + total_localization_loss
                 )
                 loss_diagnostics.update(
                     {
                         "retrieval_loss": float(retrieval_loss.detach().cpu()),
+                        "global_retrieval_loss": float(global_retrieval_loss.detach().cpu()),
+                        "fused_retrieval_loss": float(fused_retrieval_loss.detach().cpu()),
+                        "fused_retrieval_loss_weight": float(config.fused_retrieval_loss_weight),
+                        "global_embedding_preservation_loss": float(embedding_preservation_loss.detach().cpu()),
+                        "global_embedding_preservation_weight": float(config.global_embedding_preservation_weight),
                         "qcpr_local_loss": float(retrieval_loss.detach().cpu()) if config.enable_patch_reranker else 0.0,
                         "local_positive_negative_margin_loss": float(local_margin_loss.detach().cpu()),
                         "conditional_instance_discrimination_loss": float(conditional_identity_loss.detach().cpu()),

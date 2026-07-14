@@ -111,27 +111,41 @@ def local_positive_negative_margin_loss(
         if latent_positive_mask.shape != local_scores.shape:
             raise ValueError("latent_positive_mask must match local_scores")
         categories = {name: mask & ~latent_positive_mask.to(mask.device).bool() for name, mask in categories.items()}
-    combined = torch.stack(tuple(categories.values())).any(dim=0)
     rows = torch.arange(local_scores.shape[0], device=local_scores.device)
     positive = local_scores[rows, caption_to_pair.long()]
-    negative = local_scores.masked_fill(~combined, float("-inf")).max(dim=1).values
-    valid = torch.isfinite(negative)
-    per_query = F.relu(float(margin) - positive[valid] + negative[valid])
-    loss = per_query.mean() if torch.any(valid) else local_scores.sum() * 0.0
+    # One strongest example per category and query is intentionally used.  A
+    # raw union is dominated by common wrong-object/wrong-direction examples
+    # and silently makes rare location/count supervision irrelevant.
+    category_losses: list[Tensor] = []
+    category_valid_masks: list[Tensor] = []
     diagnostics: dict[str, float | int] = {
-        "local_margin_valid_queries": int(valid.sum().item()),
-        "local_positive_negative_margin_loss": float(loss.detach().cpu()),
+        "hard_negative_latent_positive_excluded": int(
+            latent_positive_mask.sum().item()) if latent_positive_mask is not None else 0,
     }
     for name, mask in categories.items():
         diagnostics[f"hard_negative_{name}_count"] = int(mask.sum().item())
         category_negative = local_scores.masked_fill(~mask, float("-inf")).max(dim=1).values
         category_valid = torch.isfinite(category_negative)
+        # max() selects exactly one available anchor for every valid query.
+        diagnostics[f"hard_negative_{name}_available_queries"] = int(category_valid.sum().item())
+        diagnostics[f"hard_negative_{name}_selected_anchors"] = int(category_valid.sum().item())
         category_loss = (
             F.relu(float(margin) - positive[category_valid] + category_negative[category_valid]).mean()
             if torch.any(category_valid)
             else local_scores.sum() * 0.0
         )
+        if torch.any(category_valid):
+            category_losses.append(category_loss)
+            category_valid_masks.append(category_valid)
+            violations = F.relu(float(margin) - positive[category_valid] + category_negative[category_valid]) > 0
+            diagnostics[f"hard_negative_{name}_margin_violations"] = int(violations.sum().item())
+        else:
+            diagnostics[f"hard_negative_{name}_margin_violations"] = 0
         diagnostics[f"hard_negative_{name}_loss"] = float(category_loss.detach().cpu())
+    loss = torch.stack(category_losses).mean() if category_losses else local_scores.sum() * 0.0
+    valid = torch.stack(category_valid_masks).any(dim=0) if category_valid_masks else torch.zeros_like(positive, dtype=torch.bool)
+    diagnostics["local_margin_valid_queries"] = int(valid.sum().item())
+    diagnostics["local_positive_negative_margin_loss"] = float(loss.detach().cpu())
     return loss, diagnostics
 
 
@@ -278,8 +292,10 @@ class QCPRPatchReranker(nn.Module):
             raise RuntimeError("score_v2 requires qcpr architecture v2")
         descriptors = F.normalize(self.temporal_descriptor_mlp(temporal_patch_descriptor(per_time_tokens)), dim=-1)
         token_embeddings = F.normalize(self.token_projection(query_token_embeddings), dim=-1)
-        affinity = torch.einsum("bnd,qld->qbnl", descriptors, token_embeddings) / self.logit_scale
-        affinity = affinity.masked_fill(~query_attention_mask[:, None, None, :].bool(), -1e4)
+        token_similarity = torch.einsum("bnd,qld->qbnl", descriptors, token_embeddings)
+        affinity = (token_similarity / self.logit_scale).masked_fill(
+            ~query_attention_mask[:, None, None, :].bool(), -1e4
+        )
         attended_query = torch.einsum("qbnl,qld->qbnd", affinity.softmax(dim=-1), token_embeddings)
         descriptor = descriptors.unsqueeze(0).expand(query_embeddings.shape[0], -1, -1, -1)
         temporal_explanation_logits = self.temporal_channel_head(descriptors)
@@ -294,9 +310,14 @@ class QCPRPatchReranker(nn.Module):
         queries = F.normalize(query_embeddings, dim=-1)
         global_score = queries @ F.normalize(pair_embeddings, dim=-1).T
         local_score = torch.einsum("qd,qbd->qb", queries, local_embeddings)
-        patch_probabilities = query_mask_logits.sigmoid()
-        top_k = max(1, min(4, patch_probabilities.shape[-1]))
-        token_patch_score = patch_probabilities.topk(top_k, dim=-1).values.mean(dim=-1)
+        # This branch must be evidence for query text, not merely an activity
+        # detector.  The previous mask-probability aggregation assigned high
+        # scores to unrelated changed areas.  Use the top-k cosine agreement
+        # between temporal descriptors and valid text tokens instead.
+        token_similarity = token_similarity.masked_fill(~query_attention_mask[:, None, None, :].bool(), -1.0)
+        token_patch_evidence = token_similarity.amax(dim=-1)
+        top_k = max(1, min(4, token_patch_evidence.shape[-1]))
+        token_patch_score = token_patch_evidence.topk(top_k, dim=-1).values.mean(dim=-1)
         raw_scores = torch.stack((global_score, local_score, token_patch_score), dim=-1)
         calibrated_scores = raw_scores * self.branch_log_scales.exp() + self.branch_biases
         fusion_weights = self.fusion_logits.softmax(dim=0)

@@ -430,8 +430,8 @@ def similarity_matrix(
                     descriptor = patches[candidate_start:candidate_end].to(reranker_device)
                     token = torch.nn.functional.normalize(reranker.token_projection(corpus.text_token_embeddings[query_start:query_end].to(reranker_device)), dim=-1)
                     attention = corpus.text_attention_mask[query_start:query_end].to(reranker_device)
-                    affinity = torch.einsum("bnd,qld->qbnl", descriptor, token) / reranker.logit_scale
-                    affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
+                    token_similarity = torch.einsum("bnd,qld->qbnl", descriptor, token)
+                    affinity = (token_similarity / reranker.logit_scale).masked_fill(~attention[:, None, None, :].bool(), -1e4)
                     attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
                     expanded = descriptor.unsqueeze(0).expand(query_end - query_start, -1, -1, -1)
                     logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
@@ -440,9 +440,10 @@ def similarity_matrix(
                     pooled = QCPRPatchReranker.masked_local_embedding(descriptor, logits)
                     local_chunk = torch.einsum("qd,qbd->qb", text[query_start:query_end].to(reranker_device), pooled)
                     local[query_start:query_end, candidate_start:candidate_end] = local_chunk.detach().cpu()
-                    top_k = max(1, min(4, logits.shape[-1]))
+                    token_evidence = token_similarity.masked_fill(~attention[:, None, None, :].bool(), -1.0).amax(dim=-1)
+                    top_k = max(1, min(4, token_evidence.shape[-1]))
                     token_patch[query_start:query_end, candidate_start:candidate_end] = (
-                        logits.sigmoid().topk(top_k, dim=-1).values.mean(dim=-1).detach().cpu()
+                        token_evidence.topk(top_k, dim=-1).values.mean(dim=-1).detach().cpu()
                     )
                 del logits
         if has_v2:
@@ -460,6 +461,7 @@ def retrieval_branch_similarity_matrices(
     *,
     query_chunk_size: int | None = None,
     candidate_chunk_size: int | None = None,
+    rerank_top_n: int = 0,
 ) -> dict[str, Tensor]:
     """Return independently inspectable global/local/token-patch/fused score matrices."""
     _validate_corpus(corpus)
@@ -478,6 +480,8 @@ def retrieval_branch_similarity_matrices(
     )
     if corpus.patch_tokens is None or not (has_v1 or has_v2):
         branches["fused"] = global_scores
+        if rerank_top_n > 0:
+            branches["reranked"] = global_top_n_rerank_scores(global_scores, global_scores, rerank_top_n)
         return branches
     local_scores = torch.empty_like(global_scores)
     token_patch_scores = torch.empty_like(global_scores) if has_v2 else None
@@ -509,8 +513,8 @@ def retrieval_branch_similarity_matrices(
                 local_scores[query_start:query_end, candidate_start:candidate_end] = logits.sigmoid().amax(dim=-1)
             else:
                 descriptor = patches.to(device)
-                affinity = torch.einsum("bnd,qld->qbnl", descriptor, token) / reranker.logit_scale
-                affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
+                token_similarity = torch.einsum("bnd,qld->qbnl", descriptor, token)
+                affinity = (token_similarity / reranker.logit_scale).masked_fill(~attention[:, None, None, :].bool(), -1e4)
                 attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
                 expanded = descriptor.unsqueeze(0).expand(query_end - query_start, -1, -1, -1)
                 logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
@@ -520,9 +524,10 @@ def retrieval_branch_similarity_matrices(
                 local_scores[query_start:query_end, candidate_start:candidate_end] = torch.einsum(
                     "qd,qbd->qb", query_global, pooled
                 ).detach().cpu()
-                top_k = max(1, min(4, logits.shape[-1]))
+                token_evidence = token_similarity.masked_fill(~attention[:, None, None, :].bool(), -1.0).amax(dim=-1)
+                top_k = max(1, min(4, token_evidence.shape[-1]))
                 token_patch_scores[query_start:query_end, candidate_start:candidate_end] = (
-                    logits.sigmoid().topk(top_k, dim=-1).values.mean(dim=-1).detach().cpu()
+                    token_evidence.topk(top_k, dim=-1).values.mean(dim=-1).detach().cpu()
                 )
     branches["local"] = local_scores
     if has_v2:
@@ -535,7 +540,23 @@ def retrieval_branch_similarity_matrices(
         )
     else:
         branches["fused"] = corpus.qcpr_alpha * global_scores + corpus.qcpr_beta * local_scores
+    if rerank_top_n > 0:
+        branches["reranked"] = global_top_n_rerank_scores(global_scores, branches["fused"], rerank_top_n)
     return branches
+
+
+def global_top_n_rerank_scores(global_scores: Tensor, rerank_scores: Tensor, top_n: int) -> Tensor:
+    """Apply expensive local scores only inside the v1-compatible global candidate pool."""
+    if global_scores.shape != rerank_scores.shape or global_scores.ndim != 2:
+        raise ValueError("global_scores and rerank_scores must have equal [Q,B] shape")
+    if top_n <= 0:
+        raise ValueError("top_n must be positive")
+    candidate_count = global_scores.shape[1]
+    k = min(int(top_n), candidate_count)
+    selected = global_scores.topk(k, dim=1).indices
+    output = torch.full_like(rerank_scores, float("-inf"))
+    output.scatter_(1, selected, rerank_scores.gather(1, selected))
+    return output
 
 
 def _safe_metric_name(value: str) -> str:

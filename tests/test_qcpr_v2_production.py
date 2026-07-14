@@ -5,9 +5,10 @@ from torch import nn
 from types import SimpleNamespace
 
 from land_change_detection.backbones.jina_v5_text import TextFeatures
-from land_change_detection.models.qcpr import QCPRPatchReranker, temporal_channel_loss_components
+from land_change_detection.models.qcpr import QCPRPatchReranker, local_positive_negative_margin_loss, temporal_channel_loss_components
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
-from ucv2_stage1_next_core import Stage1NextConfig, make_optimizer
+from ucv2_retrieval_metrics import global_top_n_rerank_scores
+from ucv2_stage1_next_core import Stage1NextConfig, freeze_global_retrieval_modules, make_optimizer
 
 
 def test_qcpr_v1_state_dict_strict_roundtrip_and_legacy_score() -> None:
@@ -39,6 +40,15 @@ def test_qcpr_v2_token_conditioned_shapes_and_gradients() -> None:
     assert reranker.branch_log_scales.grad is not None and torch.any(reranker.branch_log_scales.grad != 0)
     assert "branch_biases" not in dict(reranker.named_parameters())
     assert "branch_biases" in dict(reranker.named_buffers())
+
+
+def test_v2_global_score_matches_v1_compatible_initial_global_retrieval() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    query = torch.randn(2, 8)
+    pairs = torch.randn(3, 8)
+    output = reranker.score_v2(query, torch.randn(2, 4, 8), torch.ones(2, 4, dtype=torch.bool), pairs, torch.randn(3, 2, 4, 8))
+    expected = torch.nn.functional.normalize(query, dim=-1) @ torch.nn.functional.normalize(pairs, dim=-1).T
+    assert torch.allclose(output["global_score"], expected)
 
 
 def test_qcpr_v2_query_mask_uses_changed_channel_as_temporal_prior() -> None:
@@ -91,16 +101,22 @@ def test_qcpr_v2_model_forward_does_not_require_legacy_mask_query_embeddings() -
 
 def test_qcpr_v2_token_patch_aggregation_is_not_a_single_maximum() -> None:
     reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    query_tokens = torch.randn(1, 4, 8)
+    attention = torch.tensor([[True, True, True, False]])
+    per_time = torch.randn(1, 2, 16, 8)
     output = reranker.score_v2(
         torch.randn(1, 8),
-        torch.randn(1, 4, 8),
-        torch.ones(1, 4, dtype=torch.bool),
+        query_tokens,
+        attention,
         torch.randn(1, 8),
-        torch.randn(1, 2, 16, 8),
+        per_time,
     )
-    maximum = output["query_mask_logits"].sigmoid().amax(dim=-1)
-    assert torch.all(output["token_patch_score"] <= maximum)
-    assert not torch.allclose(output["token_patch_score"], maximum)
+    projected_tokens = torch.nn.functional.normalize(reranker.token_projection(query_tokens), dim=-1)
+    similarities = torch.einsum("bnd,qld->qbnl", output["patch_tokens"], projected_tokens)
+    evidence = similarities.masked_fill(~attention[:, None, None, :], -1.0).amax(dim=-1)
+    expected = evidence.topk(4, dim=-1).values.mean(dim=-1)
+    assert torch.allclose(output["token_patch_score"], expected)
+    assert not torch.allclose(output["token_patch_score"], output["query_mask_logits"].sigmoid().amax(dim=-1))
 
 
 def test_qcpr_v2_reports_token_group_grounding_scores() -> None:
@@ -147,3 +163,41 @@ def test_v2_parameters_are_in_optimizer_exactly_once() -> None:
     optimizer = make_optimizer(model, config)
     identities = [id(parameter) for group in optimizer.param_groups for parameter in group["params"]]
     assert len(identities) == len(set(identities)) == len([parameter for parameter in model.parameters() if parameter.requires_grad])
+
+
+def test_two_stage_reranker_cannot_promote_outside_global_candidate_pool() -> None:
+    global_scores = torch.tensor([[0.9, 0.8, 0.1]])
+    rerank_scores = torch.tensor([[0.1, 0.2, 100.0]])
+    output = global_top_n_rerank_scores(global_scores, rerank_scores, top_n=2)
+    assert torch.isneginf(output[0, 2])
+    assert int(output.argmax(dim=1).item()) == 1
+
+
+def test_count_margin_loss_is_noop_without_valid_count_negatives() -> None:
+    scores = torch.tensor([[0.8, 0.2], [0.7, 0.1]], requires_grad=True)
+    captions = ["one building appeared", "one road appeared"]
+    loss, diagnostics = local_positive_negative_margin_loss(scores, torch.tensor([0, 1]), captions)
+    assert diagnostics["hard_negative_same_object_location_wrong_count_available_queries"] == 0
+    assert diagnostics["hard_negative_same_object_location_wrong_count_selected_anchors"] == 0
+    assert diagnostics["hard_negative_same_object_location_wrong_count_loss"] == 0.0
+    assert torch.isfinite(loss)
+
+
+def test_local_objective_does_not_update_frozen_global_modules() -> None:
+    class Model(nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.temporal_encoder = nn.Linear(4, 4)
+            self.retrieval_head = nn.Linear(4, 4)
+            self.text_adapter = nn.Linear(4, 4)
+            self.patch_reranker = nn.Linear(4, 1)
+    model = Model()
+    frozen = freeze_global_retrieval_modules(model)
+    assert frozen == ["temporal_encoder", "retrieval_head", "text_adapter"]
+    before = [parameter.detach().clone() for module in (model.temporal_encoder, model.retrieval_head, model.text_adapter) for parameter in module.parameters()]
+    optimizer = torch.optim.SGD(model.patch_reranker.parameters(), lr=0.1)
+    optimizer.zero_grad()
+    model.patch_reranker(torch.ones(3, 4)).sum().backward()
+    optimizer.step()
+    after = [parameter.detach() for module in (model.temporal_encoder, model.retrieval_head, model.text_adapter) for parameter in module.parameters()]
+    assert all(torch.equal(left, right) for left, right in zip(before, after, strict=True))

@@ -112,13 +112,23 @@ if [[ "${ENABLE_PATCH_RERANKER:-0}" == "1" ]]; then
     --qcpr-alpha "${QCPR_ALPHA:-1.0}"
     --qcpr-beta "${QCPR_BETA:-0.25}"
     --qcpr-local-loss-weight "${QCPR_LOCAL_LOSS_WEIGHT:-1.0}"
+    --fused-retrieval-loss-weight "${FUSED_RETRIEVAL_LOSS_WEIGHT:-0.25}"
+    --global-embedding-preservation-weight "${GLOBAL_EMBEDDING_PRESERVATION_WEIGHT:-0.0}"
+    --text-adapter-lr "${TEXT_ADAPTER_LR:-2e-5}"
     --query-segmentation-loss-weight "${QUERY_SEGMENTATION_LOSS_WEIGHT:-0.2}"
+    --changed-channel-loss-weight "${CHANGED_CHANNEL_LOSS_WEIGHT:-0.2}"
+    --appeared-channel-loss-weight "${APPEARED_CHANNEL_LOSS_WEIGHT:-0.2}"
+    --disappeared-channel-loss-weight "${DISAPPEARED_CHANNEL_LOSS_WEIGHT:-0.2}"
+    --temporal-reversal-consistency-loss-weight "${TEMPORAL_REVERSAL_CONSISTENCY_LOSS_WEIGHT:-0.05}"
     --structured-fna-weight "${STRUCTURED_FNA_WEIGHT:-0.0}"
     --local-margin-loss-weight "${LOCAL_MARGIN_LOSS_WEIGHT:-0.1}"
     --local-margin "${LOCAL_MARGIN:-0.1}"
     --conditional-instance-loss-weight "${CONDITIONAL_INSTANCE_LOSS_WEIGHT:-0.01}"
     --structured-auxiliary-loss-weight "${STRUCTURED_AUXILIARY_LOSS_WEIGHT:-0.05}"
   )
+fi
+if [[ "${FREEZE_GLOBAL_RETRIEVAL:-0}" == "1" ]]; then
+  ARGS+=(--freeze-global-retrieval)
 fi
 if [[ "${ENABLE_TEMPORAL_EXPLANATION_CHANNELS:-0}" == "1" ]]; then
   ARGS+=(--enable-temporal-explanation-channels)
