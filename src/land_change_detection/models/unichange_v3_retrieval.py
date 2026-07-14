@@ -1,0 +1,111 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import torch
+from torch import Tensor, nn
+from torch.nn import functional as F
+
+from land_change_detection.backbones.jina_v5_text import TextFeatures
+from land_change_detection.models.qcpr_v3 import QCPRV3GenericGrounding, QCPRV3ScoreOutput
+
+
+@dataclass(frozen=True)
+class UniChangeV3Output:
+    pair_embedding: Tensor
+    text_embedding: Tensor
+    text_token_embeddings: Tensor
+    text_attention_mask: Tensor
+    per_time_tokens: Tensor
+    scores: QCPRV3ScoreOutput
+    visual_metadata: dict[str, Any]
+
+
+class UniChangeV3RetrievalModel(nn.Module):
+    """Global v1-compatible dual encoder plus generic v3 grounding model."""
+
+    def __init__(
+        self,
+        visual_encoder: nn.Module,
+        temporal_encoder: nn.Module,
+        text_encoder: nn.Module,
+        retrieval_head: nn.Module,
+        grounder: QCPRV3GenericGrounding,
+        text_adapter: nn.Module | None = None,
+    ):
+        super().__init__()
+        self.visual_encoder = visual_encoder
+        self.temporal_encoder = temporal_encoder
+        self.text_encoder = text_encoder
+        self.retrieval_head = retrieval_head
+        self.text_adapter = text_adapter
+        self.grounder = grounder
+        self.freeze_backbones()
+
+    def freeze_backbones(self) -> None:
+        image_encoder = getattr(self.visual_encoder, "image_encoder", self.visual_encoder)
+        for parameter in image_encoder.parameters():
+            parameter.requires_grad_(False)
+        for parameter in self.text_encoder.parameters():
+            parameter.requires_grad_(False)
+        self.visual_encoder.eval()
+        self.text_encoder.eval()
+
+    def train(self, mode: bool = True):
+        super().train(mode)
+        self.visual_encoder.eval()
+        self.text_encoder.eval()
+        return self
+
+    def encode_pairs(self, images: Tensor, temporal_valid_mask: Tensor | None = None) -> tuple[Tensor, Tensor, dict[str, Any]]:
+        with torch.no_grad():
+            visual = self.visual_encoder(images)
+        temporal = self.temporal_encoder(visual.features, temporal_valid_mask=temporal_valid_mask)
+        pair = F.normalize(self.retrieval_head(temporal.pair_embedding).pair_embedding, dim=-1)
+        return pair, temporal.per_time_tokens, visual.metadata
+
+    def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor]:
+        with torch.no_grad():
+            features = self.text_encoder(captions, role="query")
+        if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
+            raise TypeError("text encoder must return TextFeatures-compatible output")
+        global_embedding = features.global_embedding
+        if self.text_adapter is not None:
+            global_embedding = self.text_adapter(global_embedding)
+        return (
+            F.normalize(global_embedding, dim=-1),
+            features.token_embeddings,
+            features.attention_mask.bool(),
+        )
+
+    def score_encoded(
+        self,
+        pair_embedding: Tensor,
+        per_time_tokens: Tensor,
+        text_embedding: Tensor,
+        text_tokens: Tensor,
+        text_attention_mask: Tensor,
+    ) -> QCPRV3ScoreOutput:
+        return self.grounder.score_query_pair_chunks(
+            text_embedding,
+            text_tokens,
+            text_attention_mask,
+            pair_embedding,
+            per_time_tokens,
+        )
+
+    def forward(
+        self,
+        images: Tensor,
+        captions: list[str],
+        caption_to_pair: Tensor | None = None,
+        temporal_valid_mask: Tensor | None = None,
+    ) -> UniChangeV3Output:
+        pair, per_time, metadata = self.encode_pairs(images, temporal_valid_mask)
+        text, tokens, attention = self.encode_texts(captions)
+        tokens = tokens.to(pair.device)
+        attention = attention.to(pair.device)
+        text = text.to(pair.device)
+        scores = self.score_encoded(pair, per_time, text, tokens, attention)
+        return UniChangeV3Output(pair, text, tokens, attention, per_time, scores, metadata)

@@ -1,0 +1,262 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from collections import Counter, defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+import numpy as np
+from PIL import Image
+
+from land_change_detection.models.retrieval_heads import classify_caption_semantics
+
+
+def normalize_caption(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().casefold()).strip(" .,!?:;")
+
+
+def _direction(semantics: dict[str, Any]) -> str:
+    if semantics["no_change"]:
+        return "no_change"
+    if semantics["appeared"] or semantics["constructed"] or semantics["added"]:
+        return "appeared"
+    if semantics["disappeared"] or semantics["demolished"] or semantics["removed"]:
+        return "disappeared"
+    if semantics["increased"] or semantics["expanded"]:
+        return "increased"
+    if semantics["decreased"] or semantics["reduced"]:
+        return "decreased"
+    return "changed" if semantics["changed"] else "unknown"
+
+
+def _relation(text: str) -> str:
+    normalized = normalize_caption(text)
+    return "replacement" if any(term in normalized for term in ("replace", "in place of", "converted to", "turned into")) else "none"
+
+
+def _mask_stats(path: str | None) -> tuple[bool | None, float | None]:
+    if not path or not Path(path).exists():
+        return None, None
+    with Image.open(path) as image:
+        array = np.asarray(image.convert("L")) > 0
+    return not bool(array.any()), float(array.mean())
+
+
+def _dhash(path: str | None) -> str | None:
+    if not path or not Path(path).exists():
+        return None
+    with Image.open(path) as image:
+        pixels = np.asarray(image.convert("L").resize((9, 8), Image.Resampling.BILINEAR), dtype=np.int16)
+    bits = pixels[:, 1:] > pixels[:, :-1]
+    return f"{int(''.join('1' if value else '0' for value in bits.flat), 2):016x}"
+
+
+def _quality(row: dict[str, Any]) -> float:
+    source = str(row.get("caption_source", "unknown"))
+    return {"human": 1.0, "semantic_template": 0.7, "template": 0.65}.get(source, 0.6)
+
+
+def _audit_caption(row: dict[str, Any], caption_index: int, caption: str) -> dict[str, Any]:
+    semantics = classify_caption_semantics(caption)
+    mask_path = row.get("query_mask_path") or row.get("mask_path")
+    mask_empty, mask_area = _mask_stats(mask_path)
+    objects = sorted(set(semantics["object_terms"]))
+    locations = sorted(set(semantics["location_terms"]))
+    counts = sorted(set(semantics["count_terms"]))
+    confidence = _quality(row)
+    parser_known = bool(objects or semantics["no_change"] or semantics["changed"])
+    return {
+        "dataset": row["dataset_name"],
+        "split": row["split"],
+        "pair_id": row["pair_id"],
+        "caption_id": f"{row['pair_id']}:{caption_index}",
+        "caption": caption,
+        "normalized_caption": normalize_caption(caption),
+        "caption_source": row.get("caption_source"),
+        "retrieval_supervision": bool(row.get("retrieval_supervision", True)),
+        "localization_supervision_type": row.get("seg_supervision_mode", "generic" if mask_path else "none"),
+        "change_status": "no_change" if semantics["no_change"] else "changed" if semantics["changed"] else "unknown",
+        "temporal_direction": _direction(semantics),
+        "object_family_audit_tags": objects,
+        "location_audit_tags": locations,
+        "count_audit_tags": counts,
+        "relation_audit_tags": [_relation(caption)],
+        "mask_empty": mask_empty,
+        "foreground_area": mask_area,
+        "label_confidence": confidence,
+        "parser_confidence": 0.8 if parser_known else 0.35,
+    }
+
+
+def _cell(audit: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        audit["dataset"], audit["change_status"], audit["temporal_direction"],
+        tuple(audit["object_family_audit_tags"]) or ("unknown",),
+        tuple(audit["location_audit_tags"]) or ("unknown",),
+        tuple(audit["count_audit_tags"]) or ("unknown",),
+        tuple(audit["relation_audit_tags"]),
+        audit["localization_supervision_type"],
+    )
+
+
+@dataclass(frozen=True)
+class WeightingConfig:
+    alpha: float = 0.4
+    tau: float = 5.0
+    min_weight: float = 0.2
+    max_weight: float = 5.0
+    natural_fraction: float = 0.5
+
+
+def derive_qcpr_v3_manifests(
+    manifest_paths: Iterable[str | Path],
+    output_dir: str | Path,
+    *,
+    config: WeightingConfig | None = None,
+    balanced_validation_per_cell: int = 20,
+) -> dict[str, Any]:
+    config = config or WeightingConfig()
+    output = Path(output_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    rows: list[dict[str, Any]] = []
+    source_hashes: dict[str, str] = {}
+    for raw_path in manifest_paths:
+        path = Path(raw_path)
+        source_hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        rows.extend(json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
+
+    pair_ids = Counter(str(row["pair_id"]) for row in rows)
+    pair_splits = {str(row["pair_id"]): str(row["split"]) for row in rows}
+    caption_audits: list[dict[str, Any]] = []
+    normalized_clusters: defaultdict[str, list[str]] = defaultdict(list)
+    pair_hash_clusters: defaultdict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        t1_hash, t2_hash = _dhash(row.get("t1_path")), _dhash(row.get("t2_path"))
+        pair_hash = f"{t1_hash}:{t2_hash}" if t1_hash and t2_hash else "unavailable"
+        pair_hash_clusters[pair_hash].append(str(row["pair_id"]))
+        for index, caption in enumerate(row.get("captions", [])):
+            audit = _audit_caption(row, index, caption)
+            audit["near_duplicate_pair_cluster"] = pair_hash
+            normalized_clusters[audit["normalized_caption"]].append(audit["caption_id"])
+            caption_audits.append(audit)
+    for audit in caption_audits:
+        audit["duplicate_caption_cluster"] = hashlib.sha1(audit["normalized_caption"].encode()).hexdigest()[:16]
+
+    train_audits = [audit for audit in caption_audits if audit["split"] == "train"]
+    cell_counts = Counter(_cell(audit) for audit in train_audits)
+    raw_weights: dict[str, float] = {}
+    for audit in train_audits:
+        raw = audit["label_confidence"] * (cell_counts[_cell(audit)] + config.tau) ** (-config.alpha)
+        raw_weights[audit["caption_id"]] = min(config.max_weight, max(config.min_weight, raw))
+    normalizer = sum(raw_weights.values()) / max(len(raw_weights), 1)
+    normalized_weights = {key: value / max(normalizer, 1e-8) for key, value in raw_weights.items()}
+    caption_count_by_pair = Counter(audit["pair_id"] for audit in train_audits)
+
+    by_pair: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for audit in caption_audits:
+        by_pair[audit["pair_id"]].append(audit)
+    natural_train: list[dict[str, Any]] = []
+    balanced_train: list[dict[str, Any]] = []
+    natural_validation: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        audits = by_pair[str(row["pair_id"])]
+        if row["split"] == "train":
+            pair_weight = sum(normalized_weights[audit["caption_id"]] for audit in audits) / max(len(audits), 1)
+            pair_weight /= max(caption_count_by_pair[str(row["pair_id"])], 1)
+            natural = item | {"sampling_weight": 1.0 / max(caption_count_by_pair[str(row["pair_id"])], 1), "sampling_policy": "natural_duplicate_aware"}
+            balanced = item | {"sampling_weight": pair_weight, "sampling_policy": "smoothed_capped_compositional"}
+            natural_train.append(natural)
+            balanced_train.append(balanced)
+        elif row["split"] == "val":
+            natural_validation.append(item)
+
+    validation_by_cell: defaultdict[tuple[Any, ...], list[dict[str, Any]]] = defaultdict(list)
+    for row in natural_validation:
+        audits = by_pair[str(row["pair_id"])]
+        key = min((_cell(audit) for audit in audits), key=repr)
+        validation_by_cell[key].append(row)
+    balanced_validation: list[dict[str, Any]] = []
+    for key in sorted(validation_by_cell, key=repr):
+        selected = sorted(validation_by_cell[key], key=lambda row: str(row["pair_id"]))[:balanced_validation_per_cell]
+        balanced_validation.extend(selected)
+
+    duplicate_audit = []
+    for normalized, members in sorted(normalized_clusters.items()):
+        if len(members) > 1:
+            duplicate_audit.append({"kind": "normalized_caption", "cluster": hashlib.sha1(normalized.encode()).hexdigest()[:16], "normalized_caption": normalized, "members": members})
+    for fingerprint, members in sorted(pair_hash_clusters.items()):
+        if fingerprint != "unavailable" and len(members) > 1:
+            duplicate_audit.append({"kind": "perceptual_pair_candidate", "cluster": fingerprint, "members": sorted(members), "requires_review": True})
+    for pair_id, count in sorted(pair_ids.items()):
+        if count > 1:
+            duplicate_audit.append({"kind": "duplicate_pair_id", "pair_id": pair_id, "count": count, "leakage_blocker": True})
+
+    cross_split_pair_clusters = []
+    for fingerprint, members in pair_hash_clusters.items():
+        unique_members = sorted(set(members))
+        splits = {pair_splits[member] for member in unique_members}
+        if "train" in splits and ("val" in splits or "test" in splits):
+            cross_split_pair_clusters.append({"cluster": fingerprint, "members": unique_members, "splits": sorted(splits)})
+    if cross_split_pair_clusters:
+        raise RuntimeError(
+            f"Train/validation perceptual pair leakage detected in {len(cross_split_pair_clusters)} clusters; "
+            f"first={cross_split_pair_clusters[0]}"
+        )
+
+    def write_jsonl(name: str, values: list[dict[str, Any]]) -> None:
+        (output / name).write_text("".join(json.dumps(value, sort_keys=True) + "\n" for value in values), encoding="utf-8")
+    write_jsonl("duplicate_audit.jsonl", duplicate_audit)
+    write_jsonl("caption_quality_audit.jsonl", caption_audits)
+    write_jsonl("natural_train_manifest.jsonl", natural_train)
+    write_jsonl("balanced_train_manifest.jsonl", balanced_train)
+    write_jsonl("natural_validation_manifest.jsonl", natural_validation)
+    write_jsonl("balanced_validation_manifest.jsonl", balanced_validation)
+
+    coverage = {
+        "schema_version": "qcpr-v3-coverage-v1",
+        "source_manifest_sha256": source_hashes,
+        "pair_rows": len(rows),
+        "caption_rows": len(caption_audits),
+        "dataset_pairs": dict(Counter(row["dataset_name"] for row in rows)),
+        "split_pairs": dict(Counter(row["split"] for row in rows)),
+        "retrieval_supervised_pairs": sum(bool(row.get("retrieval_supervision", True)) for row in rows),
+        "localization_supervised_pairs": sum(bool(row.get("query_mask_path") or row.get("mask_path")) for row in rows),
+        "joint_cell_count": len(cell_counts),
+        "singleton_cells": sum(value == 1 for value in cell_counts.values()),
+        "under_five_cells": sum(value < 5 for value in cell_counts.values()),
+        "duplicate_caption_clusters": sum(len(value) > 1 for value in normalized_clusters.values()),
+        "perceptual_pair_candidate_clusters": sum(key != "unavailable" and len(value) > 1 for key, value in pair_hash_clusters.items()),
+        "duplicate_pair_ids": sum(value > 1 for value in pair_ids.values()),
+        "train_validation_perceptual_leakage_clusters": 0,
+        "derived_counts": {
+            "natural_train": len(natural_train), "balanced_train": len(balanced_train),
+            "natural_validation": len(natural_validation), "balanced_validation": len(balanced_validation),
+        },
+    }
+    (output / "dataset_coverage_report.json").write_text(json.dumps(coverage, indent=2, sort_keys=True), encoding="utf-8")
+    csv_header = "dataset,split,pair_id,caption_id,change_status,temporal_direction,objects,locations,counts,relations,mask_empty,foreground_area,label_confidence,parser_confidence\n"
+    csv_rows = []
+    for audit in caption_audits:
+        values = [
+            audit["dataset"], audit["split"], audit["pair_id"], audit["caption_id"], audit["change_status"], audit["temporal_direction"],
+            "|".join(audit["object_family_audit_tags"]), "|".join(audit["location_audit_tags"]), "|".join(audit["count_audit_tags"]), "|".join(audit["relation_audit_tags"]),
+            audit["mask_empty"], audit["foreground_area"], audit["label_confidence"], audit["parser_confidence"],
+        ]
+        csv_rows.append(",".join(json.dumps(value) if isinstance(value, str) else str(value) for value in values))
+    (output / "dataset_coverage_report.csv").write_text(csv_header + "\n".join(csv_rows) + "\n", encoding="utf-8")
+    weighting = {
+        "formula": "quality * (cell_count + tau)^(-alpha), clipped then mean-normalized and duplicate-pair adjusted",
+        "config": config.__dict__,
+        "weight_min": min(normalized_weights.values(), default=0.0),
+        "weight_max": max(normalized_weights.values(), default=0.0),
+        "weight_mean": sum(normalized_weights.values()) / max(len(normalized_weights), 1),
+        "cell_count_min": min(cell_counts.values(), default=0),
+        "cell_count_max": max(cell_counts.values(), default=0),
+    }
+    (output / "dataset_weighting_report.json").write_text(json.dumps(weighting, indent=2, sort_keys=True), encoding="utf-8")
+    return {"coverage": coverage, "weighting": weighting, "output_dir": str(output)}
