@@ -97,6 +97,7 @@ def run(args: argparse.Namespace) -> dict:
     assert_teacher_not_in_optimizer(teacher, optimizer)
     scaler = torch.amp.GradScaler("cuda", enabled=False)
     history = []
+    gradient_presence = {name: False for name, parameter in student.named_parameters() if parameter.requires_grad}
     student.train()
     iterator = iter(loader)
     observed_datasets: set[str] = set()
@@ -146,6 +147,11 @@ def run(args: argparse.Namespace) -> dict:
             total = sum(losses.values())
         if not torch.isfinite(total): raise FloatingPointError(f"non-finite loss at step {step}")
         total.backward()
+        for name, parameter in student.named_parameters():
+            if parameter.requires_grad and parameter.grad is not None:
+                finite_nonzero = bool(torch.isfinite(parameter.grad).all() and parameter.grad.detach().abs().sum() > 0)
+                gradient_presence[name] = gradient_presence[name] or finite_nonzero
+
         norm = torch.nn.utils.clip_grad_norm_(parameters, args.grad_clip_norm)
         if not torch.isfinite(norm): raise FloatingPointError(f"non-finite gradient at step {step}")
         optimizer.step()
@@ -192,6 +198,10 @@ def run(args: argparse.Namespace) -> dict:
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         },
         "all_finite": all(math.isfinite(value) for row in history for value in row.values() if isinstance(value, float)),
+        "gradient_audit": {
+            "local_gradients_finite_nonzero": bool(gradient_presence) and all(gradient_presence.values()),
+            "parameters_with_gradient": sorted(name for name, present in gradient_presence.items() if present),
+        },
         "peak_gpu_allocated": torch.cuda.max_memory_allocated(), "peak_gpu_reserved": torch.cuda.max_memory_reserved(),
         "git_sha": os.popen("git rev-parse HEAD").read().strip(), "checkpoint": str(checkpoint),
     }
