@@ -162,7 +162,12 @@ def _result_logits(corpus, query_index: int, candidate_index: int) -> torch.Tens
     affinity = affinity.masked_fill(~attention[:, None, None, :].bool(), -1e4)
     attended = torch.einsum("qbnl,qld->qbnd", affinity.softmax(-1), token)
     expanded = descriptor.unsqueeze(0)
-    return reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze().detach().cpu()
+    logits = reranker.interaction_mlp(torch.cat((expanded, attended, expanded * attended), dim=-1)).squeeze(-1)
+    # Keep the panel logits identical to score_v2 and the chunked evaluator:
+    # text interaction is a residual over generic changed-channel evidence.
+    if corpus.temporal_explanation_logits is not None:
+        logits = logits + corpus.temporal_explanation_logits[candidate_index : candidate_index + 1, :, 0].to(device).unsqueeze(0)
+    return logits.squeeze().detach().cpu()
 
 
 def _per_result_overlap(mask: np.ndarray, gt: np.ndarray | None, threshold: float) -> tuple[float | None, float | None]:

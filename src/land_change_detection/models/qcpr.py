@@ -392,8 +392,19 @@ class QCPRPatchReranker(nn.Module):
         }
 
 
+def _patch_mask_targets(pair_masks: Tensor, side: int) -> Tensor:
+    """Downsample masks without silently deleting sub-patch foreground objects."""
+    if pair_masks.ndim != 3:
+        raise ValueError("pair_masks must have shape [B,H,W]")
+    # A query-specific S2Looking object may occupy far less than one 6x6
+    # descriptor cell. Nearest interpolation can map such an object entirely
+    # to background, rewarding an empty query mask. Max pooling makes a
+    # positive pixel visible to the descriptor cell that covers it.
+    return F.adaptive_max_pool2d(pair_masks[:, None].float(), output_size=(side, side))[:, 0].flatten(1)
+
+
 def _per_query_segmentation_losses(query_mask_logits: Tensor, caption_to_pair: Tensor, pair_masks: Tensor) -> Tensor:
-    """Return BCE-plus-Dice loss for every query against its paired target."""
+    """Return foreground-aware BCE-plus-Dice loss for every paired query mask."""
     query_count, pair_count, patch_count = query_mask_logits.shape
     if caption_to_pair.shape != (query_count,):
         raise ValueError("caption_to_pair must contain one pair index per query")
@@ -402,12 +413,24 @@ def _per_query_segmentation_losses(query_mask_logits: Tensor, caption_to_pair: T
     side = int(math.isqrt(patch_count))
     if side * side != patch_count:
         raise ValueError("QCPR patch count must form a square grid")
-    targets = F.interpolate(pair_masks[:, None].float(), size=(side, side), mode="nearest")[:, 0].flatten(1)
+    targets = _patch_mask_targets(pair_masks, side)
     rows = torch.arange(query_count, device=query_mask_logits.device)
     mapping = caption_to_pair.long()
     logits = query_mask_logits[rows, mapping]
     target = targets.to(logits.device)[mapping]
-    bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none").mean(dim=1)
+    pixel_bce = F.binary_cross_entropy_with_logits(logits, target, reduction="none")
+    foreground_count = target.sum(dim=1)
+    background = 1.0 - target
+    foreground_bce = (pixel_bce * target).sum(dim=1) / foreground_count.clamp_min(1.0)
+    background_bce = (pixel_bce * background).sum(dim=1) / background.sum(dim=1).clamp_min(1.0)
+    # Sparse non-empty masks need an explicit foreground contribution. Empty
+    # targets retain the background term, so false-positive control remains
+    # supervised without overwhelming the positive examples.
+    bce = torch.where(
+        foreground_count > 0,
+        0.75 * foreground_bce + 0.25 * background_bce,
+        background_bce,
+    )
     probabilities = logits.sigmoid()
     intersection = (probabilities * target).sum(dim=1)
     dice = 1.0 - ((2.0 * intersection + 1.0) / (probabilities.sum(dim=1) + target.sum(dim=1) + 1.0))

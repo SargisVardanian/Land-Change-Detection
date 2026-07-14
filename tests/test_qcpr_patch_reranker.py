@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from land_change_detection.models.qcpr import QCPRPatchReranker, query_segmentation_loss
+from land_change_detection.models.qcpr import QCPRPatchReranker, _patch_mask_targets, query_segmentation_loss
 
 
 def test_qcpr_fused_scores_and_mask_shapes():
@@ -68,3 +68,18 @@ def test_query_segmentation_loss_ignores_pairs_without_real_supervision():
     loss.backward()
     assert logits.grad is not None
     assert torch.count_nonzero(logits.grad).item() == 0
+
+
+def test_patch_mask_targets_preserve_tiny_foreground_and_penalize_empty_prediction():
+    masks = torch.zeros(1, 224, 224)
+    masks[0, 111, 111] = 1.0
+    targets = _patch_mask_targets(masks, side=6)
+    assert targets.shape == (1, 36)
+    assert targets.sum().item() == 1.0
+
+    logits = torch.full((1, 1, 36), -10.0, requires_grad=True)
+    loss = query_segmentation_loss(logits, torch.tensor([0]), masks)
+    assert loss.item() > 5.0
+    loss.backward()
+    assert logits.grad is not None
+    assert torch.count_nonzero(logits.grad).item() > 0

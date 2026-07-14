@@ -60,6 +60,33 @@ def test_candidate_renderer_uses_candidate_logits_functionally() -> None:
     assert torch.allclose(logits_b.sigmoid().amax(), torch.tensor(float(soft.max())), atol=.1)
 
 
+def test_v2_candidate_renderer_reproduces_changed_channel_mask_prior() -> None:
+    torch.manual_seed(13)
+    reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4, architecture_version="v2")
+    query = torch.randn(1, 4)
+    tokens = torch.randn(1, 3, 4)
+    pairs = torch.randn(2, 4)
+    per_time = torch.randn(2, 2, 4, 4)
+    with torch.no_grad():
+        for parameter in reranker.interaction_mlp.parameters():
+            parameter.zero_()
+        for parameter in reranker.temporal_channel_head.parameters():
+            parameter.zero_()
+        reranker.temporal_channel_head[-1].bias[0] = 1.5
+    output = reranker.score_v2(query, tokens, torch.ones(1, 3, dtype=torch.bool), pairs, per_time)
+    corpus = RetrievalCorpus(
+        pair_embeddings=pairs, text_embeddings=torch.nn.functional.normalize(query, dim=-1),
+        caption_to_pair=torch.tensor([0]), caption_group_ids=torch.tensor([0]),
+        pair_ids=["a", "b"], captions=["query"], pair_mask_fractions=torch.zeros(2),
+        encode_seconds=0.0, peak_allocated_vram_bytes=0, peak_reserved_vram_bytes=0,
+        patch_tokens=output["patch_tokens"].detach(), qcpr_architecture_version="v2",
+        text_token_embeddings=tokens, text_attention_mask=torch.ones(1, 3, dtype=torch.bool),
+        temporal_explanation_logits=output["temporal_explanation_logits"].detach(), qcpr_reranker=reranker,
+    )
+    displayed = _result_logits(corpus, 0, 1)
+    assert torch.allclose(displayed, output["query_mask_logits"][0, 1], atol=1e-6)
+
+
 def test_chunked_and_unchunked_qcpr_rankings_match() -> None:
     torch.manual_seed(11)
     reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4)
