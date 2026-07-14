@@ -40,6 +40,7 @@ from land_change_detection.training.temporal_caption_dataset import (
     load_dataset_config,
     parse_dataset_weights,
 )
+from land_change_detection.training.runtime_device import assert_runtime_tensor_devices, resolve_runtime_device
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
 
@@ -251,8 +252,9 @@ def retrieval_supervision_selection(batch: dict[str, Any], device: torch.device)
     indexing is moved to ``device`` before any indexing operation; Python
     metadata such as captions and pair IDs deliberately remains on CPU.
     """
-    pair_mask = batch["retrieval_supervision"].to(device=device, dtype=torch.bool)
-    caption_to_pair = batch["caption_to_pair"].to(device=device, dtype=torch.long)
+    requested_device = resolve_runtime_device(device)
+    pair_mask = torch.as_tensor(batch["retrieval_supervision"], device=requested_device, dtype=torch.bool)
+    caption_to_pair = torch.as_tensor(batch["caption_to_pair"], device=requested_device, dtype=torch.long)
     if pair_mask.ndim != 1:
         raise ValueError(f"retrieval_supervision must be rank-1, got {tuple(pair_mask.shape)}")
     if caption_to_pair.ndim != 1:
@@ -266,8 +268,8 @@ def retrieval_supervision_selection(batch: dict[str, Any], device: torch.device)
     caption_mask = pair_mask.index_select(0, caption_to_pair)
     selected_pairs = torch.nonzero(pair_mask, as_tuple=False).flatten()
     selected_queries = torch.nonzero(caption_mask, as_tuple=False).flatten()
-    inverse = torch.full((pair_mask.numel(),), -1, dtype=torch.long, device=device)
-    inverse.index_copy_(0, selected_pairs, torch.arange(selected_pairs.numel(), device=device))
+    inverse = torch.full((pair_mask.numel(),), -1, dtype=torch.long, device=requested_device)
+    inverse.index_copy_(0, selected_pairs, torch.arange(selected_pairs.numel(), device=requested_device))
     selected_pair_indices = caption_to_pair.index_select(0, selected_queries)
     selected_mapping = inverse.index_select(0, selected_pair_indices)
     if bool((selected_mapping < 0).any()):
@@ -279,8 +281,7 @@ def retrieval_supervision_selection(batch: dict[str, Any], device: torch.device)
         "selected_queries": selected_queries,
         "selected_mapping": selected_mapping,
     }
-    if any(tensor.device != device for tensor in result.values()):
-        raise RuntimeError(f"retrieval supervision selection returned a tensor outside requested device {device}")
+    assert_runtime_tensor_devices(result, requested_device)
     return result
 
 

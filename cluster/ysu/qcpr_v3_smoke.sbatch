@@ -27,7 +27,7 @@ import json,sys
 from pathlib import Path
 root=Path(sys.argv[1])
 reports={name:json.loads((root/name/'smoke_report.json').read_text()) for name in ('global','late','mask')}
-status='PASS' if all(report['status']=='PASS' for report in reports.values()) else 'FAIL'
+status='PASS' if all(report['status']=='PASS' and report.get('all_finite') is True for report in reports.values()) else 'FAIL'
 (root/'smoke_report.json').write_text(json.dumps({'status':status,'components':reports},indent=2))
 if status!='PASS': raise SystemExit(1)
 PY

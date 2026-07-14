@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from ucv2_stage1_next_core import retrieval_supervision_selection
+from land_change_detection.training.runtime_device import assert_runtime_tensor_devices, resolve_runtime_device
 
 
 def _batch(retrieval: list[bool], mapping: list[int]) -> dict[str, torch.Tensor]:
@@ -14,7 +15,35 @@ def _batch(retrieval: list[bool], mapping: list[int]) -> dict[str, torch.Tensor]
 
 
 def _assert_device(result: dict[str, torch.Tensor], device: torch.device) -> None:
-    assert all(value.device == device for value in result.values())
+    assert all(value.device == resolve_runtime_device(device) for value in result.values())
+
+
+def test_cpu_resolution_never_calls_cuda(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: (_ for _ in ()).throw(AssertionError("CUDA API called")))
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: (_ for _ in ()).throw(AssertionError("CUDA API called")))
+    assert resolve_runtime_device("cpu") == torch.device("cpu")
+
+
+def test_explicit_cuda_index_is_preserved_without_cuda_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: (_ for _ in ()).throw(AssertionError("CUDA probe not expected")))
+    assert resolve_runtime_device("cuda:0") == torch.device("cuda:0")
+
+
+def test_generic_cuda_alias_resolves_to_current_device(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 3)
+    assert resolve_runtime_device("cuda") == torch.device("cuda:3")
+
+
+def test_generic_cuda_alias_without_cuda_is_deterministic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    with pytest.raises(RuntimeError, match="CUDA device was requested, but CUDA is unavailable"):
+        resolve_runtime_device("cuda")
+
+
+def test_explicit_device_mismatch_is_rejected() -> None:
+    with pytest.raises(RuntimeError, match="expected cuda:0"):
+        assert_runtime_tensor_devices({"selection": torch.empty(0)}, "cuda:0")
 
 
 def test_all_retrieval_supervised_cpu_indices_are_compact_and_device_safe() -> None:

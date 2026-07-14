@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import random
 import sys
@@ -26,6 +27,7 @@ from land_change_detection.models.qcpr_v3_phases import apply_phase_to_model, re
 from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, assert_teacher_not_in_optimizer, build_v3_and_teacher
 from land_change_detection.models.qcpr_v3_teacher import teacher_preservation_losses
 from land_change_detection.models.qcpr_v3_adapters import CanonicalV3Inputs, evaluator_score, renderer_score, trainer_score
+from land_change_detection.training.runtime_device import assert_runtime_tensor_devices, resolve_runtime_device
 
 
 def _seed(value: int) -> None:
@@ -57,17 +59,17 @@ def _save_panel(path: Path, images: torch.Tensor, mask_logits: torch.Tensor, tar
 
 def _assert_cuda_selection(selection: dict[str, torch.Tensor], device: torch.device) -> None:
     """Smoke-visible enforcement of the collator-to-CUDA indexing boundary."""
-    if device.type != "cuda":
+    resolved_device = resolve_runtime_device(device)
+    if resolved_device.type != "cuda":
         raise RuntimeError("real QCPR v3 run must use CUDA")
-    for name, tensor in selection.items():
-        if tensor.device != device:
-            raise RuntimeError(f"retrieval selection {name} is on {tensor.device}, expected {device}")
+    assert_runtime_tensor_devices(selection, resolved_device)
 
 
 def run(args: argparse.Namespace) -> dict:
     if not torch.cuda.is_available():
         raise RuntimeError("QCPR v3 real run requires CUDA")
-    device = torch.device("cuda")
+    requested_device = torch.device("cuda")
+    device = resolve_runtime_device(requested_device)
     output = Path(args.output_dir); output.mkdir(parents=True, exist_ok=False)
     _seed(args.seed)
     payload = torch.load(args.v1_checkpoint, map_location="cpu", weights_only=False)
@@ -165,8 +167,8 @@ def run(args: argparse.Namespace) -> dict:
                 for candidate in parity[1:]:
                     torch.testing.assert_close(parity[0].reranked_score, candidate.reranked_score)
                     torch.testing.assert_close(parity[0].decoded_mask_logits, candidate.decoded_mask_logits)
-        margin = _positive_margin(selected_scores(result.scores.local_score.detach()), selection["selected_mapping"]) if selection["selected_queries"].numel() else torch.tensor(float("nan"))
-        row = {"step": step, "loss": float(total.detach()), "grad_norm": float(norm), "local_margin": float(margin)}
+        margin = _positive_margin(selected_scores(result.scores.local_score.detach()), selection["selected_mapping"]) if selection["selected_queries"].numel() else None
+        row = {"step": step, "loss": float(total.detach()), "grad_norm": float(norm), "local_margin": float(margin) if margin is not None else None}
         row.update({name: float(value.detach()) for name, value in losses.items()})
         history.append(row)
 
@@ -180,7 +182,16 @@ def run(args: argparse.Namespace) -> dict:
         "status": "PASS", "phase": profile.to_dict(), "initialization": asdict(initialization),
         "optimizer_audit": optimizer_audit, "history": history,
         "observed_datasets": sorted(observed_datasets),
-        "cuda_device_contract": {name: str(tensor.device) for name, tensor in selection.items()},
+        "runtime_device_contract": {
+            "requested_device": str(requested_device),
+            "resolved_device": str(device),
+            "selected_pairs_device": str(selection["selected_pairs"].device),
+            "selected_queries_device": str(selection["selected_queries"].device),
+            "selected_mapping_device": str(selection["selected_mapping"].device),
+            "cuda_current_device": torch.cuda.current_device(),
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        },
+        "all_finite": all(math.isfinite(value) for row in history for value in row.values() if isinstance(value, float)),
         "peak_gpu_allocated": torch.cuda.max_memory_allocated(), "peak_gpu_reserved": torch.cuda.max_memory_reserved(),
         "git_sha": os.popen("git rev-parse HEAD").read().strip(), "checkpoint": str(checkpoint),
     }
