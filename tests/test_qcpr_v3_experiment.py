@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import pytest
 import torch
 
-from land_change_detection.models.qcpr_v3_experiment import acceptance_gates, experiment_metrics
+from land_change_detection.models.qcpr_v3_experiment import acceptance_gates, experiment_metrics, positive_hard_negative_margin
 
 
 def _scores():
@@ -28,3 +29,17 @@ def test_c_gate_requires_mask_evidence_without_relaxing_b_gates() -> None:
     metrics["faithful_mask"] = True
     gates = acceptance_gates("mask_grounding", metrics, v1_global_r1=1.0, v1_global_r5=1.0)
     assert all(gates.values())
+
+
+def test_semantic_margin_excludes_relevant_duplicate_from_negative_pool() -> None:
+    scores = torch.tensor([[0.4, 0.9, 0.1]])
+    relevance = torch.tensor([[True, True, False]])
+    assert positive_hard_negative_margin(scores, relevance) == pytest.approx(0.8)
+    metrics = experiment_metrics(scores, scores, scores, relevance, torch.tensor([0]), top_n=2)
+    assert metrics["local_positive_hard_negative_margin"] == pytest.approx(0.8)
+    assert metrics["local_exact_pair_vs_all_nonpair_margin"] == pytest.approx(-0.5)
+
+
+def test_semantic_margin_requires_matching_score_shape() -> None:
+    with pytest.raises(ValueError, match="semantic_relevance"):
+        positive_hard_negative_margin(torch.ones(2, 2), torch.ones(2, 1, dtype=torch.bool))

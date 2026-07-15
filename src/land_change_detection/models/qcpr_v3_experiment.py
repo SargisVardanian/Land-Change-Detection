@@ -17,8 +17,8 @@ from land_change_detection.models.qcpr_v3_evaluation import (
 )
 
 
-def positive_hard_negative_margin(scores: Tensor, mapping: Tensor) -> float:
-    """Exact-pair positive minus strongest non-pair candidate, averaged."""
+def exact_pair_positive_nonpair_margin(scores: Tensor, mapping: Tensor) -> float:
+    """Exact-pair diagnostic against every other candidate, including semantic matches."""
     if scores.ndim != 2 or mapping.ndim != 1 or scores.shape[0] != mapping.numel():
         raise ValueError("scores [Q,C] and mapping [Q] must align")
     if mapping.numel() == 0:
@@ -29,6 +29,26 @@ def positive_hard_negative_margin(scores: Tensor, mapping: Tensor) -> float:
     positive = scores[rows, mapping]
     negative = scores.masked_fill(torch.nn.functional.one_hot(mapping, scores.shape[1]).bool(), float("-inf")).amax(1)
     return float((positive - negative).mean())
+
+
+def positive_hard_negative_margin(scores: Tensor, semantic_relevance: Tensor) -> float:
+    """Best semantic-positive minus strongest semantic-negative, averaged.
+
+    Repeated captions and teacher-confirmed relevant pairs must not be treated
+    as negatives in a compositional reranking gate. Exact-pair separation is
+    retained separately as a diagnostic.
+    """
+    if scores.ndim != 2 or semantic_relevance.shape != scores.shape:
+        raise ValueError("scores and semantic_relevance must both have shape [Q,C]")
+    if scores.numel() == 0:
+        return 0.0
+    relevant = semantic_relevance.bool()
+    valid = relevant.any(dim=1) & (~relevant).any(dim=1)
+    if not bool(valid.any()):
+        return 0.0
+    positive = scores.masked_fill(~relevant, float("-inf")).amax(dim=1)
+    negative = scores.masked_fill(relevant, float("-inf")).amax(dim=1)
+    return float((positive[valid] - negative[valid]).mean())
 
 
 def experiment_metrics(
@@ -44,8 +64,10 @@ def experiment_metrics(
 ) -> dict[str, float | int]:
     """Canonical metrics used for both diagnostics and controlled pilots."""
     metrics = two_stage_retrieval_metrics(global_scores, reranked_scores, semantic_relevance, top_n=top_n)
-    metrics["local_positive_hard_negative_margin"] = positive_hard_negative_margin(local_scores, exact_mapping)
-    metrics["reranked_positive_hard_negative_margin"] = positive_hard_negative_margin(reranked_scores, exact_mapping)
+    metrics["local_positive_hard_negative_margin"] = positive_hard_negative_margin(local_scores, semantic_relevance)
+    metrics["reranked_positive_hard_negative_margin"] = positive_hard_negative_margin(reranked_scores, semantic_relevance)
+    metrics["local_exact_pair_vs_all_nonpair_margin"] = exact_pair_positive_nonpair_margin(local_scores, exact_mapping)
+    metrics["reranked_exact_pair_vs_all_nonpair_margin"] = exact_pair_positive_nonpair_margin(reranked_scores, exact_mapping)
     metrics["all_scores_finite"] = bool(
         torch.isfinite(global_scores).all()
         and torch.isfinite(local_scores).all()
