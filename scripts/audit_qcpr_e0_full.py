@@ -21,7 +21,7 @@ def semantic_summary(scores: torch.Tensor, relevance: torch.Tensor, keep: torch.
     if not bool(keep.any()):
         return {"query_count": 0, "semantic_r1": 0.0, "semantic_r5": 0.0, "semantic_r10": 0.0, "semantic_ndcg10": 0.0}
     scores, relevance = scores[keep], relevance[keep].bool()
-    order = scores.argsort(1, descending=True, stable=True)
+    order = scores.argsort(dim=1, descending=True, stable=True)
     ranked = relevance.gather(1, order)
     discounts = 1.0 / torch.log2(torch.arange(scores.shape[1], dtype=torch.float32) + 2.0)
     gains = ranked[:, :10].float()
