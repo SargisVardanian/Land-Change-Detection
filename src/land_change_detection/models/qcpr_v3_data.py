@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+import torch
+from torch.utils.data import Sampler
+
 import numpy as np
 from PIL import Image
 
@@ -110,6 +113,56 @@ class WeightingConfig:
     min_weight: float = 0.2
     max_weight: float = 5.0
     natural_fraction: float = 0.5
+
+
+class CappedCompositionalBatchSampler(Sampler[list[int]]):
+    """Deterministic pair-level sampler with a strict no-change batch cap.
+
+    Inputs are manifest rows, so a pair occurs at most once in a batch and its
+    five caption paraphrases cannot be emitted as independent examples.
+    """
+    def __init__(self, rows: list[dict[str, Any]], batch_size: int, *, seed: int = 0, no_change_fraction_cap: float = 0.25):
+        if batch_size <= 0 or not 0.0 <= no_change_fraction_cap <= 1.0:
+            raise ValueError("positive batch_size and no_change_fraction_cap in [0,1] required")
+        self.rows, self.batch_size, self.seed = rows, int(batch_size), int(seed)
+        self.no_change_cap = int(math.floor(self.batch_size * no_change_fraction_cap))
+        self.no_change = [index for index, row in enumerate(rows) if any(_direction(classify_caption_semantics(caption)) == "no_change" for caption in row.get("captions", []))]
+        self.changed = [index for index in range(len(rows)) if index not in set(self.no_change)]
+
+    def __len__(self) -> int:
+        return math.ceil(len(self.rows) / self.batch_size)
+
+    def _weighted_order(self, indices: list[int], generator: torch.Generator) -> list[int]:
+        if not indices:
+            return []
+        weights = torch.tensor([max(float(self.rows[index].get("sampling_weight", 1.0)), 1e-8) for index in indices])
+        # Gumbel-top-k is deterministic for a generator and samples without replacement.
+        keys = torch.log(weights) - torch.log(-torch.log(torch.rand(len(indices), generator=generator).clamp_min(1e-8)))
+        return [indices[index] for index in keys.argsort(descending=True).tolist()]
+
+    def __iter__(self):
+        generator = torch.Generator().manual_seed(self.seed)
+        changed, no_change = self._weighted_order(self.changed, generator), self._weighted_order(self.no_change, generator)
+        ci = ni = 0
+        while ci < len(changed) or ni < len(no_change):
+            batch: list[int] = []
+            while ci < len(changed) and len(batch) < self.batch_size:
+                batch.append(changed[ci]); ci += 1
+            while ni < len(no_change) and len(batch) < self.batch_size and sum(index in self.no_change for index in batch) < self.no_change_cap:
+                batch.append(no_change[ni]); ni += 1
+            if ni < len(no_change) and len(batch) < self.batch_size:
+                if not changed:
+                    raise RuntimeError("cannot enforce a no-change cap when every training pair is no-change")
+                # Reuse changed pairs across batches only to fill a capped tail; never
+                # duplicate a pair within one batch.
+                refill = 0
+                while len(batch) < self.batch_size:
+                    candidate = changed[refill % len(changed)]
+                    refill += 1
+                    if candidate not in batch:
+                        batch.append(candidate)
+            if batch:
+                yield batch
 
 
 def derive_qcpr_v3_manifests(
@@ -230,6 +283,11 @@ def derive_qcpr_v3_manifests(
         "singleton_cells": sum(value == 1 for value in cell_counts.values()),
         "under_five_cells": sum(value < 5 for value in cell_counts.values()),
         "duplicate_caption_clusters": sum(len(value) > 1 for value in normalized_clusters.values()),
+        "no_change_pair_fraction": sum(any(_direction(classify_caption_semantics(caption)) == "no_change" for caption in row.get("captions", [])) for row in rows) / max(len(rows), 1),
+        "no_change_caption_fraction": sum(audit["change_status"] == "no_change" for audit in caption_audits) / max(len(caption_audits), 1),
+        "captions_per_pair_min": min((len(row.get("captions", [])) for row in rows), default=0),
+        "captions_per_pair_max": max((len(row.get("captions", [])) for row in rows), default=0),
+        "caption_cluster_size_max": max((len(value) for value in normalized_clusters.values()), default=0),
         "perceptual_pair_candidate_clusters": sum(key != "unavailable" and len(value) > 1 for key, value in pair_hash_clusters.items()),
         "duplicate_pair_ids": sum(value > 1 for value in pair_ids.values()),
         "train_validation_perceptual_leakage_clusters": 0,
@@ -257,6 +315,9 @@ def derive_qcpr_v3_manifests(
         "weight_mean": sum(normalized_weights.values()) / max(len(normalized_weights), 1),
         "cell_count_min": min(cell_counts.values(), default=0),
         "cell_count_max": max(cell_counts.values(), default=0),
+        "no_change_batch_fraction_cap": 0.25,
+        "large_duplicate_clusters_downweighted": True,
+        "sample_weights_capped": True,
     }
     (output / "dataset_weighting_report.json").write_text(json.dumps(weighting, indent=2, sort_keys=True), encoding="utf-8")
     return {"coverage": coverage, "weighting": weighting, "output_dir": str(output)}

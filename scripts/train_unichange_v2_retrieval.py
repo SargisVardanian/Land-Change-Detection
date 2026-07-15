@@ -213,6 +213,7 @@ class _FakeTextEncoder(nn.Module):
             global_embedding=global_embedding,
             token_embeddings=global_embedding.unsqueeze(1),
             attention_mask=torch.ones(len(texts), 1, dtype=torch.long, device=device),
+            content_token_mask=torch.ones(len(texts), 1, dtype=torch.bool, device=device),
             role="document",  # type: ignore[arg-type]
             metadata={"fake": True},
         )

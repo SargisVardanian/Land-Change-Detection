@@ -324,6 +324,8 @@ class QCPRV3GenericGrounding(nn.Module):
         text_attention_mask: Tensor,
         pair_embeddings: Tensor,
         per_time_tokens: Tensor,
+        *,
+        text_content_mask: Tensor | None = None,
     ) -> QCPRV3ScoreOutput:
         field = self.temporal_field(per_time_tokens)
         grounded, patch_logits, projected_tokens = self.grounding_decoder(
@@ -335,7 +337,10 @@ class QCPRV3GenericGrounding(nn.Module):
         global_score = query @ pairs.T
         local_embedding = self.masked_local_embedding(field.descriptors, patch_logits)
         local_score = torch.einsum("qd,qcd->qc", query, F.normalize(self.local_projection(local_embedding), dim=-1))
-        token_patch_score = self._token_patch_score(grounded, projected_tokens, text_attention_mask)
+        content_mask = text_attention_mask if text_content_mask is None else text_content_mask
+        if content_mask.shape != text_attention_mask.shape:
+            raise ValueError("text_content_mask must match text_attention_mask")
+        token_patch_score = self._token_patch_score(grounded, projected_tokens, content_mask)
         weights = F.softplus(self.rerank_logits)
         reranked = global_score + weights[0] * local_score + weights[1] * token_patch_score
         temporal_maps = self.temporal_map_head(field.descriptors)

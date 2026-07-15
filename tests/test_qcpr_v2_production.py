@@ -83,7 +83,7 @@ def test_qcpr_v2_model_forward_does_not_require_legacy_mask_query_embeddings() -
     class Text(nn.Module):
         def forward(self, captions, role):
             count = len(captions)
-            return TextFeatures(torch.randn(count, 8), torch.randn(count, 5, 8), torch.ones(count, 5, dtype=torch.bool), role, {})
+            return TextFeatures(torch.randn(count, 8), torch.randn(count, 5, 8), torch.ones(count, 5, dtype=torch.bool), torch.ones(count, 5, dtype=torch.bool), role, {})
 
     class Retrieval(nn.Module):
         def forward(self, embedding):

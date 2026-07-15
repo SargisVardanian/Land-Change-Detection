@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 import torch
 
-from land_change_detection.models.qcpr_v3_experiment import acceptance_gates, experiment_metrics, positive_hard_negative_margin
+from land_change_detection.models.qcpr_v3_experiment import acceptance_gates, broad_semantic_margin, experiment_metrics, margin_family_reports
 
 
 def _scores():
@@ -15,31 +15,41 @@ def _scores():
     return global_scores, local_scores, reranked_scores, relevance, mapping
 
 
-def test_experiment_metrics_and_b_gate_are_deterministic() -> None:
-    metrics = experiment_metrics(*_scores(), top_n=2)
+def test_broad_margin_excludes_relevant_duplicate_from_negative_pool() -> None:
+    scores = torch.tensor([[0.4, 0.9, 0.1]])
+    relevance = torch.tensor([[True, True, False]])
+    assert broad_semantic_margin(scores, relevance)["mean"] == pytest.approx(0.8)
+    metrics = experiment_metrics(scores, scores, scores, relevance, torch.tensor([0]), top_n=2)
+    assert metrics["local_broad_semantic_margin_mean"] == pytest.approx(0.8)
+    assert metrics["local_exact_pair_vs_all_nonpair_margin_mean"] == pytest.approx(-0.5)
+    assert metrics["structured_near_miss_status"] == "NOT_EVALUATED"
+
+
+def test_parser_derived_near_miss_is_not_b_gate_eligible() -> None:
+    scores = torch.tensor([[0.8, 0.7, 0.1], [0.7, 0.8, 0.1], [0.1, 0.2, 0.8]])
+    relevance = torch.eye(3, dtype=torch.bool)
+    metrics = experiment_metrics(scores, scores, scores, relevance, torch.tensor([0, 1, 2]), top_n=3, captions=["a house appeared on the left", "a house appeared on the right", "a road appeared on the left"])
+    assert metrics["structured_near_miss_status"] == "PARSER_DERIVED_NOT_GATE_ELIGIBLE"
     metrics["local_gradients_finite_nonzero"] = True
     gates = acceptance_gates("late_interaction", metrics, v1_global_r1=1.0, v1_global_r5=1.0)
-    assert all(gates.values())
-    assert metrics["local_positive_hard_negative_margin"] > 0
+    assert not gates["structured_near_miss_human_verified"]
 
 
-def test_c_gate_requires_mask_evidence_without_relaxing_b_gates() -> None:
-    metrics = experiment_metrics(*_scores(), top_n=2, mask_logits=torch.tensor([[[8.0]]]), mask_targets=torch.tensor([[[1.0]]]))
+def test_c_gate_requires_mask_evidence_and_human_structured_labels() -> None:
+    metrics = experiment_metrics(*_scores(), top_n=2, captions=["a house appeared", "a road appeared"], structured_labels_human_verified=True, mask_logits=torch.tensor([[[8.0]]]), mask_targets=torch.tensor([[[1.0]]]))
     metrics["local_gradients_finite_nonzero"] = True
     metrics["faithful_mask"] = True
     gates = acceptance_gates("mask_grounding", metrics, v1_global_r1=1.0, v1_global_r5=1.0)
-    assert all(gates.values())
+    assert "structured_near_miss_human_verified" in gates
 
 
-def test_semantic_margin_excludes_relevant_duplicate_from_negative_pool() -> None:
-    scores = torch.tensor([[0.4, 0.9, 0.1]])
-    relevance = torch.tensor([[True, True, False]])
-    assert positive_hard_negative_margin(scores, relevance) == pytest.approx(0.8)
-    metrics = experiment_metrics(scores, scores, scores, relevance, torch.tensor([0]), top_n=2)
-    assert metrics["local_positive_hard_negative_margin"] == pytest.approx(0.8)
-    assert metrics["local_exact_pair_vs_all_nonpair_margin"] == pytest.approx(-0.5)
-
-
-def test_semantic_margin_requires_matching_score_shape() -> None:
-    with pytest.raises(ValueError, match="semantic_relevance"):
-        positive_hard_negative_margin(torch.ones(2, 2), torch.ones(2, 1, dtype=torch.bool))
+def test_margin_family_reports_keep_parser_labels_non_gate_eligible() -> None:
+    global_scores, local, reranked, relevance, mapping = _scores()
+    reports = margin_family_reports(
+        local, reranked, mapping, relevance,
+        ["a house appeared on the left", "a road disappeared on the right"],
+        global_scores, top_n=2, query_groups={"changed_only": torch.tensor([True, True])},
+    )
+    assert reports["all"]["structured_label_provenance"] == "parser_derived_not_gate_eligible"
+    assert reports["changed_only"]["query_count"] == 2
+    assert "wrong_object" in reports["all"]["local_structured_near_miss_by_category"]

@@ -14,12 +14,14 @@ class CanonicalV3Inputs:
     text_attention_mask: Tensor
     pair_embeddings: Tensor
     per_time_tokens: Tensor
+    text_content_mask: Tensor | None = None
 
     def as_kwargs(self) -> dict[str, Tensor]:
         return {
             "global_query_embeddings": self.global_query_embeddings,
             "text_token_embeddings": self.text_token_embeddings,
             "text_attention_mask": self.text_attention_mask,
+            "text_content_mask": self.text_content_mask,
             "pair_embeddings": self.pair_embeddings,
             "per_time_tokens": self.per_time_tokens,
         }
@@ -34,6 +36,7 @@ def canonical_score(model, inputs: CanonicalV3Inputs) -> QCPRV3ScoreOutput:
         inputs.text_attention_mask,
         inputs.pair_embeddings,
         inputs.per_time_tokens,
+        text_content_mask=inputs.text_content_mask,
     )
 
 

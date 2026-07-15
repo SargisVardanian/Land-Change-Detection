@@ -17,6 +17,7 @@ class UniChangeV3Output:
     text_embedding: Tensor
     text_token_embeddings: Tensor
     text_attention_mask: Tensor
+    text_content_mask: Tensor
     per_time_tokens: Tensor
     scores: QCPRV3ScoreOutput
     visual_metadata: dict[str, Any]
@@ -65,7 +66,7 @@ class UniChangeV3RetrievalModel(nn.Module):
         pair = F.normalize(self.retrieval_head(temporal.pair_embedding).pair_embedding, dim=-1)
         return pair, temporal.per_time_tokens, visual.metadata
 
-    def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor]:
+    def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor, Tensor]:
         with torch.no_grad():
             features = self.text_encoder(captions, role="query")
         if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
@@ -77,6 +78,7 @@ class UniChangeV3RetrievalModel(nn.Module):
             F.normalize(global_embedding, dim=-1),
             features.token_embeddings,
             features.attention_mask.bool(),
+            features.content_token_mask.bool(),
         )
 
     def score_encoded(
@@ -86,6 +88,7 @@ class UniChangeV3RetrievalModel(nn.Module):
         text_embedding: Tensor,
         text_tokens: Tensor,
         text_attention_mask: Tensor,
+        text_content_mask: Tensor | None = None,
     ) -> QCPRV3ScoreOutput:
         return self.grounder.score_query_pair_chunks(
             text_embedding,
@@ -93,6 +96,7 @@ class UniChangeV3RetrievalModel(nn.Module):
             text_attention_mask,
             pair_embedding,
             per_time_tokens,
+            text_content_mask=text_content_mask,
         )
 
     def forward(
@@ -103,9 +107,10 @@ class UniChangeV3RetrievalModel(nn.Module):
         temporal_valid_mask: Tensor | None = None,
     ) -> UniChangeV3Output:
         pair, per_time, metadata = self.encode_pairs(images, temporal_valid_mask)
-        text, tokens, attention = self.encode_texts(captions)
+        text, tokens, attention, content = self.encode_texts(captions)
         tokens = tokens.to(pair.device)
         attention = attention.to(pair.device)
+        content = content.to(pair.device)
         text = text.to(pair.device)
-        scores = self.score_encoded(pair, per_time, text, tokens, attention)
-        return UniChangeV3Output(pair, text, tokens, attention, per_time, scores, metadata)
+        scores = self.score_encoded(pair, per_time, text, tokens, attention, content)
+        return UniChangeV3Output(pair, text, tokens, attention, content, per_time, scores, metadata)

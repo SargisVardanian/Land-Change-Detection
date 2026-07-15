@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from land_change_detection.models.qcpr_v3_data import WeightingConfig, derive_qcpr_v3_manifests
+from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, WeightingConfig, derive_qcpr_v3_manifests
 
 
 def _write_manifest(tmp_path):
@@ -67,3 +67,20 @@ def test_cross_split_duplicate_pair_images_are_a_hard_leakage_failure(tmp_path) 
     source.write_text("".join(json.dumps(row) + "\n" for row in rows))
     with pytest.raises(RuntimeError, match="perceptual pair leakage"):
         derive_qcpr_v3_manifests([source], tmp_path / "derived")
+
+
+def test_capped_sampler_limits_no_change_and_never_repeats_pair_in_batch() -> None:
+    rows = [
+        {"pair_id": f"changed-{index}", "captions": ["a house appeared"], "sampling_weight": 1.0}
+        for index in range(6)
+    ] + [
+        {"pair_id": f"nochange-{index}", "captions": ["there is no difference"], "sampling_weight": 1.0}
+        for index in range(6)
+    ]
+    sampler = CappedCompositionalBatchSampler(rows, 4, seed=3, no_change_fraction_cap=0.25)
+    batches = list(sampler)
+    for batch in batches:
+        no_change = sum(rows[index]["pair_id"].startswith("nochange") for index in batch)
+        assert no_change <= 1
+        assert len({rows[index]["pair_id"] for index in batch}) == len(batch)
+    assert list(CappedCompositionalBatchSampler(rows, 4, seed=3, no_change_fraction_cap=0.25)) == batches

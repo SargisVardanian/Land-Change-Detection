@@ -17,6 +17,58 @@ class QueryMaskLossOutput:
     empty_false_positive: Tensor
 
 
+
+
+def foreground_preserving_resize(targets: Tensor, size: tuple[int, int]) -> Tensor:
+    """Downsample masks with max pooling so a small foreground cannot vanish."""
+    if targets.ndim != 3:
+        raise ValueError("targets must have shape [B,H,W]")
+    height, width = targets.shape[-2:]
+    if size[0] <= height and size[1] <= width:
+        return F.adaptive_max_pool2d(targets.float().unsqueeze(1), size)[:, 0]
+    return F.interpolate(targets.float().unsqueeze(1), size=size, mode="nearest")[:, 0]
+
+
+def separated_query_mask_losses(
+    logits: Tensor,
+    targets: Tensor,
+    target_kinds: list[str],
+    change_types: list[str | None],
+    *,
+    mismatch_empty_weight: float = 1.0,
+) -> dict[str, Tensor | int]:
+    """Separate mask losses by provenance and add mismatched-query empty negatives.
+
+    Inputs are already paired query logits.  Parser labels choose reporting and
+    supervision provenance only; they never create semantic model heads.
+    """
+    if logits.ndim != 3 or targets.shape != logits.shape or len(target_kinds) != logits.shape[0] or len(change_types) != logits.shape[0]:
+        raise ValueError("paired logits/targets and metadata must align")
+    def pick(predicate):
+        return torch.tensor([predicate(kind, change) for kind, change in zip(target_kinds, change_types, strict=True)], device=logits.device, dtype=torch.bool)
+    groups = {
+        "generic_changed": pick(lambda kind, change: kind in {"binary_generic", "semantic_transition_union"}),
+        "query_specific": pick(lambda kind, change: kind == "query_specific"),
+        "appeared": pick(lambda kind, change: change == "appeared"),
+        "disappeared": pick(lambda kind, change: change == "disappeared"),
+    }
+    result: dict[str, Tensor | int] = {}
+    total = logits.sum() * 0.0
+    for name, mask in groups.items():
+        value = query_mask_loss(logits[mask], targets[mask]).total if bool(mask.any()) else logits.sum() * 0.0
+        result[f"{name}_loss"] = value
+        result[f"{name}_count"] = int(mask.sum())
+        total = total + value
+    query_mask = groups["query_specific"]
+    mismatch = logits.sum() * 0.0
+    if int(query_mask.sum()) > 1:
+        selected = logits[query_mask]
+        mismatched = selected.roll(shifts=1, dims=0)
+        mismatch = query_mask_loss(mismatched, torch.zeros_like(mismatched)).empty_false_positive * float(mismatch_empty_weight)
+    result["mismatched_query_empty_loss"] = mismatch
+    result["total"] = total + mismatch
+    return result
+
 def _flatten_masks(logits: Tensor, targets: Tensor) -> tuple[Tensor, Tensor]:
     if logits.shape != targets.shape or logits.ndim < 3:
         raise ValueError("logits and targets must have identical [...,H,W] shapes")
