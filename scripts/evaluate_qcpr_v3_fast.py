@@ -25,18 +25,39 @@ def make_config(checkpoint: Path, batch_size: int, manifest: Path):
     return legacy.Stage1NextConfig(**{name: value for name, value in values.items() if name in fields})
 
 
+def pad_token_batches(token_batches: list[torch.Tensor], attention_batches: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
+    """Combine batches with different tokenizer padding lengths into one corpus."""
+    if len(token_batches) != len(attention_batches):
+        raise ValueError("token and attention batch counts must match")
+    token_rows, attention_rows = [], []
+    for tokens, attention in zip(token_batches, attention_batches, strict=True):
+        if tokens.ndim != 3 or attention.ndim != 2 or tokens.shape[:2] != attention.shape:
+            raise ValueError("tokens must be [B,L,D] and attention must be matching [B,L]")
+        token_rows.extend(tokens.unbind(0))
+        attention_rows.extend(attention.unbind(0))
+    if not token_rows:
+        raise ValueError("cannot pad an empty token corpus")
+    return (
+        torch.nn.utils.rnn.pad_sequence(token_rows, batch_first=True, padding_value=0.0),
+        torch.nn.utils.rnn.pad_sequence(attention_rows, batch_first=True, padding_value=0),
+    )
+
+
 @torch.no_grad()
 def collect(model, dataset, config, device):
-    pieces = {name: [] for name in ("pairs", "per_time", "text", "tokens", "attention", "masks", "segmentation")}
+    pieces = {name: [] for name in ("pairs", "per_time", "text", "masks", "segmentation")}
+    token_batches, attention_batches = [], []
     captions, mapping, offset = [], [], 0
     for batch in legacy.make_eval_loader(dataset, config):
         images, temporal = batch["images"].to(device), batch["temporal_valid_mask"].to(device)
         pairs, per_time, _ = model.encode_pairs(images, temporal)
         text, tokens, attention = model.encode_texts(batch["captions"])
-        for name, value in (("pairs", pairs), ("per_time", per_time), ("text", text), ("tokens", tokens), ("attention", attention), ("masks", batch["masks"]), ("segmentation", batch["segmentation_supervision"])):
+        for name, value in (("pairs", pairs), ("per_time", per_time), ("text", text), ("masks", batch["masks"]), ("segmentation", batch["segmentation_supervision"])):
             pieces[name].append(value.cpu())
+        token_batches.append(tokens.cpu()); attention_batches.append(attention.cpu())
         captions.extend(batch["captions"]); mapping.extend((batch["caption_to_pair"] + offset).tolist()); offset += images.shape[0]
-    return {name: torch.cat(values) for name, values in pieces.items()} | {"captions": captions, "mapping": torch.tensor(mapping, dtype=torch.long)}
+    tokens, attention = pad_token_batches(token_batches, attention_batches)
+    return {name: torch.cat(values) for name, values in pieces.items()} | {"tokens": tokens, "attention": attention, "captions": captions, "mapping": torch.tensor(mapping, dtype=torch.long)}
 
 
 @torch.no_grad()
