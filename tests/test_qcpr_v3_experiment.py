@@ -53,3 +53,14 @@ def test_margin_family_reports_keep_parser_labels_non_gate_eligible() -> None:
     assert reports["all"]["structured_label_provenance"] == "parser_derived_not_gate_eligible"
     assert reports["changed_only"]["query_count"] == 2
     assert "wrong_object" in reports["all"]["local_structured_near_miss_by_category"]
+
+
+def test_parser_near_miss_aggregates_pair_captions_and_excludes_ambiguous_direction():
+    from land_change_detection.models.qcpr_v3_experiment import parser_derived_near_miss_masks
+    captions = ["a house appeared on the left", "a house disappeared on the left", "a house appeared on the right"]
+    mapping = torch.tensor([0, 1, 1])
+    global_scores = torch.tensor([[.9, .8], [.9, .8], [.9, .8]])
+    broad = torch.tensor([[True, False], [True, False], [True, False]])
+    masks = parser_derived_near_miss_masks(captions, mapping, global_scores, broad, top_n=2)
+    # Candidate pair 1 carries contradictory appeared/disappeared captions.
+    assert not masks["wrong_direction"][:, 1].any()

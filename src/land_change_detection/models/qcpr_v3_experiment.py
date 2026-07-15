@@ -11,7 +11,7 @@ from typing import Mapping
 import torch
 from torch import Tensor
 
-from land_change_detection.models.qcpr import structured_hard_negative_masks
+from land_change_detection.models.qcpr import _structured_signature
 from land_change_detection.models.qcpr_v3 import stable_global_top_n
 from land_change_detection.models.qcpr_v3_evaluation import soft_segmentation_metrics, two_stage_retrieval_metrics
 
@@ -30,8 +30,12 @@ def _margin_distribution(scores: Tensor, positive_mask: Tensor, negative_mask: T
     if scores.ndim != 2 or positive_mask.shape != scores.shape or negative_mask.shape != scores.shape:
         raise ValueError("scores, positive_mask, and negative_mask must have shape [Q,C]")
     positive_mask, negative_mask = positive_mask.bool(), negative_mask.bool() & ~positive_mask.bool()
-    valid = positive_mask.any(1) & negative_mask.any(1)
-    margin = scores.masked_fill(~positive_mask, float("-inf")).amax(1) - scores.masked_fill(~negative_mask, float("-inf")).amax(1)
+    best_positive = scores.masked_fill(~positive_mask, float("-inf")).amax(1)
+    best_negative = scores.masked_fill(~negative_mask, float("-inf")).amax(1)
+    margin = best_positive - best_negative
+    # Local scores are intentionally -inf outside global top-N; evaluate only
+    # rows with a real positive and real hard negative in that candidate pool.
+    valid = positive_mask.any(1) & negative_mask.any(1) & torch.isfinite(best_positive) & torch.isfinite(best_negative)
     return _summary(margin[valid], positive_sizes=positive_mask.sum(1)[valid])
 
 
@@ -49,23 +53,55 @@ def broad_semantic_margin(scores: Tensor, semantic_relevance: Tensor) -> dict[st
     return _margin_distribution(scores, semantic_relevance.bool(), ~semantic_relevance.bool())
 
 
+def _aggregate_pair_signatures(captions: list[str], mapping: Tensor, pair_count: int) -> list[dict[str, object]]:
+    """Aggregate every caption of a pair; never silently choose the first one."""
+    result = [{"objects": set(), "locations": set(), "relations": set(), "directions": set(), "counts": set(), "changed": False, "no_change": False} for _ in range(pair_count)]
+    for caption, pair in zip(captions, mapping.tolist(), strict=True):
+        source, target = _structured_signature(caption), result[int(pair)]
+        target["objects"].update(source["objects"]); target["locations"].update(source["locations"])
+        target["relations"].add(source["relation"]); target["directions"].add(source["direction"])
+        target["counts"].update(source["counts"]); target["changed"] = bool(target["changed"] or source["changed"])
+        target["no_change"] = bool(target["no_change"] or source["no_change"])
+    for value in result:
+        directions = {x for x in value["directions"] if x not in {"unknown", "changed"}}
+        counts = set(value["counts"])
+        value["direction_ambiguous"] = len(directions) > 1
+        value["count_ambiguous"] = len(counts) > 1
+    return result
+
+
 def parser_derived_near_miss_masks(
     captions: list[str], mapping: Tensor, global_scores: Tensor, broad_positive_mask: Tensor, *, top_n: int
 ) -> dict[str, Tensor]:
-    """Parser-derived, top-N near misses; never call these human verified labels."""
+    """Top-N parser audit with pair-caption aggregation and no all-gallery loop."""
     if global_scores.shape != broad_positive_mask.shape or global_scores.shape[0] != len(captions):
         raise ValueError("captions, global_scores, and broad_positive_mask must align")
-    categories = structured_hard_negative_masks(captions, mapping, global_scores.shape[1])
-    selected = torch.zeros_like(global_scores, dtype=torch.bool)
-    selected.scatter_(1, stable_global_top_n(global_scores, top_n), True)
-    names = {
-        "same_broad_change_wrong_object": "wrong_object",
-        "same_object_wrong_direction": "wrong_direction",
-        "same_object_direction_wrong_location": "wrong_location",
-        "same_object_location_wrong_count": "wrong_count",
-        "no_change_lookalike": "change_no_change_lookalike",
-    }
-    return {names[name]: mask.to(global_scores.device) & selected & ~broad_positive_mask.bool() for name, mask in categories.items()}
+    names = ("wrong_object", "wrong_direction", "wrong_location", "wrong_count", "change_no_change_lookalike")
+    result = {name: torch.zeros_like(global_scores, dtype=torch.bool) for name in names}
+    candidates = _aggregate_pair_signatures(captions, mapping, global_scores.shape[1])
+    selected = stable_global_top_n(global_scores, top_n).cpu().tolist()
+    for query_index, (caption, rows) in enumerate(zip(captions, selected, strict=True)):
+        query = _structured_signature(caption)
+        for candidate_index in rows:
+            if bool(broad_positive_mask[query_index, candidate_index]):
+                continue
+            candidate = candidates[candidate_index]
+            objects, locations, counts = set(candidate["objects"]), set(candidate["locations"]), set(candidate["counts"])
+            directions = {x for x in candidate["directions"] if x not in {"unknown", "changed"}}
+            same_object = bool(query["objects"] and set(query["objects"]) & objects)
+            same_location = bool(query["locations"] and set(query["locations"]) & locations)
+            qdir = query["direction"]
+            if same_object and qdir not in {"unknown", "changed"} and not candidate["direction_ambiguous"] and qdir not in directions:
+                result["wrong_direction"][query_index, candidate_index] = True
+            elif same_object and qdir in directions and query["locations"] and not same_location:
+                result["wrong_location"][query_index, candidate_index] = True
+            elif same_object and same_location and query["counts"] and not candidate["count_ambiguous"] and set(query["counts"]) != counts:
+                result["wrong_count"][query_index, candidate_index] = True
+            elif query["changed"] and candidate["changed"] and query["objects"] and objects and not same_object:
+                result["wrong_object"][query_index, candidate_index] = True
+            elif query["changed"] and candidate["no_change"] and (same_object or not query["objects"]):
+                result["change_no_change_lookalike"][query_index, candidate_index] = True
+    return result
 
 
 def parser_derived_structured_near_miss_margin(
@@ -113,7 +149,7 @@ def experiment_metrics(
             for category, values in by_category.items():
                 metrics.update(_prefixed(values, f"{prefix}_{category}"))
         metrics["structured_near_miss_status"] = "HUMAN_VERIFIED" if structured_labels_human_verified else "PARSER_DERIVED_NOT_GATE_ELIGIBLE"
-    metrics["all_scores_finite"] = bool(torch.isfinite(global_scores).all() and torch.isfinite(local_scores).all() and torch.isfinite(reranked_scores).all())
+    metrics["all_scores_finite"] = bool(torch.isfinite(global_scores).all() and torch.isfinite(reranked_scores).all() and torch.isfinite(local_scores[torch.isfinite(local_scores)]).all())
     if (mask_logits is None) != (mask_targets is None):
         raise ValueError("mask logits and targets must be supplied together")
     if mask_logits is not None and mask_targets is not None:
