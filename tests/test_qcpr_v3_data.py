@@ -8,9 +8,19 @@ import torch
 from PIL import Image
 
 from land_change_detection.models.qcpr_v3_data import (
-    CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler,
+    CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler, DirectionalSanitySampler,
     WeightingConfig, derive_qcpr_v3_manifests,
 )
+
+
+def test_directional_sanity_schedule_is_deterministic_and_60_20_20() -> None:
+    batches = list(DirectionalSanitySampler(steps=50, seed=7))
+    assert batches == list(DirectionalSanitySampler(steps=50, seed=7))
+    modes = [batch[0][1] for batch in batches]
+    assert modes.count("positive") == 30
+    assert modes.count("hard_background") == 10
+    assert modes.count("temporal_reversal") == 10
+    assert len({batch[0][2] for batch in batches}) == 50
 from land_change_detection.training.temporal_caption_dataset import _hard_background_crop_box
 
 

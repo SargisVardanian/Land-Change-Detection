@@ -28,6 +28,15 @@ def test_crop_uses_identical_geometry_and_nearest_mask():
     assert target.sum() > 0 and a.max() == 0 and b.min() == 1
 
 
+def test_jittered_crop_is_deterministic_and_never_drops_target():
+    mask = torch.zeros(1024, 1024); mask[400:440, 600:650] = 1
+    first = target_aware_crop_box(mask, output_size=256, context=4, jitter_seed=17)
+    second = target_aware_crop_box(mask, output_size=256, context=4, jitter_seed=17)
+    assert first == second
+    y0, y1, x0, x1 = first
+    assert bool(mask[y0:y1, x0:x1].sum() == mask.sum())
+
+
 def test_temporal_reversal_is_atomic_and_involutive():
     t1, t2 = torch.tensor([1]), torch.tensor([2])
     appeared, disappeared = torch.tensor([3]), torch.tensor([4])

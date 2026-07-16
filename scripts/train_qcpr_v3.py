@@ -30,7 +30,7 @@ from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, assert_te
 from land_change_detection.models.qcpr_v3_teacher import teacher_preservation_losses
 from land_change_detection.models.qcpr_v3_adapters import CanonicalV3Inputs, evaluator_score, renderer_score, trainer_score
 from land_change_detection.models.qcpr_v3_experiment import parser_derived_late_interaction_loss
-from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler
+from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler, DirectionalSanitySampler
 from land_change_detection.models.qcpr_v3 import stable_global_top_n
 from land_change_detection.models.qcpr_v3_mask_diagnostic import (
     append_jsonl,
@@ -356,7 +356,7 @@ def run(args: argparse.Namespace) -> dict:
             pin_memory=True, persistent_workers=False,
         )
     elif args.phase == "mask_only_diagnostic":
-        loader = DataLoader(
+        fixed_train_loader = DataLoader(
             train, batch_size=len(train), shuffle=False, num_workers=0,
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
         )
@@ -364,8 +364,14 @@ def run(args: argparse.Namespace) -> dict:
             val, batch_size=len(val), shuffle=False, num_workers=0,
             collate_fn=data_compat.make_collator(val, config, epoch=0, training=False),
         )
-        fixed_train_batch = next(iter(loader))
+        fixed_train_batch = next(iter(fixed_train_loader))
         fixed_validation_batch = next(iter(validation_loader))
+        loader = DataLoader(
+            train,
+            batch_sampler=DirectionalSanitySampler(steps=args.steps, seed=config.seed),
+            num_workers=0,
+            collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
+        )
     elif args.phase == "mask_grounding" and any(row.get("quality_tier") for row in getattr(train, "samples", [])):
         sampler = DirectionalCurriculumBatchSampler(
             list(getattr(train, "samples", [])), config.batch_size, seed=config.seed,
@@ -461,13 +467,9 @@ def run(args: argparse.Namespace) -> dict:
     for step in range(1, args.steps + 1):
         attempts = 0
         while True:
-            if args.phase == "mask_only_diagnostic":
-                assert fixed_train_batch is not None
-                batch = fixed_train_batch
-            else:
-                try: batch = next(iterator)
-                except StopIteration:
-                    iterator = iter(loader); batch = next(iterator)
+            try: batch = next(iterator)
+            except StopIteration:
+                iterator = iter(loader); batch = next(iterator)
             attempts += 1
             names = {str(name) for name in batch.get("dataset_names", [])}
             required = {name for name in args.required_datasets.split(",") if name}

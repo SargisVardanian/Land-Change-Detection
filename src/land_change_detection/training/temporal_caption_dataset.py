@@ -169,11 +169,17 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, index: int | tuple[int, str]) -> TemporalCaptionItem:
+    def __getitem__(self, index: int | tuple[int, str] | tuple[int, str, int]) -> TemporalCaptionItem:
         crop_mode = "positive"
+        crop_seed: int | None = None
         if isinstance(index, tuple):
-            index, crop_mode = index
-        if crop_mode not in {"positive", "hard_background", "hard_directional"}:
+            if len(index) == 2:
+                index, crop_mode = index
+            elif len(index) == 3:
+                index, crop_mode, crop_seed = index
+            else:
+                raise ValueError("directional dataset index must be (row, mode[, seed])")
+        if crop_mode not in {"positive", "hard_background", "hard_directional", "temporal_reversal"}:
             raise ValueError(f"unsupported directional crop mode {crop_mode!r}")
         row = self.samples[index]
         directional_targets = list(row.get("directional_targets", []))
@@ -193,7 +199,10 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 crop_box = (
                     _hard_background_crop_box(union_raw, crop_size=int(self.image_size or 256))
                     if crop_mode == "hard_background" else
-                    target_aware_crop_box(union_raw, output_size=int(self.image_size or 256), context=self.target_crop_context)
+                    target_aware_crop_box(
+                        union_raw, output_size=int(self.image_size or 256),
+                        context=self.target_crop_context, jitter_seed=crop_seed,
+                    )
                 )
                 transformed = [
                     apply_spatial_contract(
@@ -204,6 +213,18 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 ]
                 cropped_t1, cropped_t2 = transformed[0][0], transformed[0][1]
                 query_masks = [value[2] for value in transformed]
+                if crop_mode == "temporal_reversal":
+                    cropped_t1, cropped_t2 = cropped_t2, cropped_t1
+                    if {str(target.get("direction")) for target in directional_targets} != {"appeared", "disappeared"}:
+                        raise ValueError("temporal reversal requires paired appeared/disappeared targets")
+                    by_direction = {
+                        str(target["direction"]): target_mask
+                        for target, target_mask in zip(directional_targets, query_masks, strict=True)
+                    }
+                    query_masks = [
+                        by_direction["disappeared"] if target.get("direction") == "appeared" else by_direction["appeared"]
+                        for target in directional_targets
+                    ]
             else:
                 query_masks = [_load_mask(target["mask_path"], self.image_size) for target in directional_targets]
             mask = torch.stack(query_masks).amax(dim=0)

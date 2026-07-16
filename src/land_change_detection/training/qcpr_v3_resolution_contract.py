@@ -31,8 +31,16 @@ def target_bbox(mask: Tensor) -> tuple[int, int, int, int] | None:
     return int(y0), int(y1), int(x0), int(x1)
 
 
-def target_aware_crop_box(mask: Tensor, *, output_size: int = 256, context: float = 1.5) -> tuple[int, int, int, int]:
-    """Deterministic square crop around all target pixels, with context."""
+def target_aware_crop_box(
+    mask: Tensor, *, output_size: int = 256, context: float = 1.5,
+    jitter_seed: int | None = None,
+) -> tuple[int, int, int, int]:
+    """Square crop containing all target pixels, optionally translated deterministically.
+
+    Jitter changes only the crop origin within the range that still contains the
+    complete target. It prevents an absolute-coordinate shortcut without
+    changing visual ground truth or crop scale.
+    """
     if mask.ndim != 2 or output_size <= 0 or context < 1:
         raise ValueError("invalid target-aware crop arguments")
     height, width = mask.shape
@@ -42,8 +50,16 @@ def target_aware_crop_box(mask: Tensor, *, output_size: int = 256, context: floa
     y0, y1, x0, x1 = bbox
     side = min(max(int(round(max(y1 - y0, x1 - x0) * context)), output_size), height, width)
     cy, cx = (y0 + y1) // 2, (x0 + x1) // 2
-    top = min(max(cy - side // 2, 0), height - side)
-    left = min(max(cx - side // 2, 0), width - side)
+    centered_top = min(max(cy - side // 2, 0), height - side)
+    centered_left = min(max(cx - side // 2, 0), width - side)
+    if jitter_seed is None:
+        top, left = centered_top, centered_left
+    else:
+        min_top, max_top = max(0, y1 - side), min(y0, height - side)
+        min_left, max_left = max(0, x1 - side), min(x0, width - side)
+        generator = torch.Generator().manual_seed(int(jitter_seed))
+        top = int(torch.randint(min_top, max_top + 1, (), generator=generator)) if max_top > min_top else min_top
+        left = int(torch.randint(min_left, max_left + 1, (), generator=generator)) if max_left > min_left else min_left
     return top, top + side, left, left + side
 
 
