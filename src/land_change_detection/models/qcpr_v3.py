@@ -234,6 +234,20 @@ class MultiScaleQueryMaskDecoder(nn.Module):
             )
             for _ in config.scales
         )
+        largest_scale = max(config.scales)
+        if config.output_size[0] != config.output_size[1] or config.output_size[0] % largest_scale:
+            raise ValueError("mask output must be square and divisible by the largest temporal scale")
+        upsample_ratio = config.output_size[0] // largest_scale
+        if upsample_ratio < 1 or upsample_ratio & (upsample_ratio - 1):
+            raise ValueError("mask output/largest-scale ratio must be a power of two")
+        self.upsample_blocks = nn.ModuleList(
+            nn.Sequential(
+                nn.ConvTranspose2d(width, width, 4, stride=2, padding=1),
+                nn.GroupNorm(8, width), nn.GELU(),
+                nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
+            )
+            for _ in range(int(math.log2(upsample_ratio)))
+        )
         self.mask_head = nn.Sequential(
             nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
             nn.Conv2d(width, 1, 1),
@@ -262,8 +276,13 @@ class MultiScaleQueryMaskDecoder(nn.Module):
                 current = current + fused
             fused = self.fusion_blocks[index](current)
         assert fused is not None and fused.shape[-2:] == (target_side, target_side)
+        for block in self.upsample_blocks:
+            fused = block(fused)
         decoded = self.mask_head(fused)
-        decoded = F.interpolate(decoded, self.config.output_size, mode="bilinear", align_corners=False)
+        if decoded.shape[-2:] != self.config.output_size:
+            raise RuntimeError(
+                f"learned mask decoder produced {tuple(decoded.shape[-2:])}, expected {self.config.output_size}"
+            )
         return decoded.reshape(queries, candidates, *self.config.output_size)
 
     @staticmethod
