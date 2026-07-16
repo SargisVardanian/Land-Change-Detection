@@ -43,6 +43,19 @@ def _blank_mask_like(path: str | Path, image_size: int | None) -> Tensor:
     return torch.zeros(int(height), int(width), dtype=torch.float32)
 
 
+def _hard_background_crop_box(mask: Tensor, *, crop_size: int = 256) -> tuple[int, int, int, int]:
+    """Select the least-foreground native tile deterministically."""
+    if mask.ndim != 2:
+        raise ValueError("background-crop mask must be rank 2")
+    height, width = mask.shape
+    size = min(int(crop_size), int(height), int(width))
+    ys = sorted(set((0, max((height - size) // 2, 0), max(height - size, 0))))
+    xs = sorted(set((0, max((width - size) // 2, 0), max(width - size, 0))))
+    candidates = [(float(mask[y:y + size, x:x + size].sum()), y, x) for y in ys for x in xs]
+    _, top, left = min(candidates)
+    return int(top), int(top + size), int(left), int(left + size)
+
+
 _INTEGER_SEMANTIC_MODES = {"P", "L", "I", "I;16", "I;16B", "I;16L"}
 _TUPLE_SEMANTIC_MODES = {"RGB", "RGBA"}
 
@@ -156,7 +169,12 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, index: int) -> TemporalCaptionItem:
+    def __getitem__(self, index: int | tuple[int, str]) -> TemporalCaptionItem:
+        crop_mode = "positive"
+        if isinstance(index, tuple):
+            index, crop_mode = index
+        if crop_mode not in {"positive", "hard_background", "hard_directional"}:
+            raise ValueError(f"unsupported directional crop mode {crop_mode!r}")
         row = self.samples[index]
         directional_targets = list(row.get("directional_targets", []))
         mask_path = row.get("mask_path")
@@ -172,7 +190,11 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         if directional_raw_masks:
             union_raw = torch.stack(directional_raw_masks).amax(dim=0)
             if self.target_aware_mask_crop and bool(union_raw.any()):
-                crop_box = target_aware_crop_box(union_raw, output_size=int(self.image_size or 256), context=self.target_crop_context)
+                crop_box = (
+                    _hard_background_crop_box(union_raw, crop_size=int(self.image_size or 256))
+                    if crop_mode == "hard_background" else
+                    target_aware_crop_box(union_raw, output_size=int(self.image_size or 256), context=self.target_crop_context)
+                )
                 transformed = [
                     apply_spatial_contract(
                         _load_rgb(row["t1_path"], None), _load_rgb(row["t2_path"], None), target,
@@ -263,6 +285,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 "changed_mask": changed_mask,
                 "change_type": row.get("change_type", row.get("source_metadata", {}).get("change_type")),
                 "target_aware_crop_box": crop_box,
+                "directional_crop_mode": crop_mode,
             },
         )
 

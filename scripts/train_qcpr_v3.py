@@ -30,7 +30,7 @@ from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, assert_te
 from land_change_detection.models.qcpr_v3_teacher import teacher_preservation_losses
 from land_change_detection.models.qcpr_v3_adapters import CanonicalV3Inputs, evaluator_score, renderer_score, trainer_score
 from land_change_detection.models.qcpr_v3_experiment import parser_derived_late_interaction_loss
-from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler
+from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler
 from land_change_detection.models.qcpr_v3 import stable_global_top_n
 from land_change_detection.models.qcpr_v3_mask_diagnostic import (
     append_jsonl,
@@ -364,6 +364,15 @@ def run(args: argparse.Namespace) -> dict:
         )
         fixed_train_batch = next(iter(loader))
         fixed_validation_batch = next(iter(validation_loader))
+    elif args.phase == "mask_grounding" and any(row.get("quality_tier") for row in getattr(train, "samples", [])):
+        sampler = DirectionalCurriculumBatchSampler(
+            list(getattr(train, "samples", [])), config.batch_size, seed=config.seed,
+        )
+        loader = DataLoader(
+            train, batch_sampler=sampler, num_workers=config.num_workers,
+            collate_fn=data_compat.make_collator(train, config, epoch=0, training=True, frequencies=frequencies),
+            pin_memory=True, persistent_workers=False,
+        )
     else:
         loader = data_compat.make_train_loader(train, config, frequencies, epoch=0)
 
@@ -668,10 +677,15 @@ def run(args: argparse.Namespace) -> dict:
                     pair_embeddings=result.pair_embedding.detach(),
                     per_time_tokens=result.per_time_tokens.detach(),
                 )
-                parity = (trainer_score(student, canonical), evaluator_score(student, canonical), renderer_score(student, canonical))
-                for candidate in parity[1:]:
-                    torch.testing.assert_close(parity[0].reranked_score, candidate.reranked_score)
-                    torch.testing.assert_close(parity[0].decoded_mask_logits, candidate.decoded_mask_logits)
+                was_training = student.training
+                student.eval()
+                try:
+                    parity = (trainer_score(student, canonical), evaluator_score(student, canonical), renderer_score(student, canonical))
+                    for candidate in parity[1:]:
+                        torch.testing.assert_close(parity[0].reranked_score, candidate.reranked_score)
+                        torch.testing.assert_close(parity[0].decoded_mask_logits, candidate.decoded_mask_logits)
+                finally:
+                    student.train(was_training)
         margin = (
             _positive_margin(selected_scores(result.scores.local_score.detach()), selection["selected_mapping"])
             if not global_only and selection["selected_queries"].numel()

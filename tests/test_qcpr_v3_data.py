@@ -4,9 +4,14 @@ import json
 
 import numpy as np
 import pytest
+import torch
 from PIL import Image
 
-from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, WeightingConfig, derive_qcpr_v3_manifests
+from land_change_detection.models.qcpr_v3_data import (
+    CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler,
+    WeightingConfig, derive_qcpr_v3_manifests,
+)
+from land_change_detection.training.temporal_caption_dataset import _hard_background_crop_box
 
 
 def _write_manifest(tmp_path):
@@ -111,3 +116,30 @@ def test_dataset_audit_reports_pair_progress(tmp_path) -> None:
         progress_callback=lambda completed, total: progress.append((completed, total)),
     )
     assert progress == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_directional_curriculum_is_deterministic_pair_unique_and_60_20_20() -> None:
+    rows = (
+        [{"pair_id": f"core-{index}", "quality_tier": "core"} for index in range(30)]
+        + [{"pair_id": f"hard-{index}", "quality_tier": "hard"} for index in range(30)]
+        + [{"pair_id": "stress", "quality_tier": "stress"}]
+    )
+    sampler = DirectionalCurriculumBatchSampler(rows, 10, seed=9)
+    batches = list(sampler)
+    assert batches == list(DirectionalCurriculumBatchSampler(rows, 10, seed=9))
+    for batch in batches:
+        assert [mode for _, mode in batch].count("positive") == 6
+        assert [mode for _, mode in batch].count("hard_background") == 2
+        assert [mode for _, mode in batch].count("hard_directional") == 2
+        indices = [index for index, _ in batch]
+        assert len(indices) == len(set(indices))
+        assert all(rows[index]["quality_tier"] != "stress" for index in indices)
+
+
+def test_hard_background_crop_selects_a_foreground_free_native_tile() -> None:
+    mask = torch.zeros(1024, 1024)
+    mask[:256, :256] = 1
+    box = _hard_background_crop_box(mask, crop_size=256)
+    top, bottom, left, right = box
+    assert mask[top:bottom, left:right].sum() == 0
+    assert (bottom - top, right - left) == (256, 256)

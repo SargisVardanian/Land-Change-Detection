@@ -179,6 +179,64 @@ class CappedCompositionalBatchSampler(Sampler[list[int]]):
                 yield batch
 
 
+class DirectionalCurriculumBatchSampler(Sampler[list[tuple[int, str]]]):
+    """Deterministic 60/20/20 pair-unique mask curriculum.
+
+    Each yielded tuple is ``(row_index, crop_mode)``.  Stress rows are never
+    sampled.  The dataset interprets ``hard_background`` as a same-scene
+    least-foreground native crop and ``hard_directional`` as a positive crop
+    from the audited hard tier.
+    """
+
+    def __init__(self, rows: list[dict[str, Any]], batch_size: int, *, seed: int = 0):
+        if batch_size < 5:
+            raise ValueError("directional curriculum requires batch_size >= 5")
+        self.rows, self.batch_size, self.seed = rows, int(batch_size), int(seed)
+        self.core = [i for i, row in enumerate(rows) if row.get("quality_tier") == "core"]
+        self.hard = [i for i, row in enumerate(rows) if row.get("quality_tier") == "hard"]
+        if not self.core or not self.hard:
+            raise ValueError("directional curriculum requires non-empty core and hard pools")
+        self.positive_count = max(1, round(self.batch_size * 0.60))
+        self.background_count = max(1, round(self.batch_size * 0.20))
+        self.directional_count = self.batch_size - self.positive_count - self.background_count
+        if self.directional_count <= 0:
+            raise ValueError("batch size cannot realize a positive directional-hard quota")
+
+    def __len__(self) -> int:
+        return math.ceil((len(self.core) + len(self.hard)) / self.batch_size)
+
+    @staticmethod
+    def _draw(pool: list[int], count: int, cursor: int, used: set[int]) -> tuple[list[int], int]:
+        selected: list[int] = []
+        attempts = 0
+        while len(selected) < count and attempts < max(len(pool) * 2, count * 4):
+            candidate = pool[cursor % len(pool)]; cursor += 1; attempts += 1
+            if candidate not in used:
+                selected.append(candidate); used.add(candidate)
+        if len(selected) != count:
+            raise RuntimeError("insufficient unique pairs to satisfy directional curriculum batch")
+        return selected, cursor
+
+    def __iter__(self):
+        generator = torch.Generator().manual_seed(self.seed)
+        core = [self.core[i] for i in torch.randperm(len(self.core), generator=generator).tolist()]
+        hard = [self.hard[i] for i in torch.randperm(len(self.hard), generator=generator).tolist()]
+        core_cursor = hard_cursor = background_cursor = 0
+        background_pool = core + hard
+        for _ in range(len(self)):
+            used: set[int] = set()
+            positive, core_cursor = self._draw(core, self.positive_count, core_cursor, used)
+            background, background_cursor = self._draw(
+                background_pool, self.background_count, background_cursor, used
+            )
+            directional, hard_cursor = self._draw(hard, self.directional_count, hard_cursor, used)
+            yield (
+                [(index, "positive") for index in positive]
+                + [(index, "hard_background") for index in background]
+                + [(index, "hard_directional") for index in directional]
+            )
+
+
 def derive_qcpr_v3_manifests(
     manifest_paths: Iterable[str | Path],
     output_dir: str | Path,

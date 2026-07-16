@@ -84,11 +84,14 @@ def main() -> None:
             border = np.zeros_like(mask); border[[0, -1], :] = True; border[:, [0, -1]] = True
             edge_fraction = float((mask & border).sum() / max(mask.sum(), 1))
             caption = _caption(direction, len(components), _location(mask))
+            ys, xs = np.nonzero(mask)
+            bbox = None if not len(xs) else [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
             targets.append({
                 "direction": direction, "caption": caption, "mask_path": source["mask_path"],
                 "direction_caption": "new buildings appeared" if direction == "appeared" else "buildings were demolished",
                 "foreground_area": area, "canonical_cell_equivalents": cells,
                 "component_count": len(components), "edge_fraction": edge_fraction,
+                "raw_geometry": {"height": int(mask.shape[0]), "width": int(mask.shape[1]), "bbox_xyxy": bbox},
                 "caption_provenance": "deterministic_verified_mask_attributes",
                 "caption_confidence": 1.0, "audit_status": "derived_not_human_reviewed",
             })
