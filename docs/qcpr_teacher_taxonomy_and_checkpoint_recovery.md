@@ -150,3 +150,26 @@ or v3 teachers.
 | `best_semantic_r1.pt` | 2,349,656,958 | 2026-07-16T11:58:48 | `7c24bd279c2f0d05f41260df72ab9528316bd50ffbeb105ec90612dee1835895` |
 | `best_semantic_r5.pt` | 2,349,656,958 | 2026-07-16T11:58:50 | `aba165a8e3498f55ac02896e4742ea7257bea755e0589434ebf113428a669559` |
 | `last_retrieval.pt` | 2,349,654,304 | 2026-07-16T11:59:04 | `37da74b54ffe0b15560816c62a5f5ba4143e3a613c2e7bf59b4b2aa9379d2a25` |
+
+## Forensic correction: identified deletion event
+
+After the original audit, the user supplied the recorded cluster-session transcript
+for the cleanup on 2026-07-15. It explicitly reports:
+
+- discovery of 42 run directories under
+  `/mnt/weka/svardanyan/rs_change_project/runs`;
+- preservation of only the active forensic directory
+  `qcpr_v3_forensic_80225104_20260715-174118` and the completed forensic
+  directory `qcpr_v3_forensic_f3491ae6_20260715-175353`;
+- deletion of the other 40 run directories, said to free about 270 GB.
+
+The expected E0 and B paths were both under `runs/` and were not in the
+preserved list. Their current absence is therefore consistent with, and most
+likely caused by, that cleanup event. This is stronger evidence than a
+retention-policy hypothesis.
+
+Correction to the earlier statement: project source code contains no generic
+retention process that deleted these files, but an interactive cleanup action
+did delete the historical run directories. Do not delete any additional
+`runs/` directory. Recovery now requires a Weka snapshot or storage-admin
+restore.
