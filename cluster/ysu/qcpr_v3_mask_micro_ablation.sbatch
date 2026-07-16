@@ -26,10 +26,12 @@ MICRO_TRAIN_SAMPLES=${MICRO_TRAIN_SAMPLES:-8}
 VALIDATION_PROBE_SAMPLES=${VALIDATION_PROBE_SAMPLES:-16}
 TRAIN_PAIR_ID=${TRAIN_PAIR_ID:-}
 VALIDATION_PAIR_ID=${VALIDATION_PAIR_ID:-}
+DIRECTION_ONLY_PROBE_CAPTIONS=${DIRECTION_ONLY_PROBE_CAPTIONS:-0}
 case "$STEPS" in 20|30|40|50) ;; *) echo "mask diagnostic steps must be 20, 30, 40, or 50" >&2; exit 2;; esac
 PAIR_ARGS=()
 if [[ -n "$TRAIN_PAIR_ID" ]]; then PAIR_ARGS+=(--train-probe-pair-id "$TRAIN_PAIR_ID"); fi
 if [[ -n "$VALIDATION_PAIR_ID" ]]; then PAIR_ARGS+=(--validation-probe-pair-id "$VALIDATION_PAIR_ID"); fi
+if [[ "$DIRECTION_ONLY_PROBE_CAPTIONS" = 1 ]]; then PAIR_ARGS+=(--direction-only-probe-captions); fi
 "$PYTHON" scripts/train_qcpr_v3.py \
   --output-dir "$OUTPUT_DIR" \
   --phase mask_only_diagnostic \

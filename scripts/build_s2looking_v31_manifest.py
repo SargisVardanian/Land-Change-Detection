@@ -86,6 +86,7 @@ def main() -> None:
             caption = _caption(direction, len(components), _location(mask))
             targets.append({
                 "direction": direction, "caption": caption, "mask_path": source["mask_path"],
+                "direction_caption": "new buildings appeared" if direction == "appeared" else "buildings were demolished",
                 "foreground_area": area, "canonical_cell_equivalents": cells,
                 "component_count": len(components), "edge_fraction": edge_fraction,
                 "caption_provenance": "deterministic_verified_mask_attributes",

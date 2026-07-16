@@ -109,6 +109,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         exclude_rscc_model_generated: bool = True,
         target_aware_mask_crop: bool = False,
         target_crop_context: float = 2.0,
+        direction_only_captions: bool = False,
     ):
         manifest_paths = [manifests] if isinstance(manifests, (str, Path)) else list(manifests)
         rows: list[dict[str, Any]] = []
@@ -144,6 +145,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         self.output_grid = output_grid
         self.target_aware_mask_crop = bool(target_aware_mask_crop)
         self.target_crop_context = float(target_crop_context)
+        self.direction_only_captions = bool(direction_only_captions)
         self.indices_by_dataset: dict[str, list[int]] = defaultdict(list)
         for index, row in enumerate(rows):
             self.indices_by_dataset[str(row["dataset_name"])].append(index)
@@ -207,6 +209,11 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
             mask = _blank_mask_like(row["t1_path"], self.image_size)
             segmentation_target_source = "none"
         captions = (
+            [str(target.get(
+                "direction_caption",
+                "new buildings appeared" if target.get("direction") == "appeared" else "buildings were demolished",
+            )) for target in directional_targets]
+            if directional_targets and self.direction_only_captions else
             [str(target["caption"]) for target in directional_targets]
             if directional_targets else
             [str(caption) for caption in row.get("captions", []) if str(caption).strip()]
