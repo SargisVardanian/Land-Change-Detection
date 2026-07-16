@@ -73,9 +73,11 @@ def main() -> None:
             raise RuntimeError(f"incomplete directional pair {split}:{base}: {sorted(by_direction)}")
         targets = []
         qualities = []
+        directional_masks: list[np.ndarray] = []
         for direction in ("appeared", "disappeared"):
             source = by_direction[direction]
             mask = _mask(source["mask_path"])
+            directional_masks.append(mask)
             components = _components(mask)
             area = float(mask.mean())
             cells = area * 32 * 32
@@ -96,7 +98,15 @@ def main() -> None:
             else:
                 qualities.append("core")
         shift = _image_shift(members[0]["t1_path"], members[0]["t2_path"])
-        tier = "stress" if qualities.count("stress") == 2 else "hard" if "stress" in qualities or "hard" in qualities or shift > 0.18 else "core"
+        overlap_union = np.logical_or(directional_masks[0], directional_masks[1]).sum()
+        directional_overlap_iou = float(
+            np.logical_and(directional_masks[0], directional_masks[1]).sum() / max(overlap_union, 1)
+        )
+        tier = (
+            "stress" if qualities.count("stress") == 2 or directional_overlap_iou > 0.30 else
+            "hard" if "stress" in qualities or "hard" in qualities or shift > 0.18 or directional_overlap_iou > 0.10 else
+            "core"
+        )
         prepared.append({
             "schema_version": members[0]["schema_version"], "dataset_name": "s2looking",
             "split": split, "pair_id": f"s2looking:{split}:{base}", "original_id": base,
@@ -105,6 +115,7 @@ def main() -> None:
             "normalized_caption_groups": [target["caption"].casefold() for target in targets],
             "caption_source": "deterministic_verified_mask_attributes",
             "directional_targets": targets, "quality_tier": tier, "radiometric_shift": shift,
+            "directional_overlap_iou": directional_overlap_iou,
             "retrieval_supervision": False, "seg_supervision_mode": "query_specific",
             "image_height": 1024, "image_width": 1024, "sensor": "side_looking_vhr",
             "time_order": ["before", "after"],
@@ -134,9 +145,14 @@ def main() -> None:
     )
     (output / "stress_evaluation_manifest.jsonl").write_text(stress_payload)
     counts = {tier: sum(row["quality_tier"] == tier for row in prepared) for tier in ("core", "hard", "stress")}
+    overlaps = np.asarray([row["directional_overlap_iou"] for row in prepared], dtype=np.float64)
     audit = {"input": str(Path(args.input).resolve()), "pair_count": len(prepared), "tier_counts": counts,
              "manifest_sha256": hashlib.sha256(payload.encode()).hexdigest(),
-             "directional_mapping": "appeared=label1:T1_to_T2, disappeared=label2:T2_to_T1"}
+             "directional_mapping": "appeared=label1:T1_to_T2, disappeared=label2:T2_to_T1",
+             "directional_overlap_iou_quantiles": {
+                 str(q): float(np.quantile(overlaps, q)) for q in (0.0, 0.5, 0.9, 0.95, 0.99, 1.0)
+             },
+             "directional_overlap_policy": {"core_max": 0.10, "stress_above": 0.30}}
     (output / "s2looking_pair_level_audit.json").write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n")
     (output / "progress.json").write_text(json.dumps({
         "status": "COMPLETED", "completed_pairs": len(prepared), "total_pairs": len(prepared),
