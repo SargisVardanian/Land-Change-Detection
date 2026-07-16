@@ -6,8 +6,9 @@ import math
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 import torch
 from torch.utils.data import Sampler
@@ -41,6 +42,7 @@ def _relation(text: str) -> str:
     return "replacement" if any(term in normalized for term in ("replace", "in place of", "converted to", "turned into")) else "none"
 
 
+@lru_cache(maxsize=None)
 def _mask_stats(path: str | None) -> tuple[bool | None, float | None]:
     if not path or not Path(path).exists():
         return None, None
@@ -49,6 +51,7 @@ def _mask_stats(path: str | None) -> tuple[bool | None, float | None]:
     return not bool(array.any()), float(array.mean())
 
 
+@lru_cache(maxsize=None)
 def _dhash(path: str | None) -> str | None:
     if not path or not Path(path).exists():
         return None
@@ -182,8 +185,11 @@ def derive_qcpr_v3_manifests(
     *,
     config: WeightingConfig | None = None,
     balanced_validation_per_cell: int = 20,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> dict[str, Any]:
     config = config or WeightingConfig()
+    _mask_stats.cache_clear()
+    _dhash.cache_clear()
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, Any]] = []
@@ -198,7 +204,7 @@ def derive_qcpr_v3_manifests(
     caption_audits: list[dict[str, Any]] = []
     normalized_clusters: defaultdict[str, list[str]] = defaultdict(list)
     pair_hash_clusters: defaultdict[str, list[str]] = defaultdict(list)
-    for row in rows:
+    for row_index, row in enumerate(rows, start=1):
         t1_hash, t2_hash = _dhash(row.get("t1_path")), _dhash(row.get("t2_path"))
         pair_hash = f"{t1_hash}:{t2_hash}" if t1_hash and t2_hash else "unavailable"
         pair_hash_clusters[pair_hash].append(str(row["pair_id"]))
@@ -207,6 +213,8 @@ def derive_qcpr_v3_manifests(
             audit["near_duplicate_pair_cluster"] = pair_hash
             normalized_clusters[audit["normalized_caption"]].append(audit["caption_id"])
             caption_audits.append(audit)
+        if progress_callback is not None:
+            progress_callback(row_index, len(rows))
     for audit in caption_audits:
         audit["duplicate_caption_cluster"] = hashlib.sha1(audit["normalized_caption"].encode()).hexdigest()[:16]
 

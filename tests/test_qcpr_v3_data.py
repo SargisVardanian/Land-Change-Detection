@@ -100,3 +100,14 @@ def test_capped_sampler_small_batch_terminates_and_consumes_no_change_rows() -> 
     observed = {rows[index]["pair_id"] for batch in batches for index in batch}
     assert {"nochange-1", "nochange-2"} <= observed
     assert all(sum(rows[index]["pair_id"].startswith("nochange") for index in batch) <= 1 for batch in batches)
+
+
+def test_dataset_audit_reports_pair_progress(tmp_path) -> None:
+    source = _write_manifest(tmp_path)
+    progress = []
+    derive_qcpr_v3_manifests(
+        [source],
+        tmp_path / "derived",
+        progress_callback=lambda completed, total: progress.append((completed, total)),
+    )
+    assert progress == [(1, 3), (2, 3), (3, 3)]
