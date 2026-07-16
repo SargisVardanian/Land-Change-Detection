@@ -33,6 +33,7 @@ from ucv2_retrieval_metrics import (
     retrieval_branch_diagnostics,
     retrieval_branch_similarity_matrices,
 )
+from ucv2_progress import write_progress
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,6 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--candidate-chunk-size", type=int, default=256)
     parser.add_argument("--rerank-top-n", type=int, default=0)
     parser.add_argument("--mask-threshold", type=float, default=0.5)
+    parser.add_argument("--progress-path", type=Path, default=None)
     return parser.parse_args()
 
 
@@ -322,6 +324,8 @@ def _query_items(args: argparse.Namespace, dataset, pair_index: dict[str, int]) 
 def main() -> int:
     evaluation_started = time.perf_counter()
     args = parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    progress_path = args.progress_path or args.output_dir / "progress.json"
     device = strict_device(args.device)
     checkpoint = torch.load(args.checkpoint, map_location=device)
     config = _checkpoint_config(args, checkpoint)
@@ -343,7 +347,15 @@ def main() -> int:
     model.load_state_dict(checkpoint["model"], strict=True)
     temporal_channel_status = temporal_channel_render_status(checkpoint, config.qcpr_architecture_version)
     model.eval()
-    corpus = collect_retrieval_corpus(model, loader, device, config)
+    corpus = collect_retrieval_corpus(
+        model,
+        loader,
+        device,
+        config,
+        progress_path=progress_path,
+        progress_stage="evaluation_encoding",
+    )
+    write_progress(progress_path, stage="evaluation_scoring", completed=0, total=1, started=time.perf_counter())
     branch_scores = retrieval_branch_similarity_matrices(
         corpus, query_chunk_size=args.query_chunk_size, candidate_chunk_size=args.candidate_chunk_size,
         rerank_top_n=args.rerank_top_n,
@@ -364,9 +376,9 @@ def main() -> int:
     local_similarities = branch_scores.get("local")
     if not torch.allclose(similarities, ranking_scores, atol=1e-5, rtol=1e-5):
         raise RuntimeError("Selected evaluator scores disagree with independently computed branch scores")
-    teacher_embeddings = corpus.teacher_text_embeddings if corpus.teacher_text_embeddings is not None else corpus.text_embeddings
-    semantic_relevance = semantic_teacher_relevance_matrix(
-        teacher_embeddings,
+    base_text_embeddings = corpus.teacher_text_embeddings if corpus.teacher_text_embeddings is not None else corpus.text_embeddings
+    text_derived_semantic_relevance = semantic_teacher_relevance_matrix(
+        base_text_embeddings,
         corpus.captions,
         corpus.caption_to_pair.long(),
         corpus.caption_group_ids.long(),
@@ -393,7 +405,7 @@ def main() -> int:
             query_signature = _structured_signature(query_caption)
             ranked = torch.argsort(ranking_scores[query_index], descending=True, stable=True)[:10]
             for candidate_index in ranked.tolist():
-                if semantic_relevance[query_index, candidate_index]:
+                if text_derived_semantic_relevance[query_index, candidate_index]:
                     continue
                 candidate_signature = _structured_signature(candidate_captions[candidate_index])
                 failed = []
@@ -429,7 +441,7 @@ def main() -> int:
                     "candidate_pair_id": corpus.pair_ids[candidate_index],
                     "candidate_caption": candidate_captions[candidate_index],
                     "scores": {name: float(values[query_index, candidate_index]) for name, values in branch_scores.items()},
-                    "excluded_as_latent_positive": bool(semantic_relevance[query_index, candidate_index]),
+                    "excluded_as_latent_positive": bool(text_derived_semantic_relevance[query_index, candidate_index]),
                 }) + "\n")
     records = []
     relevance_ranks = []
@@ -451,7 +463,7 @@ def main() -> int:
         if not caption_candidates:
             raise RuntimeError(f"Missing query caption for {query_pair_id}")
         caption_index = caption_candidates[0]
-        relevant_mask = semantic_relevance[caption_index]
+        relevant_mask = text_derived_semantic_relevance[caption_index]
         scores = similarities[caption_index]
         global_scores = global_similarities[caption_index]
         local_scores = local_similarities[caption_index] if local_similarities is not None else None
@@ -499,7 +511,7 @@ def main() -> int:
                     "local_score": local_score,
                     "final_score": score,
                     "score_mode": corpus.score_mode,
-                    "semantic_relevance": is_relevant,
+                    "text_derived_semantic_relevance": is_relevant,
                     "exact_pair_relevance": is_exact,
                     "relevance_rules_passed": [name for name, passed in (("semantic", is_relevant), ("exact_pair", is_exact)) if passed],
                     "relevance_rules_failed": [name for name, passed in (("semantic", is_relevant), ("exact_pair", is_exact)) if not passed],
@@ -629,6 +641,13 @@ def main() -> int:
         "evaluator_wall_seconds": float(time.perf_counter() - evaluation_started),
         "evaluation_wall_seconds": float(time.perf_counter() - evaluation_started),
         "ranking_passes": 1,
+        "baseline_identity": "clean_independent_pretrained_jina_universat",
+        "historical_e0_continuity": False,
+        "relevance_contract": {
+            "text_derived_semantic_relevance": "caption-similarity pseudo-target from frozen pre-adapter Jina embeddings",
+            "image_relevance_ground_truth": False,
+            "historical_global_teacher_used": False,
+        },
         "checkpoint": str(args.checkpoint),
         "checkpoint_sha256": file_sha256(args.checkpoint),
         "stage1_next": bool(checkpoint.get("stage1_next")),
@@ -708,6 +727,15 @@ def main() -> int:
         for record in records:
             handle.write(json.dumps(record) + "\n")
     (args.output_dir / "evaluation_summary.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    write_progress(
+        progress_path,
+        stage="complete",
+        completed=1,
+        total=1,
+        started=evaluation_started,
+        complete=True,
+        metrics={"corpus_metrics": metrics, "gallery_metrics": gallery_metrics},
+    )
     print(json.dumps(report, indent=2))
     return 0
 

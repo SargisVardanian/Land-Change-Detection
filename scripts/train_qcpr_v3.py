@@ -260,7 +260,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=20260714)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--weight-decay", type=float, default=0.05)
-    parser.add_argument("--grad-clip-norm", type=float, default=9.88, help="E0 p80 evidence-based threshold; target clipping <=20%")
+    parser.add_argument("--grad-clip-norm", type=float, default=9.88, help="E0 p80 evidence-based threshold; target clipping <=20%%")
     parser.add_argument("--no-change-batch-fraction-cap", type=float, default=0.25)
     parser.add_argument("--required-datasets", default="")
     return parser.parse_args()

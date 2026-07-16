@@ -173,3 +173,14 @@ retention process that deleted these files, but an interactive cleanup action
 did delete the historical run directories. Do not delete any additional
 `runs/` directory. Recovery now requires a Weka snapshot or storage-admin
 restore.
+
+## Decision recorded for the restart
+
+On 2026-07-16 the project proceeded with Option B: an independent clean
+baseline initialized from the frozen pretrained Jina v5 text backbone and
+the UniverSat visual backbone. The new run must record
+`historical_e0_continuity=false`; its checkpoints are not reproductions or
+restorations of historical E0. Historical-global-teacher distillation and
+QCPR v3 Stage B/C remain disabled until a clean baseline checkpoint passes
+its own retrieval gates and is explicitly accepted as the new global
+reference.
