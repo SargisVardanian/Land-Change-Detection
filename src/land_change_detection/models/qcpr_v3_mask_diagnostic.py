@@ -66,21 +66,38 @@ def _mask_area_fraction(path: str | Path) -> float:
 def fixed_probe_subset(dataset: Dataset, *, count: int, pair_ids: tuple[str, ...] = ()) -> Subset:
     if count <= 0:
         raise ValueError("fixed probe count must be positive")
-    if count % 2:
-        raise ValueError("fixed S2Looking probe count must be even to preserve appeared/disappeared pairs")
     rows = getattr(dataset, "samples", None)
     if rows is None:
         raise TypeError("fixed S2Looking probes require a manifest dataset")
+    paired_mode = any(row.get("directional_targets") for row in rows)
+    if not paired_mode and count % 2:
+        raise ValueError("legacy fixed S2Looking probe count must be even to preserve appeared/disappeared rows")
     if pair_ids:
         by_id = {str(row["pair_id"]): index for index, row in enumerate(rows)}
         missing = [pair_id for pair_id in pair_ids if pair_id not in by_id]
         if missing:
             raise ValueError(f"fixed probe pair IDs are absent: {missing}")
         selected = [by_id[pair_id] for pair_id in pair_ids]
-        directions = {str(rows[index]["pair_id"]).rsplit(":", 1)[-1] for index in selected}
+        directions = (
+            {str(target.get("direction")) for index in selected for target in rows[index].get("directional_targets", [])}
+            if paired_mode else
+            {str(rows[index]["pair_id"]).rsplit(":", 1)[-1] for index in selected}
+        )
         if directions != {"appeared", "disappeared"}:
             raise ValueError("explicit fixed probe must include appeared and disappeared directions")
         return Subset(dataset, selected)
+    if paired_mode:
+        indices: list[int] = []
+        for index in exact_s2looking_query_indices(dataset):
+            targets = rows[index].get("directional_targets", [])
+            if {str(target.get("direction")) for target in targets} != {"appeared", "disappeared"}:
+                continue
+            if not any(_mask_area_fraction(target["mask_path"]) > 0.0 for target in targets):
+                continue
+            indices.append(index)
+            if len(indices) >= count:
+                return Subset(dataset, indices)
+        raise RuntimeError(f"requested {count} paired S2Looking probes, found {len(indices)}")
     grouped: dict[str, dict[str, int]] = {}
     for index in exact_s2looking_query_indices(dataset):
         row = rows[index]

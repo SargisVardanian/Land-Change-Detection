@@ -62,6 +62,21 @@ def test_explicit_probe_ids_are_selected_and_history_append_is_independent(tmp_p
     assert path.read_text().strip() == '{"step": 0}'
 
 
+def test_pair_level_probe_allows_one_row_with_both_directions(tmp_path: Path) -> None:
+    paths = []
+    for direction in ("appeared", "disappeared"):
+        path = tmp_path / f"{direction}.png"
+        image = Image.new("L", (4, 4), 0); image.putpixel((1, 1), 255); image.save(path)
+        paths.append(str(path))
+    row = _row("s2looking:train:1506")
+    row["directional_targets"] = [
+        {"direction": direction, "mask_path": path}
+        for direction, path in zip(("appeared", "disappeared"), paths, strict=True)
+    ]
+    subset = fixed_probe_subset(SimpleNamespace(samples=[row]), count=1, pair_ids=(row["pair_id"],))
+    assert list(subset.indices) == [0]
+
+
 def test_objective_ablation_contract_is_exact() -> None:
     assert resolve_mask_objective("A").tversky_weight == 0.0
     with pytest.raises(ValueError, match="unknown mask objective"):
