@@ -60,17 +60,61 @@ def _positive_margin(scores: torch.Tensor, mapping: torch.Tensor) -> torch.Tenso
     return (positive - negative).mean()
 
 
-def _save_panel(path: Path, images: torch.Tensor, mask_logits: torch.Tensor, target: torch.Tensor) -> None:
-    tiles = []
-    for tensor in (images[0, 0], images[0, 1]):
+def _save_panel(
+    path: Path, images: torch.Tensor, mask_logits: torch.Tensor, target: torch.Tensor,
+    *, query: str, pair_id: str,
+) -> None:
+    """Write a self-explanatory grounding panel, never an unlabeled tile strip."""
+    import matplotlib.pyplot as plt
+
+    def rgb(tensor: torch.Tensor) -> np.ndarray:
         array = tensor.detach().float().cpu().permute(1, 2, 0).numpy()
-        array = (array - array.min()) / max(float(array.max() - array.min()), 1e-6)
-        tiles.append((array * 255).astype(np.uint8))
-    for tensor in (target, mask_logits.sigmoid()):
-        array = tensor.detach().float().cpu().numpy()
-        array = np.stack([array, array, array], axis=-1)
-        tiles.append((array.clip(0, 1) * 255).astype(np.uint8))
-    Image.fromarray(np.concatenate(tiles, axis=1)).save(path)
+        return np.clip(array, 0.0, 1.0)
+
+    t1, t2 = rgb(images[0, 0]), rgb(images[0, 1])
+    probability = mask_logits.detach().float().sigmoid().cpu().numpy()
+    truth = target.detach().float().cpu().numpy() >= 0.5
+    predicted = probability >= 0.5
+    tp, fp, fn = predicted & truth, predicted & ~truth, ~predicted & truth
+    error = np.zeros((*truth.shape, 3), dtype=np.float32)
+    error[tp, 1] = 1.0
+    error[fp, 0] = 1.0
+    error[fn, 2] = 1.0
+    metrics = query_mask_metrics(mask_logits[None].float(), target[None].float())
+
+    figure, axes = plt.subplots(2, 4, figsize=(16, 8), constrained_layout=True)
+    panels = (
+        (axes[0, 0], t1, "T1 — before", None),
+        (axes[0, 1], t2, "T2 — after", None),
+        (axes[0, 2], truth, "Directional query GT", "gray"),
+        (axes[0, 3], probability, "Predicted soft probability", "magma"),
+        (axes[1, 0], t2, "T2 + soft-mask overlay", None),
+        (axes[1, 1], predicted, "Thresholded prediction @ 0.5", "gray"),
+        (axes[1, 2], error, "Errors: TP green / FP red / FN blue", None),
+    )
+    for axis, value, title, cmap in panels:
+        axis.imshow(value, cmap=cmap, vmin=0, vmax=1)
+        axis.set_title(title)
+        axis.axis("off")
+    axes[1, 0].imshow(probability, cmap="magma", vmin=0, vmax=1, alpha=0.55)
+    axes[1, 3].axis("off")
+    axes[1, 3].text(
+        0.0, 1.0,
+        "Unsmoothed validation metrics\n"
+        f"Dice: {metrics['nonempty_dice']:.4f}\n"
+        f"IoU: {metrics['nonempty_iou']:.4f}\n"
+        f"Precision: {metrics['nonempty_precision']:.4f}\n"
+        f"Recall: {metrics['nonempty_recall']:.4f}\n"
+        f"PR-AUC: {metrics['pr_auc']:.4f}\n"
+        f"p(FG)-p(BG): {metrics['foreground_background_margin']:+.4f}\n"
+        f"Target area: {metrics['target_area']:.4f}\n"
+        f"Predicted area: {metrics['predicted_area']:.4f}",
+        va="top", ha="left", family="monospace",
+    )
+    figure.suptitle(f"Query: {query}\nPair: {pair_id}", fontsize=14)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(path, dpi=150)
+    plt.close(figure)
 
 
 def _assert_cuda_selection(selection: dict[str, torch.Tensor], device: torch.device) -> None:
@@ -119,7 +163,9 @@ def _swapped_query_forward(student, batch: dict, device: torch.device, *, only_v
 
 
 @torch.no_grad()
-def _evaluate_fixed_mask_probe(student, batch: dict, device: torch.device) -> dict[str, float | int]:
+def _evaluate_fixed_mask_probe(
+    student, batch: dict, device: torch.device, *, panel_path: Path | None = None,
+) -> dict[str, float | int]:
     was_training = student.training
     student.eval()
     images = batch["images"].to(device)
@@ -136,6 +182,14 @@ def _evaluate_fixed_mask_probe(student, batch: dict, device: torch.device) -> di
             student, batch, device, only_verified_empty=False,
         )
     metrics = query_mask_metrics(correct.float(), targets.float())
+    if panel_path is not None:
+        pair_targets = targets.detach().flatten(1).sum(dim=1)
+        panel_query = int(torch.nonzero(pair_targets > 0, as_tuple=False)[0])
+        panel_pair = int(mapping[panel_query])
+        _save_panel(
+            panel_path, images[panel_pair:panel_pair + 1], correct[panel_query], targets[panel_query],
+            query=str(batch["captions"][panel_query]), pair_id=str(batch["pair_ids"][panel_pair]),
+        )
     validity = result.scores.mask_validity[query_indices, mapping]
     metrics["selected_near_empty_rate"] = float((validity <= 0).float().mean())
     metrics["selected_sample_count"] = int(correct.shape[0])
@@ -312,7 +366,10 @@ def run(args: argparse.Namespace) -> dict:
     fixed_probe_history: list[dict[str, float | int]] = []
     if args.phase == "mask_only_diagnostic":
         assert fixed_validation_batch is not None
-        initial_probe = {"step": 0, **_evaluate_fixed_mask_probe(student, fixed_validation_batch, device)}
+        initial_probe = {"step": 0, **_evaluate_fixed_mask_probe(
+            student, fixed_validation_batch, device,
+            panel_path=output / "soft_segmentation_validation_step0000.png",
+        )}
         fixed_probe_history.append(initial_probe)
         append_jsonl(output / "fixed_validation_history.jsonl", initial_probe)
         student.train()
@@ -458,7 +515,10 @@ def run(args: argparse.Namespace) -> dict:
         optimizer.step()
         if args.phase == "mask_only_diagnostic" and step % args.probe_interval == 0:
             assert fixed_validation_batch is not None
-            probe = {"step": step, **_evaluate_fixed_mask_probe(student, fixed_validation_batch, device)}
+            probe = {"step": step, **_evaluate_fixed_mask_probe(
+                student, fixed_validation_batch, device,
+                panel_path=(output / f"soft_segmentation_validation_step{step:04d}.png") if step == args.steps else None,
+            )}
             fixed_probe_history.append(probe)
             append_jsonl(output / "fixed_validation_history.jsonl", probe)
             student.train()
@@ -466,8 +526,17 @@ def run(args: argparse.Namespace) -> dict:
             first_query = 0
             first_pair = int(mapping[first_query])
             target_panel = F.interpolate(batch["masks"][first_pair:first_pair + 1].float().unsqueeze(1), result.scores.decoded_mask_logits.shape[-2:], mode="nearest")[0, 0]
-            _save_panel(output / "soft_segmentation_panel.png", images, result.scores.decoded_mask_logits[first_query, first_pair], target_panel)
-            _save_panel(output / "retrieval_panel.png", images, result.scores.decoded_mask_logits[first_query, first_pair], target_panel)
+            if args.phase != "mask_only_diagnostic":
+                _save_panel(
+                    output / "soft_segmentation_panel.png", images,
+                    result.scores.decoded_mask_logits[first_query, first_pair], target_panel,
+                    query=str(batch["captions"][first_query]), pair_id=str(batch["pair_ids"][first_pair]),
+                )
+                _save_panel(
+                    output / "retrieval_panel.png", images,
+                    result.scores.decoded_mask_logits[first_query, first_pair], target_panel,
+                    query=str(batch["captions"][first_query]), pair_id=str(batch["pair_ids"][first_pair]),
+                )
             with torch.no_grad():
                 canonical = CanonicalV3Inputs(
                     global_query_embeddings=result.text_embedding.detach(),
