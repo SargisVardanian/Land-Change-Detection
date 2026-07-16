@@ -47,6 +47,8 @@ from qcpr_v3_progress import write_progress
 
 def _seed(value: int) -> None:
     random.seed(value); np.random.seed(value); torch.manual_seed(value); torch.cuda.manual_seed_all(value)
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
 
 
 def _retrieval_loss(scores: torch.Tensor, mapping: torch.Tensor) -> torch.Tensor:
