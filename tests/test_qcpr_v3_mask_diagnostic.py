@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 import torch
+from PIL import Image
 
 from land_change_detection.models.qcpr_v3_mask_diagnostic import (
     exact_s2looking_query_indices,
+    fixed_probe_subset,
     query_swap_metrics,
     resolve_mask_objective,
     swapped_direction_indices,
@@ -28,6 +31,26 @@ def test_exact_s2looking_filter_rejects_nominal_presence_only() -> None:
         _row("s2looking:train:2:appeared", retrieval=True),
     ])
     assert exact_s2looking_query_indices(dataset) == [0]
+
+
+def test_fixed_probe_skips_all_empty_base_pairs_and_keeps_direction_pair(tmp_path: Path) -> None:
+    def mask(name: str, nonempty: bool) -> str:
+        path = tmp_path / name
+        image = Image.new("L", (4, 4), 0)
+        if nonempty:
+            image.putpixel((1, 1), 255)
+        image.save(path)
+        return str(path)
+    rows = []
+    for base, areas in (("1", (False, False)), ("2", (True, False))):
+        for change, nonempty in zip(("appeared", "disappeared"), areas, strict=True):
+            row = _row(f"s2looking:train:{base}:{change}")
+            row["mask_path"] = mask(f"{base}-{change}.png", nonempty)
+            row["source_metadata"] = {"change_type": change}
+            rows.append(row)
+    dataset = SimpleNamespace(samples=rows)
+    subset = fixed_probe_subset(dataset, count=2)
+    assert list(subset.indices) == [2, 3]
 
 
 def test_objective_ablation_contract_is_exact() -> None:

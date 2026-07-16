@@ -9,6 +9,7 @@ from typing import Any, Sequence
 import torch
 from torch import Tensor
 from torch.utils.data import Dataset, Subset
+from PIL import Image
 
 from land_change_detection.models.qcpr_v3_losses import query_mask_metrics
 
@@ -54,13 +55,46 @@ def exact_s2looking_query_indices(dataset: Dataset) -> list[int]:
     return selected
 
 
+def _mask_area_fraction(path: str | Path) -> float:
+    with Image.open(path) as image:
+        binary = image.convert("L").point(lambda value: 255 if value > 0 else 0)
+        if binary.getbbox() is None:
+            return 0.0
+        histogram = binary.histogram()
+        foreground = sum(histogram[1:])
+        return foreground / max(image.width * image.height, 1)
+
+
 def fixed_probe_subset(dataset: Dataset, *, count: int) -> Subset:
     if count <= 0:
         raise ValueError("fixed probe count must be positive")
-    indices = exact_s2looking_query_indices(dataset)[:count]
+    if count % 2:
+        raise ValueError("fixed S2Looking probe count must be even to preserve appeared/disappeared pairs")
+    rows = getattr(dataset, "samples", None)
+    if rows is None:
+        raise TypeError("fixed S2Looking probes require a manifest dataset")
+    grouped: dict[str, dict[str, int]] = {}
+    for index in exact_s2looking_query_indices(dataset):
+        row = rows[index]
+        change = str(row.get("source_metadata", {}).get("change_type", row.get("change_type", "")))
+        base = str(row["pair_id"]).rsplit(":", 1)[0]
+        if change in {"appeared", "disappeared"}:
+            grouped.setdefault(base, {})[change] = index
+    indices: list[int] = []
+    for base in sorted(grouped):
+        directions = grouped[base]
+        if set(directions) != {"appeared", "disappeared"}:
+            continue
+        pair_indices = [directions["appeared"], directions["disappeared"]]
+        areas = [_mask_area_fraction(rows[index]["mask_path"]) for index in pair_indices]
+        if max(areas) <= 0.0:
+            continue
+        indices.extend(pair_indices)
+        if len(indices) >= count:
+            break
     if len(indices) < count:
-        raise RuntimeError(f"requested {count} fixed S2Looking rows, found {len(indices)}")
-    return Subset(dataset, indices)
+        raise RuntimeError(f"requested {count} non-trivial fixed S2Looking rows, found {len(indices)}")
+    return Subset(dataset, indices[:count])
 
 
 def subset_pair_ids(subset: Subset) -> list[str]:
@@ -89,6 +123,10 @@ def fixed_probe_contract(
     validation_rows = getattr(validation_subset.dataset, "samples")
     all_train_ids = [str(train_rows[index]["pair_id"]) for index in exact_s2looking_query_indices(train_subset.dataset)]
     all_validation_ids = [str(validation_rows[index]["pair_id"]) for index in exact_s2looking_query_indices(validation_subset.dataset)]
+    train_areas = [_mask_area_fraction(train_rows[int(index)]["mask_path"]) for index in train_subset.indices]
+    validation_areas = [_mask_area_fraction(validation_rows[int(index)]["mask_path"]) for index in validation_subset.indices]
+    if not any(area > 0 for area in train_areas) or not any(area > 0 for area in validation_areas):
+        raise RuntimeError("fixed probes must contain non-empty directional masks")
     if set(train_ids) & set(validation_ids):
         raise RuntimeError("fixed train and validation probes overlap by pair ID")
     return {
@@ -99,6 +137,10 @@ def fixed_probe_contract(
         },
         "train_pair_ids": train_ids,
         "validation_pair_ids": validation_ids,
+        "train_target_area_fractions": train_areas,
+        "validation_target_area_fractions": validation_areas,
+        "train_nonempty_count": sum(area > 0 for area in train_areas),
+        "validation_nonempty_count": sum(area > 0 for area in validation_areas),
         "all_filtered_train_pair_ids": all_train_ids,
         "all_filtered_validation_pair_ids": all_validation_ids,
         "train_manifest": str(train_manifest),
