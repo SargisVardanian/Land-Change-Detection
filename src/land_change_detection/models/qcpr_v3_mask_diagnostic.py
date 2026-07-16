@@ -1,0 +1,156 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Sequence
+
+import torch
+from torch import Tensor
+from torch.utils.data import Dataset, Subset
+
+from land_change_detection.models.qcpr_v3_losses import query_mask_metrics
+
+
+@dataclass(frozen=True)
+class MaskObjective:
+    name: str
+    dice_weight: float
+    focal_weight: float
+    tversky_weight: float
+    positive_focal_weight: float
+    negative_focal_weight: float
+
+
+MASK_OBJECTIVES = {
+    "A": MaskObjective("A_dice_balanced_focal", 1.0, 1.0, 0.0, 0.75, 0.25),
+    "B": MaskObjective("B_dice_balanced_focal_tversky", 1.0, 1.0, 1.0, 0.75, 0.25),
+    "C": MaskObjective("C_tversky_stronger_negative", 1.0, 1.0, 1.0, 0.75, 0.50),
+}
+
+
+def resolve_mask_objective(name: str) -> MaskObjective:
+    try:
+        return MASK_OBJECTIVES[name]
+    except KeyError as exc:
+        raise ValueError(f"unknown mask objective {name!r}; expected one of {sorted(MASK_OBJECTIVES)}") from exc
+
+
+def exact_s2looking_query_indices(dataset: Dataset) -> list[int]:
+    rows = getattr(dataset, "samples", None)
+    if rows is None:
+        raise TypeError("exact S2Looking filtering requires a manifest dataset with .samples")
+    selected: list[int] = []
+    for index, row in enumerate(rows):
+        metadata = row.get("source_metadata", {})
+        dataset_name = str(row.get("dataset_name", "")).casefold()
+        mode = str(row.get("seg_supervision_mode", metadata.get("seg_supervision_mode", ""))).casefold()
+        retrieval = bool(row.get("retrieval_supervision", metadata.get("retrieval_supervision", True)))
+        if dataset_name == "s2looking" and mode == "query_specific" and not retrieval:
+            selected.append(index)
+    if not selected:
+        raise RuntimeError("exact S2Looking query-specific localization filter selected zero rows")
+    return selected
+
+
+def fixed_probe_subset(dataset: Dataset, *, count: int) -> Subset:
+    if count <= 0:
+        raise ValueError("fixed probe count must be positive")
+    indices = exact_s2looking_query_indices(dataset)[:count]
+    if len(indices) < count:
+        raise RuntimeError(f"requested {count} fixed S2Looking rows, found {len(indices)}")
+    return Subset(dataset, indices)
+
+
+def subset_pair_ids(subset: Subset) -> list[str]:
+    dataset = subset.dataset
+    rows = getattr(dataset, "samples", None)
+    if rows is None:
+        raise TypeError("pair IDs require a manifest dataset")
+    return [str(rows[int(index)]["pair_id"]) for index in subset.indices]
+
+
+def manifest_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def fixed_probe_contract(
+    *, train_subset: Subset, validation_subset: Subset,
+    train_manifest: str | Path, validation_manifest: str | Path,
+) -> dict[str, Any]:
+    train_ids = subset_pair_ids(train_subset)
+    validation_ids = subset_pair_ids(validation_subset)
+    train_rows = getattr(train_subset.dataset, "samples")
+    validation_rows = getattr(validation_subset.dataset, "samples")
+    all_train_ids = [str(train_rows[index]["pair_id"]) for index in exact_s2looking_query_indices(train_subset.dataset)]
+    all_validation_ids = [str(validation_rows[index]["pair_id"]) for index in exact_s2looking_query_indices(validation_subset.dataset)]
+    if set(train_ids) & set(validation_ids):
+        raise RuntimeError("fixed train and validation probes overlap by pair ID")
+    return {
+        "filter": {
+            "dataset_name": "s2looking",
+            "seg_supervision_mode": "query_specific",
+            "retrieval_supervision": False,
+        },
+        "train_pair_ids": train_ids,
+        "validation_pair_ids": validation_ids,
+        "all_filtered_train_pair_ids": all_train_ids,
+        "all_filtered_validation_pair_ids": all_validation_ids,
+        "train_manifest": str(train_manifest),
+        "validation_manifest": str(validation_manifest),
+        "train_manifest_sha256": manifest_sha256(train_manifest),
+        "validation_manifest_sha256": manifest_sha256(validation_manifest),
+    }
+
+
+def swapped_direction_indices(pair_ids: Sequence[str], change_types: Sequence[str | None]) -> list[int]:
+    if len(pair_ids) != len(change_types):
+        raise ValueError("pair IDs and change types must align")
+    lookup: dict[tuple[str, str], int] = {}
+    for index, (pair_id, change) in enumerate(zip(pair_ids, change_types, strict=True)):
+        if change not in {"appeared", "disappeared"}:
+            continue
+        base = pair_id.rsplit(":", 1)[0]
+        lookup[(base, str(change))] = index
+    result: list[int] = []
+    for pair_id, change in zip(pair_ids, change_types, strict=True):
+        opposite = "disappeared" if change == "appeared" else "appeared"
+        result.append(lookup.get((pair_id.rsplit(":", 1)[0], opposite), -1))
+    return result
+
+
+def verified_empty_swap_indices(
+    pair_ids: Sequence[str], change_types: Sequence[str | None], masks: Tensor,
+) -> tuple[list[int], list[int]]:
+    swapped = swapped_direction_indices(pair_ids, change_types)
+    source: list[int] = []
+    wrong_query: list[int] = []
+    for source_index, opposite_index in enumerate(swapped):
+        if opposite_index >= 0 and not bool((masks[opposite_index] >= 0.5).any()):
+            source.append(source_index)
+            wrong_query.append(opposite_index)
+    return source, wrong_query
+
+
+def query_swap_metrics(correct_logits: Tensor, swapped_logits: Tensor, targets: Tensor) -> dict[str, float]:
+    if correct_logits.shape != swapped_logits.shape or targets.shape != correct_logits.shape:
+        raise ValueError("correct, swapped and target masks must align")
+    correct = query_mask_metrics(correct_logits, targets)
+    swapped = query_mask_metrics(swapped_logits, targets)
+    correct_iou = float(correct["nonempty_iou"])
+    swapped_iou = float(swapped["nonempty_iou"])
+    return {
+        "correct_query_iou": correct_iou,
+        "swapped_query_iou": swapped_iou,
+        "query_swap_gap": correct_iou - swapped_iou,
+    }
+
+
+def append_jsonl(path: str | Path, payload: dict[str, Any]) -> None:
+    with Path(path).open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")

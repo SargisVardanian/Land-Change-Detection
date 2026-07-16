@@ -32,6 +32,15 @@ from land_change_detection.models.qcpr_v3_adapters import CanonicalV3Inputs, eva
 from land_change_detection.models.qcpr_v3_experiment import parser_derived_late_interaction_loss
 from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler
 from land_change_detection.models.qcpr_v3 import stable_global_top_n
+from land_change_detection.models.qcpr_v3_mask_diagnostic import (
+    append_jsonl,
+    fixed_probe_contract,
+    fixed_probe_subset,
+    query_swap_metrics,
+    resolve_mask_objective,
+    swapped_direction_indices,
+    verified_empty_swap_indices,
+)
 from land_change_detection.models.retrieval_heads import semantic_teacher_relevance_matrix, stable_caption_group_ids
 from land_change_detection.training.runtime_device import assert_runtime_tensor_devices, resolve_runtime_device
 from qcpr_v3_progress import write_progress
@@ -70,6 +79,97 @@ def _assert_cuda_selection(selection: dict[str, torch.Tensor], device: torch.dev
     if resolved_device.type != "cuda":
         raise RuntimeError("real QCPR v3 run must use CUDA")
     assert_runtime_tensor_devices(selection, resolved_device)
+
+
+def _caption_by_pair(batch: dict, mapping: torch.Tensor) -> list[str]:
+    captions = [""] * len(batch["pair_ids"])
+    for query_index, pair_index in enumerate(mapping.detach().cpu().tolist()):
+        if not captions[pair_index]:
+            captions[pair_index] = str(batch["captions"][query_index])
+    if any(not caption for caption in captions):
+        raise RuntimeError("every fixed-probe pair must have one caption")
+    return captions
+
+
+def _swapped_query_forward(student, batch: dict, device: torch.device, *, only_verified_empty: bool):
+    mapping = batch["caption_to_pair"].to(device)
+    captions_by_pair = _caption_by_pair(batch, mapping)
+    masks = batch["masks"].to(device).float()
+    if only_verified_empty:
+        source_indices, opposite_indices = verified_empty_swap_indices(
+            batch["pair_ids"], batch["change_types"], masks,
+        )
+    else:
+        opposites = swapped_direction_indices(batch["pair_ids"], batch["change_types"])
+        source_indices = [index for index, opposite in enumerate(opposites) if opposite >= 0]
+        opposite_indices = [opposites[index] for index in source_indices]
+    if not source_indices:
+        return None, source_indices
+    source = torch.tensor(source_indices, device=device, dtype=torch.long)
+    wrong_captions = [captions_by_pair[index] for index in opposite_indices]
+    wrong_mapping = torch.arange(len(source_indices), device=device)
+    wrong = student(
+        batch["images"].to(device).index_select(0, source), wrong_captions, wrong_mapping,
+        batch["temporal_valid_mask"].to(device).index_select(0, source),
+    )
+    logits = wrong.scores.decoded_mask_logits[
+        torch.arange(len(source_indices), device=device), wrong_mapping
+    ]
+    return (wrong, logits), source_indices
+
+
+@torch.no_grad()
+def _evaluate_fixed_mask_probe(student, batch: dict, device: torch.device) -> dict[str, float | int]:
+    was_training = student.training
+    student.eval()
+    images = batch["images"].to(device)
+    mapping = batch["caption_to_pair"].to(device)
+    temporal_mask = batch["temporal_valid_mask"].to(device)
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
+        result = student(images, batch["captions"], mapping, temporal_mask)
+        query_indices = torch.arange(mapping.numel(), device=device)
+        correct = result.scores.decoded_mask_logits[query_indices, mapping]
+        targets = foreground_preserving_resize(
+            batch["masks"].to(device).float(), correct.shape[-2:],
+        ).index_select(0, mapping)
+        swapped_payload, source_indices = _swapped_query_forward(
+            student, batch, device, only_verified_empty=False,
+        )
+    metrics = query_mask_metrics(correct.float(), targets.float())
+    validity = result.scores.mask_validity[query_indices, mapping]
+    metrics["selected_near_empty_rate"] = float((validity <= 0).float().mean())
+    metrics["selected_sample_count"] = int(correct.shape[0])
+    metrics["true_positive_sample_fraction"] = float(metrics["samples_with_true_positive"]) / max(int(metrics["nonempty_count"]), 1)
+    if swapped_payload is None:
+        metrics.update(correct_query_iou=0.0, swapped_query_iou=0.0, query_swap_gap=0.0, negative_pair_active_rate=0.0, query_swap_count=0)
+    else:
+        swapped_result, swapped_logits = swapped_payload
+        source = torch.tensor(source_indices, device=device, dtype=torch.long)
+        metrics.update(query_swap_metrics(correct.index_select(0, source).float(), swapped_logits.float(), targets.index_select(0, source).float()))
+        wrong_validity = swapped_result.scores.mask_validity[
+            torch.arange(len(source_indices), device=device), torch.arange(len(source_indices), device=device)
+        ]
+        metrics["negative_pair_active_rate"] = float((wrong_validity > 0).float().mean())
+        metrics["query_swap_count"] = len(source_indices)
+    if was_training:
+        student.train()
+    return metrics
+
+
+def _micro_overfit_gate(history: list[dict[str, float | int]]) -> dict[str, object]:
+    first, last = history[0], history[-1]
+    checks = {
+        "foreground_probability_improved": last["foreground_probability"] > first["foreground_probability"],
+        "foreground_background_margin_improved_by_0_05": last["foreground_background_margin"] >= first["foreground_background_margin"] + 0.05,
+        "dice_improved": last["nonempty_dice"] > first["nonempty_dice"],
+        "iou_improved": last["nonempty_iou"] > first["nonempty_iou"],
+        "precision_not_collapsed": last["nonempty_precision"] >= 0.9 * first["nonempty_precision"],
+        "tp_on_75_percent_of_nonempty": last["true_positive_sample_fraction"] >= 0.75,
+        "near_empty_not_collapsed": last["selected_near_empty_rate"] < 1.0,
+        "empty_false_positive_not_worse": last["empty_false_positive_area"] <= first["empty_false_positive_area"] + 1e-6,
+        "query_swap_gap_positive": last["query_swap_gap"] > 0.0,
+    }
+    return {"passed": all(checks.values()), "checks": checks, "step0": first, "final": last}
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -112,6 +212,16 @@ def run(args: argparse.Namespace) -> dict:
     config = data_compat.Stage1NextConfig(**{key: value for key, value in config_dict.items() if key in data_compat.Stage1NextConfig.__dataclass_fields__})
     train, val = data_compat.build_datasets(config)
     data_compat.assert_disjoint(train, val)
+    fixed_validation_batch = None
+    probe_contract = None
+    if args.phase == "mask_only_diagnostic":
+        train = fixed_probe_subset(train, count=args.micro_train_samples)
+        val = fixed_probe_subset(val, count=args.validation_probe_samples)
+        probe_contract = fixed_probe_contract(
+            train_subset=train, validation_subset=val,
+            train_manifest=derived / train_manifest, validation_manifest=derived / val_manifest,
+        )
+        (output / "fixed_probe_contract.json").write_text(json.dumps(probe_contract, indent=2, sort_keys=True))
     frequencies = data_compat.caption_frequencies(train)
     if args.phase in {"global_bootstrap", "late_interaction"}:
         # One pair per batch entry: caption paraphrases are selected by the
@@ -125,6 +235,16 @@ def run(args: argparse.Namespace) -> dict:
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=True, frequencies=frequencies),
             pin_memory=True, persistent_workers=False,
         )
+    elif args.phase == "mask_only_diagnostic":
+        loader = DataLoader(
+            train, batch_size=len(train), shuffle=False, num_workers=0,
+            collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
+        )
+        validation_loader = DataLoader(
+            val, batch_size=len(val), shuffle=False, num_workers=0,
+            collate_fn=data_compat.make_collator(val, config, epoch=0, training=False),
+        )
+        fixed_validation_batch = next(iter(validation_loader))
     else:
         loader = data_compat.make_train_loader(train, config, frequencies, epoch=0)
 
@@ -137,6 +257,7 @@ def run(args: argparse.Namespace) -> dict:
             expected_parent = {
                 "late_interaction": "global_bootstrap",
                 "mask_grounding": "late_interaction",
+                "mask_only_diagnostic": "late_interaction",
             }.get(args.phase)
             if expected_parent is None or prior.get("phase") != expected_parent:
                 raise ValueError(
@@ -177,6 +298,9 @@ def run(args: argparse.Namespace) -> dict:
         "grounding_config": asdict(student.grounder.config),
         "parent_checkpoint": None if args.v3_checkpoint is None else str(args.v3_checkpoint),
         "parent_phase": None if args.v3_checkpoint is None else prior.get("phase"),
+        "parent_scientific_status": "ENGINEERING_PARENT_NOT_ACCEPTED_STAGE_B" if args.phase == "mask_only_diagnostic" else None,
+        "fixed_probe_contract": probe_contract,
+        "mask_objective": None if args.phase != "mask_only_diagnostic" else asdict(resolve_mask_objective(args.mask_objective)),
     }
     torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
     student.train()
@@ -185,6 +309,13 @@ def run(args: argparse.Namespace) -> dict:
     started = time.perf_counter()
     progress_path = output / "progress.json"
     write_progress(progress_path, stage="training", completed=0, total=args.steps, started=started)
+    fixed_probe_history: list[dict[str, float | int]] = []
+    if args.phase == "mask_only_diagnostic":
+        assert fixed_validation_batch is not None
+        initial_probe = {"step": 0, **_evaluate_fixed_mask_probe(student, fixed_validation_batch, device)}
+        fixed_probe_history.append(initial_probe)
+        append_jsonl(output / "fixed_validation_history.jsonl", initial_probe)
+        student.train()
     for step in range(1, args.steps + 1):
         attempts = 0
         while True:
@@ -270,7 +401,7 @@ def run(args: argparse.Namespace) -> dict:
                     raise RuntimeError("historical-global-teacher loss requested without historical E0")
                 target = teacher(images, batch["captions"], mapping, temporal_mask)
                 losses.update(teacher_preservation_losses(result.pair_embedding, result.text_embedding, result.scores.global_score, target))
-            if "mask_dice" in profile.active_losses:
+            if "mask_dice" in profile.active_losses or "mask_supervised_only" in profile.active_losses:
                 supervised_pairs = batch["segmentation_supervision"].to(device).bool()
                 supervised_queries = supervised_pairs[mapping]
                 query_indices = torch.nonzero(supervised_queries, as_tuple=False).flatten()
@@ -279,9 +410,22 @@ def run(args: argparse.Namespace) -> dict:
                     targets = foreground_preserving_resize(batch["masks"].to(device).float(), selected.shape[-2:])[mapping[query_indices]]
                     kinds = [str(batch["segmentation_target_kinds"][int(mapping[index])]) for index in query_indices.tolist()]
                     changes = [batch.get("change_types", [None] * images.shape[0])[int(mapping[index])] for index in query_indices.tolist()]
-                    mask_losses = separated_query_mask_losses(selected, targets, kinds, changes)
+                    mismatch_payload, mismatch_sources = _swapped_query_forward(
+                        student, batch, device, only_verified_empty=True,
+                    )
+                    mismatch_logits = None if mismatch_payload is None else mismatch_payload[1]
+                    objective = resolve_mask_objective(args.mask_objective)
+                    with torch.autocast("cuda", enabled=False):
+                        mask_losses = separated_query_mask_losses(
+                            selected.float(), targets.float(), kinds, changes,
+                            verified_mismatched_logits=None if mismatch_logits is None else mismatch_logits.float(),
+                            dice_weight=objective.dice_weight,
+                            focal_weight=objective.focal_weight,
+                            tversky_weight=objective.tversky_weight,
+                            positive_focal_weight=objective.positive_focal_weight,
+                            negative_focal_weight=objective.negative_focal_weight,
+                        )
                     losses["query_mask"] = mask_losses["total"]
-                    losses["query_mask_mismatched_empty"] = mask_losses["mismatched_query_empty_loss"]
                     probabilities = selected.sigmoid()
                     foreground = targets >= 0.5
                     background = ~foreground
@@ -296,6 +440,8 @@ def run(args: argparse.Namespace) -> dict:
                         "mask_background_probability": float(probabilities[background].detach().mean()) if bool(background.any()) else 0.0,
                         "mask_edge_center_ratio": float((edge / center.clamp_min(1e-6)).detach()),
                         "verified_query_specific_count": sum(kind in {"query_specific", "verified_query_specific", "localization_only"} for kind in kinds),
+                        "verified_mismatch_count": int(mask_losses["verified_mismatch_count"]),
+                        "verified_mismatch_source_pair_ids": [batch["pair_ids"][index] for index in mismatch_sources],
                     }
             if not losses:
                 raise RuntimeError("batch has no supervision for the selected phase")
@@ -310,6 +456,12 @@ def run(args: argparse.Namespace) -> dict:
         norm = torch.nn.utils.clip_grad_norm_(parameters, args.grad_clip_norm)
         if not torch.isfinite(norm): raise FloatingPointError(f"non-finite gradient at step {step}")
         optimizer.step()
+        if args.phase == "mask_only_diagnostic" and step % args.probe_interval == 0:
+            assert fixed_validation_batch is not None
+            probe = {"step": step, **_evaluate_fixed_mask_probe(student, fixed_validation_batch, device)}
+            fixed_probe_history.append(probe)
+            append_jsonl(output / "fixed_validation_history.jsonl", probe)
+            student.train()
         if step == 1 and not global_only:
             first_query = 0
             first_pair = int(mapping[first_query])
@@ -368,14 +520,23 @@ def run(args: argparse.Namespace) -> dict:
     missing_gradients = sorted(name for name, present in gradient_presence.items() if not present)
     gradients_ok = bool(gradient_presence) and not missing_gradients
     all_finite = all(math.isfinite(value) for row in history for value in row.values() if isinstance(value, float))
+    engineering_ok = all_finite and gradients_ok
+    micro_gate = _micro_overfit_gate(fixed_probe_history) if args.phase == "mask_only_diagnostic" else None
     report = {
-        "status": "PASS" if all_finite and gradients_ok else "FAIL",
+        "runtime_status": "PASS" if all_finite else "FAIL",
+        "gradient_status": "PASS" if gradients_ok else "FAIL",
+        "anti_empty_collapse_status": "PASS" if args.phase == "mask_only_diagnostic" and fixed_probe_history[-1]["selected_near_empty_rate"] < 1.0 else "NOT_EVALUATED",
+        "localization_status": "MICRO_OVERFIT_PASS" if micro_gate and micro_gate["passed"] else ("INCONCLUSIVE" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
+        "query_specificity_status": "PASS" if micro_gate and micro_gate["passed"] and fixed_probe_history[-1]["query_swap_gap"] > 0 else ("FAIL_OR_INCONCLUSIVE" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
+        "scientific_status": "MICRO_OVERFIT_PASS" if micro_gate and micro_gate["passed"] else ("SCIENTIFIC_HOLD" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
         "phase": profile.to_dict(), "initialization": asdict(initialization),
         "baseline_identity": "clean_v3_pretrained_bootstrap" if args.initialization_mode == "clean_pretrained" else "historical_e0_continuation",
         "historical_e0_continuity": args.initialization_mode == "historical_e0",
         "historical_global_teacher_used": teacher is not None,
         "text_derived_semantic_relevance_is_ground_truth": False,
         "optimizer_audit": optimizer_audit, "history": history,
+        "fixed_validation_history": fixed_probe_history,
+        "micro_overfit_gate": micro_gate,
         "observed_datasets": sorted(observed_datasets),
         "runtime_device_contract": {
             "requested_device": str(requested_device),
@@ -400,9 +561,9 @@ def run(args: argparse.Namespace) -> dict:
     write_progress(
         progress_path, stage="complete", completed=args.steps, total=args.steps,
         started=started, complete=True,
-        metrics={"status": report["status"], "last_loss": history[-1]["loss"] if history else None},
+        metrics={"runtime_status": report["runtime_status"], "scientific_status": report["scientific_status"], "last_loss": history[-1]["loss"] if history else None},
     )
-    if report["status"] != "PASS":
+    if not engineering_ok:
         raise RuntimeError(
             "QCPR v3 runtime contract failed: "
             f"all_finite={all_finite}, missing_gradients={missing_gradients}"
@@ -413,7 +574,7 @@ def run(args: argparse.Namespace) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--phase", choices=("global_bootstrap", "global_recovery", "late_interaction", "mask_grounding", "region_slots", "joint_finetune"), required=True)
+    parser.add_argument("--phase", choices=("global_bootstrap", "global_recovery", "late_interaction", "mask_grounding", "mask_only_diagnostic", "region_slots", "joint_finetune"), required=True)
     parser.add_argument("--initialization-mode", choices=("clean_pretrained", "historical_e0"), required=True)
     parser.add_argument("--v1-checkpoint", type=Path, default=IMMUTABLE_V1)
     parser.add_argument("--v3-checkpoint", type=Path, default=None)
@@ -436,6 +597,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--text-max-length", type=int, default=256)
     parser.add_argument("--no-change-batch-fraction-cap", type=float, default=0.25)
     parser.add_argument("--required-datasets", default="")
+    parser.add_argument("--mask-objective", choices=("A", "B", "C"), default="B")
+    parser.add_argument("--micro-train-samples", type=int, default=8)
+    parser.add_argument("--validation-probe-samples", type=int, default=16)
+    parser.add_argument("--probe-interval", type=int, default=5)
     return parser.parse_args()
 
 

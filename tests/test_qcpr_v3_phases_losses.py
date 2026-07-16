@@ -27,7 +27,7 @@ class Wrapper(torch.nn.Module):
 
 
 def test_training_phases_are_complete_and_overrides_rejected() -> None:
-    assert set(PHASES) == {"global_bootstrap", "global_recovery", "late_interaction", "mask_grounding", "region_slots", "joint_finetune"}
+    assert set(PHASES) == {"global_bootstrap", "global_recovery", "late_interaction", "mask_grounding", "mask_only_diagnostic", "region_slots", "joint_finetune"}
     with pytest.raises(ValueError, match="immutable"):
         resolve_training_phase("late_interaction", {"mask_loss": 1.0})
     with pytest.raises(ValueError, match="Unknown"):
@@ -54,6 +54,11 @@ def test_phase_profiles_only_enable_parameters_connected_to_active_losses() -> N
     assert "grounder.rerank_logits" in mask_audit["trainable_parameters"]
     assert not any(name.startswith("grounder.temporal_map_head") for name in mask_audit["trainable_parameters"])
 
+    mask_only = apply_phase_to_model(model, resolve_training_phase("mask_only_diagnostic"))
+    assert resolve_training_phase("mask_only_diagnostic").active_losses == ("mask_supervised_only",)
+    assert not any(name.startswith("grounder.local_projection") for name in mask_only["trainable_parameters"])
+    assert "grounder.rerank_logits" not in mask_only["trainable_parameters"]
+
 
 def test_mask_losses_separate_empty_and_nonempty() -> None:
     logits = torch.zeros(2, 1, 8, 8, requires_grad=True)
@@ -66,6 +71,8 @@ def test_mask_losses_separate_empty_and_nonempty() -> None:
     assert metrics["nonempty_count"] == 1
     assert metrics["empty_count"] == 1
     assert metrics["empty_false_positive_area"] == pytest.approx(1.0)
+    assert metrics["nonempty_dice"] == pytest.approx(2.0 / 65.0)
+    assert metrics["nonempty_iou"] == pytest.approx(1.0 / 64.0)
 
 
 def test_duplicate_aware_multi_positive_loss_does_not_penalize_equivalent_pairs() -> None:

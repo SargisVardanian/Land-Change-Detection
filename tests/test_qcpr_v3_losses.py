@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import torch
 
-from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, separated_query_mask_losses
+from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, query_mask_metrics, separated_query_mask_losses
 
 
 def test_foreground_preserving_resize_keeps_single_small_positive() -> None:
@@ -65,3 +65,30 @@ def test_generic_union_has_lower_primary_weight_than_verified_query_mask() -> No
     generic_loss = separated_query_mask_losses(generic, target, ["binary_generic"], [None])["total"]
     query_loss = separated_query_mask_losses(query, target, ["query_specific"], ["appeared"])["total"]
     torch.testing.assert_close(query_loss, 4.0 * generic_loss)
+
+
+def test_scientific_mask_metrics_are_unsmoothed_and_report_pr_auc() -> None:
+    logits = torch.full((1, 2, 2), -8.0)
+    targets = torch.zeros_like(logits); targets[0, 0, 0] = 1
+    metrics = query_mask_metrics(logits, targets)
+    assert metrics["nonempty_dice"] == 0.0
+    assert metrics["nonempty_iou"] == 0.0
+    assert metrics["nonempty_recall"] == 0.0
+    assert 0.0 <= metrics["pr_auc"] <= 1.0
+
+
+def test_mask_objective_ablation_changes_only_declared_terms() -> None:
+    logits = torch.zeros(1, 4, 4, requires_grad=True)
+    target = torch.zeros_like(logits); target[0, 1, 1] = 1
+    a = separated_query_mask_losses(
+        logits, target, ["query_specific"], ["appeared"], tversky_weight=0.0,
+    )["total"]
+    b = separated_query_mask_losses(
+        logits, target, ["query_specific"], ["appeared"], tversky_weight=1.0,
+    )["total"]
+    c = separated_query_mask_losses(
+        logits, target, ["query_specific"], ["appeared"], tversky_weight=1.0,
+        negative_focal_weight=0.5,
+    )["total"]
+    assert b > a
+    assert c > b

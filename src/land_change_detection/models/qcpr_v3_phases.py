@@ -65,6 +65,28 @@ PHASES: dict[str, TrainingPhaseProfile] = {
         ("candidate_recall", "conditional_rerank", "nonempty_dice", "nonempty_iou", "empty_false_positive"),
         "nonempty_dice", ("mask_not_collapsed", "nonempty_recall_above_zero", "faithful_mask"),
     ),
+    "mask_only_diagnostic": TrainingPhaseProfile(
+        "mask_only_diagnostic", (
+            "grounder.temporal_field",
+            "grounder.grounding_decoder",
+            "grounder.mask_decoder",
+        ),
+        (
+            "visual_encoder", "text_encoder", "temporal_encoder", "retrieval_head",
+            "text_adapter", "grounder.local_projection", "grounder.rerank_logits",
+            "grounder.region_slots",
+        ),
+        ("mask_supervised_only",), ("s2looking_localization",), "fixed_s2looking_probe",
+        (
+            "nonempty_dice", "nonempty_iou", "nonempty_precision", "nonempty_recall",
+            "foreground_background_margin", "pr_auc", "query_swap_gap",
+        ),
+        "nonempty_dice",
+        (
+            "fixed_probe", "dice_iou_margin_improve", "precision_no_collapse",
+            "query_swap_gap_positive", "finite_mask_gradients",
+        ),
+    ),
     "region_slots": TrainingPhaseProfile(
         "region_slots", ("grounder.region_slots",),
         ("visual_encoder", "text_encoder", "temporal_encoder", "retrieval_head", "text_adapter", "grounder.temporal_field", "grounder.grounding_decoder", "grounder.mask_decoder"),

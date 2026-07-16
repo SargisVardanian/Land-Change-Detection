@@ -92,6 +92,11 @@ def separated_query_mask_losses(
     mismatch_empty_weight: float = 1.0,
     generic_weight: float = 0.25,
     query_specific_weight: float = 1.0,
+    dice_weight: float = 1.0,
+    focal_weight: float = 1.0,
+    tversky_weight: float = 1.0,
+    positive_focal_weight: float = 0.75,
+    negative_focal_weight: float = 0.25,
 ) -> dict[str, Tensor | int]:
     """Separate mask losses by provenance and add mismatched-query empty negatives.
 
@@ -111,7 +116,12 @@ def separated_query_mask_losses(
     result: dict[str, Tensor | int] = {}
     total = logits.sum() * 0.0
     for name, mask in groups.items():
-        value = query_mask_loss(logits[mask], targets[mask]).total if bool(mask.any()) else logits.sum() * 0.0
+        value = query_mask_loss(
+            logits[mask], targets[mask], dice_weight=dice_weight,
+            focal_weight=focal_weight, tversky_weight=tversky_weight,
+            positive_focal_weight=positive_focal_weight,
+            negative_focal_weight=negative_focal_weight,
+        ).total if bool(mask.any()) else logits.sum() * 0.0
         result[f"{name}_loss"] = value
         result[f"{name}_count"] = int(mask.sum())
         # Direction is an evaluation stratum, not a second supervision target.
@@ -126,6 +136,9 @@ def separated_query_mask_losses(
         mismatch = query_mask_loss(
             verified_mismatched_logits,
             torch.zeros_like(verified_mismatched_logits),
+            dice_weight=0.0,
+            focal_weight=0.0,
+            tversky_weight=0.0,
         ).empty_false_positive * float(mismatch_empty_weight)
     result["verified_mismatch_count"] = 0 if verified_mismatched_logits is None else int(verified_mismatched_logits.shape[0])
     result["mismatch_provenance"] = "none" if verified_mismatched_logits is None else "explicit_recomputed_verified"
@@ -151,7 +164,13 @@ def query_mask_loss(
     boundary_weight: float = 0.0,
     empty_weight: float = 1.0,
     focal_gamma: float = 2.0,
+    positive_focal_weight: float = 0.75,
+    negative_focal_weight: float = 0.25,
 ) -> QueryMaskLossOutput:
+    if min(dice_weight, focal_weight, tversky_weight, boundary_weight, empty_weight) < 0:
+        raise ValueError("mask loss weights must be non-negative")
+    if positive_focal_weight < 0 or negative_focal_weight < 0:
+        raise ValueError("focal class weights must be non-negative")
     flat_logits, flat_targets = _flatten_masks(logits, targets)
     probabilities = flat_logits.sigmoid()
     foreground = flat_targets.sum(dim=1) > 0
@@ -169,7 +188,7 @@ def query_mask_loss(
     negative_focal = (focal_pixels * negative_pixels).sum(dim=1) / negative_pixels.sum(dim=1).clamp_min(1)
     # Sparse query masks need foreground-normalized gradients; otherwise the
     # background pixel count makes the all-zero solution deceptively cheap.
-    focal_each = 0.75 * positive_focal + 0.25 * negative_focal
+    focal_each = positive_focal_weight * positive_focal + negative_focal_weight * negative_focal
     focal = focal_each[foreground].mean() if foreground.any() else flat_logits.sum() * 0.0
     false_positive = (probabilities * (1.0 - flat_targets)).sum(dim=1)
     false_negative = ((1.0 - probabilities) * flat_targets).sum(dim=1)
@@ -211,10 +230,29 @@ def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) 
     fn = (~predicted & truth).sum(dim=1).float()
     def mean(values: Tensor, mask: Tensor) -> float:
         return float(values[mask].mean()) if mask.any() else 0.0
-    dice = (2 * tp + 1) / (2 * tp + fp + fn + 1)
-    iou = (tp + 1) / (tp + fp + fn + 1)
-    precision = (tp + 1) / (tp + fp + 1)
-    recall = (tp + 1) / (tp + fn + 1)
+    def safe_ratio(numerator: Tensor, denominator: Tensor) -> Tensor:
+        return torch.where(denominator > 0, numerator / denominator, torch.zeros_like(denominator))
+    dice = safe_ratio(2 * tp, 2 * tp + fp + fn)
+    iou = safe_ratio(tp, tp + fp + fn)
+    precision = safe_ratio(tp, tp + fp)
+    recall = safe_ratio(tp, tp + fn)
+    probabilities = flat_logits.sigmoid()
+    foreground_probability = probabilities[truth].mean() if truth.any() else probabilities.new_zeros(())
+    background_probability = probabilities[~truth].mean() if (~truth).any() else probabilities.new_zeros(())
+    micro_tp, micro_fp, micro_fn = tp.sum(), fp.sum(), fn.sum()
+
+    # Binary average precision without interpolation. Ties are stable because
+    # argsort is stable; an empty positive set is explicitly NOT_EVALUATED=0.
+    labels = truth.flatten().float()
+    scores = probabilities.flatten()
+    if bool(labels.sum() > 0):
+        order = torch.argsort(scores, descending=True, stable=True)
+        ordered = labels[order]
+        cumulative = ordered.cumsum(0)
+        ranks = torch.arange(1, ordered.numel() + 1, device=ordered.device, dtype=ordered.dtype)
+        pr_auc = (cumulative.div(ranks) * ordered).sum() / labels.sum()
+    else:
+        pr_auc = scores.new_zeros(())
     return {
         "nonempty_count": int(nonempty.sum()),
         "empty_count": int(empty.sum()),
@@ -222,6 +260,15 @@ def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) 
         "nonempty_iou": mean(iou, nonempty),
         "nonempty_precision": mean(precision, nonempty),
         "nonempty_recall": mean(recall, nonempty),
+        "micro_dice": float(safe_ratio(2 * micro_tp, 2 * micro_tp + micro_fp + micro_fn)),
+        "micro_iou": float(safe_ratio(micro_tp, micro_tp + micro_fp + micro_fn)),
+        "micro_precision": float(safe_ratio(micro_tp, micro_tp + micro_fp)),
+        "micro_recall": float(safe_ratio(micro_tp, micro_tp + micro_fn)),
+        "pr_auc": float(pr_auc),
+        "foreground_probability": float(foreground_probability),
+        "background_probability": float(background_probability),
+        "foreground_background_margin": float(foreground_probability - background_probability),
+        "samples_with_true_positive": int((tp > 0).sum()),
         "empty_false_positive_area": mean(predicted.float().mean(dim=1), empty),
         "predicted_area": float(predicted.float().mean()),
         "target_area": float(truth.float().mean()),
