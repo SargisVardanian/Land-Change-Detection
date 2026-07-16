@@ -7,6 +7,7 @@ from typing import Any
 import torch
 from PIL import Image
 from torch import Tensor
+from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torchvision.transforms import functional as TF
 
@@ -37,10 +38,17 @@ def _load_rgb(path: str | Path, image_size: int | None) -> Tensor:
 
 def _load_mask(path: str | Path, image_size: int | None) -> Tensor:
     with Image.open(path) as image:
-        image = image.convert("L")
-        if image_size is not None:
-            image = image.resize((image_size, image_size), Image.NEAREST)
-        return (TF.to_tensor(image).squeeze(0) > 0.5).to(torch.float32)
+        # S2Looking stores directional labels in color channels (red for one
+        # direction, blue for the other). Converting to luminance before a
+        # 0.5 threshold silently erased both. Decode foreground from any
+        # non-zero channel before spatial normalization.
+        mask = TF.pil_to_tensor(image).ne(0).any(dim=0).to(torch.float32)
+    if image_size is None or tuple(mask.shape) == (image_size, image_size):
+        return mask
+    target_size = (int(image_size), int(image_size))
+    if target_size[0] <= mask.shape[-2] and target_size[1] <= mask.shape[-1]:
+        return F.adaptive_max_pool2d(mask[None, None], target_size)[0, 0]
+    return F.interpolate(mask[None, None], size=target_size, mode="nearest")[0, 0]
 
 
 def _captions_for_sample(sample: LevirMciSample) -> list[str]:
