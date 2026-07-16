@@ -8,6 +8,7 @@ import torch
 from PIL import Image
 
 from land_change_detection.models.qcpr_v3_mask_diagnostic import (
+    append_jsonl,
     exact_s2looking_query_indices,
     fixed_probe_subset,
     query_swap_metrics,
@@ -50,6 +51,15 @@ def test_fixed_probe_skips_all_empty_base_pairs_and_keeps_direction_pair(tmp_pat
     dataset = SimpleNamespace(samples=rows)
     subset = fixed_probe_subset(dataset, count=2)
     assert list(subset.indices) == [2, 3]
+
+
+def test_explicit_probe_ids_are_selected_and_history_append_is_independent(tmp_path: Path) -> None:
+    rows = [_row("s2looking:train:9:appeared"), _row("s2looking:train:7:disappeared")]
+    subset = fixed_probe_subset(SimpleNamespace(samples=rows), count=2, pair_ids=(rows[0]["pair_id"], rows[1]["pair_id"]))
+    assert list(subset.indices) == [0, 1]
+    path = tmp_path / "history.jsonl"
+    append_jsonl(path, {"step": 0})
+    assert path.read_text().strip() == '{"step": 0}'
 
 
 def test_objective_ablation_contract_is_exact() -> None:
