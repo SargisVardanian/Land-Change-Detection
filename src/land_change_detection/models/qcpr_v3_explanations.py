@@ -17,7 +17,7 @@ class ContributionSelection:
 
 
 def directional_counterfactuals(
-    images: Tensor, *, grid: int, direction: str
+    images: Tensor, *, grid: int, direction: str, replacement: str = "raw"
 ) -> tuple[Tensor, list[tuple[int, int, int, int]]]:
     """Remove an appeared/disappeared change one spatial tile at a time."""
     if images.ndim != 4 or images.shape[0] != 2:
@@ -33,17 +33,14 @@ def directional_counterfactuals(
         for column in range(grid):
             x0, x1 = column * width // grid, (column + 1) * width // grid
             candidate = images.clone()
-            if direction == "appeared":
-                candidate[1, :, y0:y1, x0:x1] = images[0, :, y0:y1, x0:x1]
-            else:
-                candidate[0, :, y0:y1, x0:x1] = images[1, :, y0:y1, x0:x1]
+            _replace_tile(candidate, images, y0, y1, x0, x1, direction=direction, replacement=replacement)
             variants.append(candidate)
             boxes.append((y0, y1, x0, x1))
     return torch.stack(variants), boxes
 
 
 def apply_selected_counterfactual(
-    images: Tensor, boxes: list[tuple[int, int, int, int]], selected: Tensor, *, direction: str
+    images: Tensor, boxes: list[tuple[int, int, int, int]], selected: Tensor, *, direction: str, replacement: str = "raw"
 ) -> Tensor:
     if selected.numel() != len(boxes):
         raise ValueError("selected mask and boxes must have the same tile count")
@@ -51,13 +48,27 @@ def apply_selected_counterfactual(
     for active, (y0, y1, x0, x1) in zip(selected.flatten().tolist(), boxes, strict=True):
         if not active:
             continue
-        if direction == "appeared":
-            result[1, :, y0:y1, x0:x1] = images[0, :, y0:y1, x0:x1]
-        elif direction == "disappeared":
-            result[0, :, y0:y1, x0:x1] = images[1, :, y0:y1, x0:x1]
-        else:
-            raise ValueError("direction must be appeared or disappeared")
+        _replace_tile(result, images, y0, y1, x0, x1, direction=direction, replacement=replacement)
     return result
+
+
+def _replace_tile(
+    result: Tensor, images: Tensor, y0: int, y1: int, x0: int, x1: int, *, direction: str, replacement: str
+) -> None:
+    if direction not in {"appeared", "disappeared"}:
+        raise ValueError("direction must be appeared or disappeared")
+    if replacement not in {"raw", "color_matched"}:
+        raise ValueError("replacement must be raw or color_matched")
+    destination, source = (1, 0) if direction == "appeared" else (0, 1)
+    source_tile = images[source, :, y0:y1, x0:x1]
+    target_tile = images[destination, :, y0:y1, x0:x1]
+    if replacement == "color_matched":
+        source_mean = source_tile.mean(dim=(-2, -1), keepdim=True)
+        source_std = source_tile.std(dim=(-2, -1), keepdim=True).clamp_min(1e-6)
+        target_mean = target_tile.mean(dim=(-2, -1), keepdim=True)
+        target_std = target_tile.std(dim=(-2, -1), keepdim=True)
+        source_tile = (source_tile - source_mean) / source_std * target_std + target_mean
+    result[destination, :, y0:y1, x0:x1] = source_tile
 
 
 def contribution_mass_selection(evidence: Tensor, *, mass: float = 0.8) -> ContributionSelection:
@@ -106,10 +117,10 @@ def score_variants(model, images: Tensor, query: str, temporal_valid_mask: Tenso
 
 @torch.inference_mode()
 def counterfactual_evidence(
-    score_fn: Callable[[Tensor], Tensor], images: Tensor, *, grid: int, direction: str, chunk_size: int = 8
+    score_fn: Callable[[Tensor], Tensor], images: Tensor, *, grid: int, direction: str, chunk_size: int = 8, replacement: str = "raw"
 ) -> tuple[Tensor, Tensor, list[tuple[int, int, int, int]]]:
     original = score_fn(images.unsqueeze(0)).reshape(-1)[0]
-    variants, boxes = directional_counterfactuals(images, grid=grid, direction=direction)
+    variants, boxes = directional_counterfactuals(images, grid=grid, direction=direction, replacement=replacement)
     modified = torch.cat([score_fn(chunk).reshape(-1) for chunk in variants.split(chunk_size)])
     signed = (original - modified).reshape(grid, grid)
     return original, signed, boxes

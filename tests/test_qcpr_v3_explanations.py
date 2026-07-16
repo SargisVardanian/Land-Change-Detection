@@ -39,6 +39,16 @@ def test_selected_counterfactual_preserves_everything_outside_selected_tile():
     torch.testing.assert_close(result, expected)
 
 
+def test_color_matched_counterfactual_keeps_destination_tile_mean():
+    images = torch.zeros(2, 3, 4, 4)
+    images[0] = 2.0
+    images[1] = 10.0
+    variants, boxes = directional_counterfactuals(images, grid=2, direction="appeared", replacement="color_matched")
+    y0, y1, x0, x1 = boxes[0]
+    torch.testing.assert_close(variants[0, 1, :, y0:y1, x0:x1].mean(), images[1, :, y0:y1, x0:x1].mean())
+    torch.testing.assert_close(variants[0, 1, :, y1:, x1:], images[1, :, y1:, x1:])
+
+
 def test_contribution_mass_selects_minimum_tiles_and_empty_has_no_fallback():
     selection = contribution_mass_selection(torch.tensor([[6.0, 3.0], [1.0, -9.0]]), mass=0.8)
     assert selection.selected_count == 2
