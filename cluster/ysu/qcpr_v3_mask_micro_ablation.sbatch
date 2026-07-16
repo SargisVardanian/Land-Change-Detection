@@ -20,7 +20,6 @@ cd "$ROOT"
 test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git status --porcelain)"
 test ! -e "$OUTPUT_DIR"
-mkdir -p "$OUTPUT_DIR"
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
 STEPS=${STEPS:-30}
 case "$STEPS" in 20|30|40|50) ;; *) echo "mask diagnostic steps must be 20, 30, 40, or 50" >&2; exit 2;; esac
