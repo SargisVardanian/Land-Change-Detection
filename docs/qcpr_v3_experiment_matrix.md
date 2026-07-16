@@ -1,16 +1,18 @@
 # QCPR v3 experiment matrix
 
-Status: preregistered design for architecture review.  No v3 code or Slurm job
-is authorized until this document is reviewed.
+Status: active controlled implementation. Smoke, memory, and a 100-step
+diagnostic precede any 500-step pilot.
 
 ## Fixed protocol
 
-* **Global reference:** immutable QCPR v1 run and exact candidate/query gallery.
+* **Global reference:** a newly trained and accepted clean v3 global-bootstrap
+  checkpoint. Historical E0 is unavailable and cannot be substituted silently.
 * **Backbone:** the same frozen UniverSat and Jina checkpoints for all rows.
 * **Data splits:** frozen natural retrieval validation; frozen localization
   validation; a separately constructed balanced compositional validation slice.
-* **Initialization:** v1-compatible global path; non-global modules use one
-  recorded initialization seed per run.
+* **Initialization:** frozen pretrained Jina v5 and UniverSat, with randomly
+  initialized temporal/global projection and v3 grounding modules under one
+  recorded seed. No historical-global-teacher distillation is active.
 * **Budget:** same maximum optimization steps, batch, augmentations, and
   scheduler for each ablation; no hidden extra tuning for a preferred row.
 * **Seeds:** at least 3 fixed seeds for claims; an initial single-seed pilot is
@@ -40,7 +42,7 @@ report them as uncalibrated score diagnostics.
 
 | Row | Change from preceding row | Active training signal | Main hypothesis / preregistered gate | Must not change |
 |---|---|---|---|---|
-| A | v1 global baseline | global contrastive only | establish candidate recall@N and natural semantic reference | all fixed protocol fields |
+| A | clean v3 global bootstrap | duplicate-aware multi-positive global contrastive + base-text adapter preservation | establish candidate recall@N and natural text-derived-semantic reference; exact pair remains diagnostic | all fixed protocol fields |
 | B | A + generic temporal patch late interaction | global + generic local contrastive/retrank loss | conditional reranking gain > 0; no predeclared global degradation | mask decoder, slots, sampler, temporal reversal |
 | C | B + query-conditioned multi-scale soft mask | B + Dice + focal/Tversky | faithful mask parity; small-object/boundary quality and/or conditional gain improve vs B | slots, rebalanced sampler, reversal |
 | D | C + generic latent region slots | C + optional class-agnostic slot activation/diversity; verified-count loss only where available | count bucket accuracy/MAE and multi-instance masks improve vs C | sampler, reversal |
@@ -52,7 +54,8 @@ are not interpreted as proof that its component works.
 
 ## Gates between rows
 
-1. **A → B:** publish candidate recall@{50,100,200}; if the positive is absent
+1. **A → B:** publish candidate recall@{50,100,200}, exact-pair diagnostic and
+   clearly labelled text-derived-semantic metrics; if the positive is absent
    too often, improve global retrieval/data first rather than blaming reranking.
 2. **B → C:** `conditional reranking gain` must be non-negative within its CI,
    and generic token–patch score must separate positives from audited negatives.
@@ -107,8 +110,8 @@ Every completed row publishes:
 
 ## Migration from QCPR v2
 
-1. Keep v1 and all immutable runs untouched. Archive v2 `99570` only as a
-   Phase-A diagnostic, not a teacher or v3 initialization source.
+1. Historical E0/v2 run directories are missing after cleanup. Preserve all
+   remaining artifacts; never treat a new checkpoint as a restored E0.
 2. Fork a clean v3 model namespace rather than incrementally modifying the v2
    attribute-head path.
 3. First implement rows A/B with a canonical scoring API and exact parity tests.

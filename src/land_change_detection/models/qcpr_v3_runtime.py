@@ -10,6 +10,7 @@ import torch
 from torch import nn
 
 from land_change_detection.models.qcpr_v3 import QCPRV3Config, QCPRV3GenericGrounding
+from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig, build_clean_v3_model
 from land_change_detection.models.qcpr_v3_teacher import FrozenV1Teacher
 from land_change_detection.models.unichange_v3_retrieval import UniChangeV3RetrievalModel
 
@@ -19,12 +20,44 @@ IMMUTABLE_V1 = Path("/mnt/weka/svardanyan/rs_change_project/runs/qcpr_e0_2026071
 
 @dataclass(frozen=True)
 class V3InitializationAudit:
-    checkpoint: str
-    checkpoint_sha256: str
+    initialization_mode: str
+    checkpoint: str | None
+    checkpoint_sha256: str | None
     checkpoint_stage: str
     strict_teacher_load: bool
     copied_student_modules: tuple[str, ...]
     excluded_v2_modules: tuple[str, ...]
+
+
+def build_clean_v3(
+    config: QCPRV3BackboneConfig,
+    *,
+    device: torch.device,
+    enable_region_slots: bool = False,
+) -> tuple[UniChangeV3RetrievalModel, None, V3InitializationAudit]:
+    student = build_clean_v3_model(
+        config,
+        device=device,
+        grounding_config=QCPRV3Config(enable_region_slots=enable_region_slots),
+    )
+    audit = V3InitializationAudit(
+        initialization_mode="clean_pretrained",
+        checkpoint=None,
+        checkpoint_sha256=None,
+        checkpoint_stage="pretrained_backbones_plus_random_v3_heads",
+        strict_teacher_load=False,
+        copied_student_modules=(),
+        excluded_v2_modules=(
+            "unichange_v2_model_instance",
+            "patch_reranker",
+            "object_scores",
+            "direction_scores",
+            "location_scores",
+            "count_scores",
+            "relation_scores",
+        ),
+    )
+    return student, None, audit
 
 
 def sha256_file(path: str | Path) -> str:
@@ -69,6 +102,7 @@ def build_v3_and_teacher(
         text_adapter=student_legacy.text_adapter,
     ).to(device)
     audit = V3InitializationAudit(
+        initialization_mode="historical_e0",
         checkpoint=str(checkpoint),
         checkpoint_sha256=sha256_file(checkpoint),
         checkpoint_stage=str(payload.get("stage", payload.get("stage1_next", "unknown"))),

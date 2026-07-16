@@ -69,6 +69,16 @@ def test_multiscale_decoder_keeps_small_local_peak() -> None:
     assert 0 < (decoded > 0.5).sum() < decoded.numel()
 
 
+def test_patch_pooling_logits_are_sampled_from_displayed_mask_field() -> None:
+    model, inputs = _inputs()
+    output = model(**inputs.as_kwargs())
+    expected = model.mask_decoder.sample_patch_logits(
+        output.decoded_mask_logits,
+        ((0, 16, 4), (16, 20, 2)),
+    )
+    torch.testing.assert_close(output.patch_mask_logits, expected)
+
+
 def test_two_stage_selection_is_deterministic_and_reports_recall() -> None:
     global_scores = torch.tensor([[1.0, 1.0, 0.1], [0.1, 0.2, 0.3]])
     assert stable_global_top_n(global_scores, 2).tolist() == [[0, 1], [2, 1]]

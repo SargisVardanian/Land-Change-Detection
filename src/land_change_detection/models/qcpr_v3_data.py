@@ -125,12 +125,21 @@ class CappedCompositionalBatchSampler(Sampler[list[int]]):
         if batch_size <= 0 or not 0.0 <= no_change_fraction_cap <= 1.0:
             raise ValueError("positive batch_size and no_change_fraction_cap in [0,1] required")
         self.rows, self.batch_size, self.seed = rows, int(batch_size), int(seed)
-        self.no_change_cap = int(math.floor(self.batch_size * no_change_fraction_cap))
+        self.no_change_cap = (
+            max(1, int(math.floor(self.batch_size * no_change_fraction_cap)))
+            if no_change_fraction_cap > 0
+            else 0
+        )
         self.no_change = [index for index, row in enumerate(rows) if any(_direction(classify_caption_semantics(caption)) == "no_change" for caption in row.get("captions", []))]
         self.changed = [index for index in range(len(rows)) if index not in set(self.no_change)]
 
     def __len__(self) -> int:
-        return math.ceil(len(self.rows) / self.batch_size)
+        total_batches = math.ceil(len(self.rows) / self.batch_size)
+        if self.no_change:
+            if self.no_change_cap == 0:
+                raise RuntimeError("no_change_fraction_cap=0 is incompatible with no-change training rows")
+            total_batches = max(total_batches, math.ceil(len(self.no_change) / self.no_change_cap))
+        return total_batches
 
     def _weighted_order(self, indices: list[int], generator: torch.Generator) -> list[int]:
         if not indices:
@@ -146,10 +155,10 @@ class CappedCompositionalBatchSampler(Sampler[list[int]]):
         ci = ni = 0
         while ci < len(changed) or ni < len(no_change):
             batch: list[int] = []
+            while ni < len(no_change) and len(batch) < self.batch_size and len(batch) < self.no_change_cap:
+                batch.append(no_change[ni]); ni += 1
             while ci < len(changed) and len(batch) < self.batch_size:
                 batch.append(changed[ci]); ci += 1
-            while ni < len(no_change) and len(batch) < self.batch_size and sum(index in self.no_change for index in batch) < self.no_change_cap:
-                batch.append(no_change[ni]); ni += 1
             if ni < len(no_change) and len(batch) < self.batch_size:
                 if not changed:
                     raise RuntimeError("cannot enforce a no-change cap when every training pair is no-change")
@@ -161,6 +170,8 @@ class CappedCompositionalBatchSampler(Sampler[list[int]]):
                     refill += 1
                     if candidate not in batch:
                         batch.append(candidate)
+            if ci >= len(changed) and ni < len(no_change) and self.no_change_cap == 0:
+                raise RuntimeError("no-change examples remain but no_change_fraction_cap permits none")
             if batch:
                 yield batch
 
@@ -269,6 +280,14 @@ def derive_qcpr_v3_manifests(
     write_jsonl("balanced_train_manifest.jsonl", balanced_train)
     write_jsonl("natural_validation_manifest.jsonl", natural_validation)
     write_jsonl("balanced_validation_manifest.jsonl", balanced_validation)
+    natural_train_retrieval = [row for row in natural_train if bool(row.get("retrieval_supervision", True))]
+    natural_validation_retrieval = [row for row in natural_validation if bool(row.get("retrieval_supervision", True))]
+    natural_train_localization = [row for row in natural_train if bool(row.get("query_mask_path") or row.get("mask_path"))]
+    natural_validation_localization = [row for row in natural_validation if bool(row.get("query_mask_path") or row.get("mask_path"))]
+    write_jsonl("natural_train_retrieval_manifest.jsonl", natural_train_retrieval)
+    write_jsonl("natural_validation_retrieval_manifest.jsonl", natural_validation_retrieval)
+    write_jsonl("natural_train_localization_manifest.jsonl", natural_train_localization)
+    write_jsonl("natural_validation_localization_manifest.jsonl", natural_validation_localization)
 
     coverage = {
         "schema_version": "qcpr-v3-coverage-v1",
@@ -294,6 +313,10 @@ def derive_qcpr_v3_manifests(
         "derived_counts": {
             "natural_train": len(natural_train), "balanced_train": len(balanced_train),
             "natural_validation": len(natural_validation), "balanced_validation": len(balanced_validation),
+            "natural_train_retrieval": len(natural_train_retrieval),
+            "natural_validation_retrieval": len(natural_validation_retrieval),
+            "natural_train_localization": len(natural_train_localization),
+            "natural_validation_localization": len(natural_validation_localization),
         },
     }
     (output / "dataset_coverage_report.json").write_text(json.dumps(coverage, indent=2, sort_keys=True), encoding="utf-8")

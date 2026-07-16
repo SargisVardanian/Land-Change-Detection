@@ -4,7 +4,8 @@ import torch
 import pytest
 
 from land_change_detection.models.qcpr_v3_teacher import FrozenV1Teacher, teacher_preservation_losses
-from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, checkpoint_config
+from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig
+from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, build_clean_v3, checkpoint_config
 
 
 class TinyTeacher(torch.nn.Module):
@@ -32,6 +33,23 @@ def test_teacher_is_strict_frozen_separate_and_absent_from_student_optimizer(tmp
     output = teacher(torch.randn(2, 3), ["a", "b"], torch.arange(2))
     losses = teacher_preservation_losses(output.pair_embedding, output.text_embedding, output.similarity, output)
     assert all(torch.isfinite(value) for value in losses.values())
+
+
+def test_clean_v3_bootstrap_has_no_historical_teacher(monkeypatch) -> None:
+    student = TinyTeacher()
+    monkeypatch.setattr(
+        "land_change_detection.models.qcpr_v3_runtime.build_clean_v3_model",
+        lambda config, device, grounding_config: student.to(device),
+    )
+    model, teacher, audit = build_clean_v3(
+        QCPRV3BackboneConfig("universat-source", "universat-checkpoint", "jina"),
+        device=torch.device("cpu"),
+    )
+    assert model is student
+    assert teacher is None
+    assert audit.initialization_mode == "clean_pretrained"
+    assert audit.checkpoint is None
+    assert audit.strict_teacher_load is False
 
 
 @pytest.mark.skipif(not IMMUTABLE_V1.exists(), reason="cluster immutable v1 checkpoint unavailable")

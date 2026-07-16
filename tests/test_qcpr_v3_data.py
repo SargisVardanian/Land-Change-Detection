@@ -37,6 +37,8 @@ def test_derived_manifests_are_deterministic_capped_and_duplicate_aware(tmp_path
         "dataset_coverage_report.json", "dataset_coverage_report.csv", "dataset_weighting_report.json",
         "duplicate_audit.jsonl", "caption_quality_audit.jsonl", "natural_train_manifest.jsonl",
         "balanced_train_manifest.jsonl", "natural_validation_manifest.jsonl", "balanced_validation_manifest.jsonl",
+        "natural_train_retrieval_manifest.jsonl", "natural_validation_retrieval_manifest.jsonl",
+        "natural_train_localization_manifest.jsonl", "natural_validation_localization_manifest.jsonl",
     }
     assert required <= {path.name for path in first.iterdir()}
     for name in required:
@@ -46,6 +48,8 @@ def test_derived_manifests_are_deterministic_capped_and_duplicate_aware(tmp_path
     assert report["weighting"]["weight_max"] <= config.max_weight / config.min_weight
     natural = [json.loads(line) for line in (first / "natural_train_manifest.jsonl").read_text().splitlines()]
     assert natural[0]["sampling_weight"] < natural[1]["sampling_weight"]
+    retrieval = [json.loads(line) for line in (first / "natural_train_retrieval_manifest.jsonl").read_text().splitlines()]
+    assert retrieval and all(row.get("retrieval_supervision", True) for row in retrieval)
 
 
 def test_cross_split_duplicate_caption_is_reported_not_silently_deleted(tmp_path) -> None:
@@ -84,3 +88,15 @@ def test_capped_sampler_limits_no_change_and_never_repeats_pair_in_batch() -> No
         assert no_change <= 1
         assert len({rows[index]["pair_id"] for index in batch}) == len(batch)
     assert list(CappedCompositionalBatchSampler(rows, 4, seed=3, no_change_fraction_cap=0.25)) == batches
+
+
+def test_capped_sampler_small_batch_terminates_and_consumes_no_change_rows() -> None:
+    rows = [
+        {"pair_id": "changed", "captions": ["a house appeared"], "sampling_weight": 1.0},
+        {"pair_id": "nochange-1", "captions": ["no change"], "sampling_weight": 1.0},
+        {"pair_id": "nochange-2", "captions": ["no change"], "sampling_weight": 1.0},
+    ]
+    batches = list(CappedCompositionalBatchSampler(rows, 2, seed=1, no_change_fraction_cap=0.25))
+    observed = {rows[index]["pair_id"] for batch in batches for index in batch}
+    assert {"nochange-1", "nochange-2"} <= observed
+    assert all(sum(rows[index]["pair_id"].startswith("nochange") for index in batch) <= 1 for batch in batches)

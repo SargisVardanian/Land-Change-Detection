@@ -23,12 +23,20 @@ class TrainingPhaseProfile:
 
 
 PHASES: dict[str, TrainingPhaseProfile] = {
+    "global_bootstrap": TrainingPhaseProfile(
+        "global_bootstrap", ("temporal_encoder", "retrieval_head", "text_adapter"),
+        ("visual_encoder", "text_encoder", "grounder"),
+        ("global_multi_positive", "base_text_preservation"),
+        ("levir_mci", "second_cc"), "capped_natural",
+        ("text_derived_semantic_r1", "text_derived_semantic_r5", "candidate_recall", "exact_pair_diagnostic"),
+        "text_derived_semantic_r1", ("finite_global_gradients", "clipping_fraction_below_0.2", "candidate_recall_reported"),
+    ),
     "global_recovery": TrainingPhaseProfile(
         "global_recovery", ("temporal_encoder", "retrieval_head", "text_adapter"),
         ("visual_encoder", "text_encoder", "grounder"),
         ("global_contrastive", "teacher_distillation", "pair_preservation", "text_preservation"),
-        ("levir_mci", "second_cc"), "natural", ("semantic_r1", "semantic_r5", "candidate_recall"),
-        "semantic_r1", ("global_r1_within_0.01", "global_r5_within_0.01"),
+        ("levir_mci", "second_cc"), "natural", ("text_derived_semantic_r1", "text_derived_semantic_r5", "candidate_recall"),
+        "text_derived_semantic_r1", ("global_r1_within_0.01", "global_r5_within_0.01"),
     ),
     "late_interaction": TrainingPhaseProfile(
         "late_interaction", ("grounder.temporal_field", "grounder.grounding_decoder", "grounder.local_projection", "grounder.rerank_logits"),

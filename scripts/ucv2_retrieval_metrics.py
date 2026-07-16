@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import time
 from dataclasses import dataclass
-from pathlib import Path
 
 import torch
 from torch import Tensor
@@ -18,7 +17,6 @@ from land_change_detection.models.retrieval_heads import (
 )
 from land_change_detection.models.unichange_v2_retrieval import UniChangeV2RetrievalModel
 from land_change_detection.models.qcpr import QCPRPatchReranker, _structured_signature, structured_hard_negative_masks
-from ucv2_progress import write_progress
 
 
 @dataclass(frozen=True)
@@ -73,9 +71,6 @@ def collect_retrieval_corpus(
     loader: DataLoader,
     device: torch.device,
     config: base.RetrievalConfig,
-    *,
-    progress_path: str | Path | None = None,
-    progress_stage: str = "evaluation_encoding",
 ) -> RetrievalCorpus:
     model.eval()
     pair_embeddings: list[Tensor] = []
@@ -103,12 +98,9 @@ def collect_retrieval_corpus(
         torch.cuda.reset_peak_memory_stats(device)
     _synchronize(device)
     started = time.perf_counter()
-    total_batches = len(loader)
-    if progress_path is not None:
-        write_progress(progress_path, stage=progress_stage, completed=0, total=total_batches, started=started)
 
     with torch.no_grad():
-        for batch_index, batch in enumerate(loader, start=1):
+        for batch in loader:
             batch_pair_ids = [str(pair_id) for pair_id in batch["pair_ids"]]
             pair_ids.extend(batch_pair_ids)
             dataset_names.extend(str(name) for name in batch.get("dataset_names", ["unknown"] * len(batch_pair_ids)))
@@ -156,15 +148,6 @@ def collect_retrieval_corpus(
             caption_to_pair_all.append(batch["caption_to_pair"].cpu() + pair_offset)
             caption_group_ids_all.append(stable_caption_group_ids(batch["captions"]).cpu())
             pair_offset += output.pair_embedding.shape[0]
-            if progress_path is not None:
-                write_progress(
-                    progress_path,
-                    stage=progress_stage,
-                    completed=batch_index,
-                    total=total_batches,
-                    started=started,
-                    metrics={"pairs_encoded": pair_offset, "captions_encoded": len(captions)},
-                )
 
     _synchronize(device)
     encode_seconds = time.perf_counter() - started
@@ -1247,18 +1230,8 @@ def relevance_aware_retrieval_metrics(
     loader: DataLoader,
     device: torch.device,
     config: base.RetrievalConfig,
-    *,
-    progress_path: str | Path | None = None,
-    progress_stage: str = "validation_encoding",
 ) -> dict[str, float | int | bool]:
-    corpus = collect_retrieval_corpus(
-        model,
-        loader,
-        device,
-        config,
-        progress_path=progress_path,
-        progress_stage=progress_stage,
-    )
+    corpus = collect_retrieval_corpus(model, loader, device, config)
     metrics, _ = compute_retrieval_metrics(
         corpus,
         query_chunk_size=int(getattr(config, "similarity_query_chunk_size", 0) or 0),

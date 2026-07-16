@@ -245,6 +245,22 @@ class MultiScaleQueryMaskDecoder(nn.Module):
         decoded = F.interpolate(fused, self.config.output_size, mode="bilinear", align_corners=False)
         return decoded.reshape(queries, candidates, *self.config.output_size)
 
+    @staticmethod
+    def sample_patch_logits(
+        decoded_mask_logits: Tensor,
+        scale_slices: tuple[tuple[int, int, int], ...],
+    ) -> Tensor:
+        """Sample one canonical displayed logit field back onto every patch scale."""
+        if decoded_mask_logits.ndim != 4:
+            raise ValueError("decoded_mask_logits must have shape [Q,C,H,W]")
+        queries, candidates, height, width = decoded_mask_logits.shape
+        flattened = decoded_mask_logits.reshape(queries * candidates, 1, height, width)
+        sampled = [
+            F.adaptive_avg_pool2d(flattened, (side, side)).reshape(queries, candidates, side * side)
+            for _, _, side in scale_slices
+        ]
+        return torch.cat(sampled, dim=-1)
+
 
 class GenericRegionSlots(nn.Module):
     def __init__(self, config: QCPRV3Config):
@@ -328,10 +344,11 @@ class QCPRV3GenericGrounding(nn.Module):
         text_content_mask: Tensor | None = None,
     ) -> QCPRV3ScoreOutput:
         field = self.temporal_field(per_time_tokens)
-        grounded, patch_logits, projected_tokens = self.grounding_decoder(
+        grounded, raw_patch_logits, projected_tokens = self.grounding_decoder(
             field.descriptors, text_token_embeddings, text_attention_mask
         )
-        decoded_logits = self.mask_decoder(patch_logits, field.scale_slices)
+        decoded_logits = self.mask_decoder(raw_patch_logits, field.scale_slices)
+        patch_logits = self.mask_decoder.sample_patch_logits(decoded_logits, field.scale_slices)
         query = F.normalize(self.global_query_projection(global_query_embeddings), dim=-1)
         pairs = F.normalize(pair_embeddings, dim=-1)
         global_score = query @ pairs.T

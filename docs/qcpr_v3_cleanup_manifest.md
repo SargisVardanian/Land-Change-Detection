@@ -1,8 +1,10 @@
 # QCPR v3 cleanup manifest
 
-This manifest classifies the pre-RC1 QCPR surface. Obsolete v2 behavior is
-preserved only where required to load/read immutable v1/v2 artifacts. V3 entry
-points do not import the semantic-specific v2 heads.
+This manifest classifies the QCPR surface after the clean-bootstrap correction.
+Obsolete v2 behavior is preserved only for historical compatibility. V3 model
+construction no longer instantiates `UniChangeV2RetrievalModel`; temporary
+reuse of legacy dataset/collator utilities is isolated as a data compatibility
+boundary and does not define the v3 architecture.
 
 ## Model and backbone components
 
@@ -11,18 +13,20 @@ points do not import the semantic-specific v2 heads.
 | `models/temporal_change_encoder.py` | migrate into v3 | preserve v1 semantics; expose multi-scale v3 inputs separately |
 | `models/retrieval_heads.py` global projection/loss | keep unchanged | reused by v1-compatible global path |
 | `models/retrieval_heads.py` caption parser | evaluation-only | never passed to v3 neural model |
-| `models/unichange_v2_retrieval.py` | v1/v2 compatibility only | immutable checkpoint loading/evaluation only |
+| `models/unichange_v2_retrieval.py` | v1/v2 compatibility only | historical loading/evaluation only; not used by clean v3 factory |
 | `models/qcpr.py::score` | v1 compatibility only | retained for old checkpoints |
 | `models/qcpr.py::score_v2` and semantic-specific scores | obsolete for v3 | no v3 import; replaced by generic v3 model/API |
 | `backbones/jina_v5_text.py` global/token encoder | keep unchanged | metadata semantic token groups ignored by v3 model |
 | `models/qcpr_v3.py` | migrate into v3 | new generic field/decoder/mask/slots/canonical scoring |
-| `models/qcpr_v3_teacher.py` | migrate into v3 | separate strict frozen v1 teacher |
+| `models/qcpr_v3_teacher.py` | historical compatibility | strict historical teacher only when an explicit checkpoint exists; inactive for clean bootstrap |
+| `models/qcpr_v3_factory.py` | v3 primary | directly builds Jina, UniverSat, temporal encoder, global head and generic grounder |
 
 ## Training/evaluation scripts
 
 | Paths | Classification | RC1 action |
 |---|---|---|
-| `train_unichange_v2_retrieval*.py`, `ucv2_*` | v1/v2 compatibility only | retained to reproduce existing results; not reachable from v3 commands |
+| `train_unichange_v2_retrieval*.py`, model-building `ucv2_*` | v1/v2 compatibility only | retained for history; clean v3 factory does not call them |
+| legacy temporal-caption dataset/collator utilities | temporary data compatibility | may be called by v3 entrypoints only for manifest IO/collation until moved to a neutral data module |
 | `render_unichange_v2_retrieval.py` | v1/v2 result readability | retained; v3 renderer is separate and canonical-API based |
 | `compare_qcpr_evaluations.py`, plotting/summarizers | evaluation-only | retained |
 | manifest builders and temporal-caption audit scripts | keep unchanged | reused as immutable source adapters |

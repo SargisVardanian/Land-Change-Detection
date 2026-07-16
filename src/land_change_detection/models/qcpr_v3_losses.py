@@ -7,6 +7,59 @@ from torch import Tensor
 from torch.nn import functional as F
 
 
+def duplicate_aware_positive_mask(
+    caption_to_pair: Tensor,
+    caption_group_ids: Tensor,
+    *,
+    pair_count: int,
+) -> Tensor:
+    """Map exact and normalized-caption-equivalent queries to positive pairs."""
+    if caption_to_pair.ndim != 1 or caption_group_ids.shape != caption_to_pair.shape:
+        raise ValueError("caption_to_pair and caption_group_ids must be aligned rank-1 tensors")
+    if pair_count <= 0 or caption_to_pair.numel() == 0:
+        raise ValueError("non-empty mappings and positive pair_count are required")
+    if int(caption_to_pair.min()) < 0 or int(caption_to_pair.max()) >= pair_count:
+        raise ValueError("caption_to_pair contains an out-of-range pair index")
+    same_group = caption_group_ids[:, None] == caption_group_ids[None, :]
+    positives = torch.zeros(
+        caption_to_pair.numel(), pair_count, dtype=torch.bool, device=caption_to_pair.device
+    )
+    for caption_index in range(caption_to_pair.numel()):
+        positives[:, caption_to_pair[caption_index]] |= same_group[:, caption_index]
+    positives.scatter_(1, caption_to_pair[:, None], True)
+    return positives
+
+
+def multi_positive_contrastive_loss(
+    scores: Tensor,
+    positive_mask: Tensor,
+    *,
+    exclusion_mask: Tensor | None = None,
+    temperature: float = 0.07,
+) -> Tensor:
+    """Set-valued contrastive loss with optional false-negative exclusion."""
+    if scores.ndim != 2 or positive_mask.shape != scores.shape:
+        raise ValueError("scores and positive_mask must have the same rank-2 shape")
+    if temperature <= 0:
+        raise ValueError("temperature must be positive")
+    positives = positive_mask.bool()
+    if not bool(positives.any(dim=1).all()):
+        raise ValueError("every query must have at least one positive")
+    valid = torch.ones_like(positives)
+    if exclusion_mask is not None:
+        if exclusion_mask.shape != scores.shape:
+            raise ValueError("exclusion_mask must match scores")
+        valid = ~exclusion_mask.bool()
+        valid |= positives
+    scaled = scores.float() / float(temperature)
+    numerator = torch.logsumexp(scaled.masked_fill(~positives, float("-inf")), dim=1)
+    denominator = torch.logsumexp(scaled.masked_fill(~valid, float("-inf")), dim=1)
+    loss = (denominator - numerator).mean()
+    if not torch.isfinite(loss):
+        raise FloatingPointError("multi-positive contrastive loss is non-finite")
+    return loss
+
+
 @dataclass(frozen=True)
 class QueryMaskLossOutput:
     total: Tensor

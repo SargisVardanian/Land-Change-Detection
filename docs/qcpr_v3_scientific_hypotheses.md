@@ -1,10 +1,13 @@
 # QCPR v3: generic temporal grounding — scientific hypotheses
 
-Status: design for review; no v3 implementation or Slurm job has been started.
+Status: implementation revision after loss of the historical E0 checkpoint.
+The active baseline is a clean v3 bootstrap from frozen pretrained Jina v5
+and UniverSat; it makes no continuity claim with historical E0.
 
 ## Why v3
 
-QCPR v1 is the immutable global retrieval baseline.  It maps a caption and a
+The historical QCPR v1 checkpoint previously served as a global retrieval baseline,
+but that checkpoint was deleted during an interactive run cleanup. It mapped a caption and a
 bi-temporal image pair to one embedding each, then ranks by cosine similarity.
 That is useful for broad semantic retrieval, but one pair vector is an
 information bottleneck for compositional requests such as “two houses appeared
@@ -64,8 +67,10 @@ S_g(q,I)=\frac{z_{text}(q)^\top z_{pair}(I)}{\tau},\qquad
 \mathcal C_N(q)=\operatorname{TopN}_{I\in\mathcal G} S_g(q,I).
 \]
 
-At first, v3 either uses immutable v1 embeddings or a strictly validated
-v1-compatible student.  The expensive grounding decoder is evaluated only for
+V3 now first trains a clean global bootstrap directly from pretrained Jina v5
+and UniverSat. If it passes fixed natural-validation gates, that exact checkpoint
+becomes a new versioned global reference; it is never called the historical E0
+teacher. The expensive grounding decoder is evaluated only for
 `I ∈ C_N(q)`.  Report `candidate recall@N` before judging reranking.
 
 ### 2. Generic temporal patch field
@@ -107,10 +112,18 @@ r_{q,I}=\frac{\sum_p a_p H_p}{\sum_p a_p+\epsilon},\quad
 S_l(q,I)=\cos(W_q\bar Q, W_r r_{q,I}).
 \]
 
-`m` is decoded with learned multi-scale lateral features into `M`, rather than
-bilinearly enlarging only a `32×32` field.  The renderer, local pooling, and
-reranker must consume the same pre-decoder logits/mask weights via one model
-API.  Any mismatch is a correctness bug, tested numerically.
+Raw cross-modal evidence is decoded with learned multi-scale lateral refiners
+into one canonical full-resolution field `M`. Patch weights used for local
+pooling are deterministic samples of `M`; the renderer, segmentation losses,
+local pooling, and reranker therefore share one mask field. A separate
+visualization attention map is forbidden. Any mismatch is a correctness bug,
+tested numerically.
+
+The global bootstrap uses duplicate-aware set contrastive learning. Exact pairs
+and normalized-caption-equivalent pairs form a positive set; equivalence does
+not create an attribute-specific model branch. The frozen pre-adapter Jina
+embedding may regularize the trainable text adapter, but it is a text reference,
+not an image teacher or human relevance label.
 
 For a candidate pool, late interaction is a generic learned decoder output
 `S_l`; it is not a hand-written average of object/location/count scores.  A
@@ -204,12 +217,13 @@ and independently validated examples.  A high score on parser-derived labels
 is not scientific proof; the planned human-verified compositional subset is the
 decisive evaluation.
 
-## Archived v2 diagnostic
+## Historical v2 diagnostic record
 
-Job `99570` is archived, not promoted: `COMPLETED 0:0`, 100 steps, run
+Job `99570` was a diagnostic and was not promoted. Its run directory/checkpoint
+was later deleted during cleanup; the recorded job state was `COMPLETED 0:0`, 100 steps, run
 `/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v2_d54072f_phasea_diagnostic_100_bs24`.
-It initialized from immutable v1 checkpoint
+It initialized from the then-available historical v1 checkpoint
 `qcpr_e0_20260711-015629/pilot/best_retrieval.pt`; v3 must not initialize from
 its checkpoint.  Its global semantic R@1/R@5 were `0.6400/0.9218`, below the
-immutable v1 reference `0.7964/0.9255`; this is evidence that v2 is not a
+recorded historical v1 reference `0.7964/0.9255`; this is evidence that v2 is not a
 scientific success and is retained only as a reproducibility artifact.

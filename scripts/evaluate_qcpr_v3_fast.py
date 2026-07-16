@@ -14,11 +14,11 @@ from torch.utils.data import Subset
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "scripts")]
-import ucv2_cluster_common as common
-import ucv2_stage1_next_core as legacy
+import qcpr_v3_data_compat as data_compat
 from land_change_detection.models.qcpr_v3_experiment import acceptance_gates, experiment_metrics, margin_family_reports
 from land_change_detection.models.retrieval_heads import classify_caption_semantics
-from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, build_v3_and_teacher
+from land_change_detection.models.qcpr_v3 import QCPRV3Config
+from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig, build_clean_v3_model
 from land_change_detection.models.retrieval_heads import semantic_teacher_relevance_matrix, stable_caption_group_ids
 
 
@@ -58,11 +58,11 @@ def write_progress(
     return payload
 
 
-def make_config(checkpoint: Path, batch_size: int, manifest: Path):
-    values = dict(torch.load(checkpoint, map_location="cpu", weights_only=False)["config"])
+def make_config(payload: dict, batch_size: int, manifest: Path):
+    values = dict(payload["data_config"])
     values.update(batch_size=batch_size, num_workers=4, dataset_config=None, train_manifests=(str(manifest),), val_manifests=(str(manifest),), dataset_sampling_weights=())
-    fields = legacy.Stage1NextConfig.__dataclass_fields__
-    return legacy.Stage1NextConfig(**{name: value for name, value in values.items() if name in fields})
+    fields = data_compat.Stage1NextConfig.__dataclass_fields__
+    return data_compat.Stage1NextConfig(**{name: value for name, value in values.items() if name in fields})
 
 
 def pad_token_batches(token_batches: list[torch.Tensor], attention_batches: list[torch.Tensor]) -> tuple[torch.Tensor, torch.Tensor]:
@@ -84,20 +84,26 @@ def pad_token_batches(token_batches: list[torch.Tensor], attention_batches: list
 
 
 @torch.no_grad()
-def collect(model, dataset, config, device):
-    pieces = {name: [] for name in ("pairs", "per_time", "text", "masks", "segmentation")}
+def collect(model, dataset, config, device, *, progress_path: Path | None = None):
+    pieces = {name: [] for name in ("pairs", "per_time", "base_text", "text", "masks", "segmentation")}
     token_batches, attention_batches, content_batches = [], [], []
     captions, mapping, datasets, offset = [], [], [], 0
-    for batch in legacy.make_eval_loader(dataset, config):
+    loader = data_compat.make_eval_loader(dataset, config)
+    started = time.monotonic()
+    if progress_path is not None:
+        write_progress(progress_path, stage="encoding", completed_chunks=0, total_chunks=len(loader), started_monotonic=started, query_count=0, candidate_count=len(dataset))
+    for batch_index, batch in enumerate(loader, start=1):
         images, temporal = batch["images"].to(device), batch["temporal_valid_mask"].to(device)
         pairs, per_time, _ = model.encode_pairs(images, temporal)
-        text, tokens, attention, content = model.encode_texts(batch["captions"])
-        for name, value in (("pairs", pairs), ("per_time", per_time), ("text", text), ("masks", batch["masks"]), ("segmentation", batch["segmentation_supervision"])):
+        base_text, text, tokens, attention, content = model.encode_texts(batch["captions"])
+        for name, value in (("pairs", pairs), ("per_time", per_time), ("base_text", base_text), ("text", text), ("masks", batch["masks"]), ("segmentation", batch["segmentation_supervision"])):
             pieces[name].append(value.cpu())
         token_batches.append(tokens.cpu()); attention_batches.append(attention.cpu()); content_batches.append(content.cpu())
         captions.extend(batch["captions"]); mapping.extend((batch["caption_to_pair"] + offset).tolist())
         datasets.extend(str(name) for name in batch.get("dataset_names", ["unknown"] * images.shape[0]))
         offset += images.shape[0]
+        if progress_path is not None:
+            write_progress(progress_path, stage="encoding", completed_chunks=batch_index, total_chunks=len(loader), started_monotonic=started, query_count=len(captions), candidate_count=len(dataset))
     tokens, attention = pad_token_batches(token_batches, attention_batches)
     _, content = pad_token_batches(token_batches, content_batches)
     return {name: torch.cat(values) for name, values in pieces.items()} | {"tokens": tokens, "attention": attention, "content": content.bool(), "captions": captions, "mapping": torch.tensor(mapping, dtype=torch.long), "pair_datasets": datasets}
@@ -150,10 +156,9 @@ def score(model, corpus, device, qchunk, cchunk, include_masks, *, rerank_top_n:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--phase", choices=("late_interaction", "mask_grounding"), required=True)
+    parser.add_argument("--phase", choices=("global_bootstrap", "late_interaction", "mask_grounding"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--training-report", type=Path, required=True)
-    parser.add_argument("--v1-checkpoint", type=Path, default=IMMUTABLE_V1)
     parser.add_argument("--manifest", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3/natural_validation_manifest.jsonl"))
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--fast-pairs", type=int, default=64)
@@ -164,18 +169,29 @@ def main() -> int:
     args = parser.parse_args()
     if not torch.cuda.is_available(): raise RuntimeError("fast evaluation requires CUDA")
     device = torch.device("cuda", torch.cuda.current_device())
-    config = make_config(args.v1_checkpoint, args.batch_size, args.manifest)
-    _, val = legacy._build_stage1_datasets(config)
+    checkpoint_payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    if checkpoint_payload.get("initialization", {}).get("initialization_mode") != "clean_pretrained":
+        raise RuntimeError("this evaluator path requires an explicit clean_pretrained v3 checkpoint")
+    config = make_config(checkpoint_payload, args.batch_size, args.manifest)
+    _, val = data_compat.build_datasets(config)
     indices = [index for index, row in enumerate(val.samples) if str(row["dataset_name"]) in {"levir_mci", "second_cc"}]
     if args.fast_pairs > 0:
         indices = indices[:args.fast_pairs]
     if len(indices) < 2: raise RuntimeError("fast validation subset is empty")
-    model, _, audit = build_v3_and_teacher(args.v1_checkpoint, device=device, build_legacy_model=common.build_model)
-    model.load_state_dict(torch.load(args.checkpoint, map_location="cpu", weights_only=False)["model"], strict=True); model.eval()
-    corpus = collect(model, Subset(val, indices), config, device)
+    backbone_config = QCPRV3BackboneConfig(**checkpoint_payload["backbone_config"])
+    grounding_config = QCPRV3Config(**checkpoint_payload["grounding_config"])
+    model = build_clean_v3_model(backbone_config, device=device, grounding_config=grounding_config)
+    model.load_state_dict(checkpoint_payload["model"], strict=True); model.eval()
     progress_path = args.progress_path or args.output.parent / "progress.json"
-    global_scores, local, token_patch, reranked, logits, targets = score(model, corpus, device, args.query_chunk, args.candidate_chunk, args.phase == "mask_grounding", rerank_top_n=min(args.top_n, corpus["pairs"].shape[0]), progress_path=progress_path)
-    relevance = semantic_teacher_relevance_matrix(corpus["text"], corpus["captions"], corpus["mapping"], stable_caption_group_ids(corpus["captions"]), pair_count=corpus["pairs"].shape[0], top_k=0)
+    corpus = collect(model, Subset(val, indices), config, device, progress_path=progress_path)
+    if args.phase == "global_bootstrap":
+        global_scores = corpus["text"] @ corpus["pairs"].T
+        local = token_patch = reranked = global_scores
+        logits, targets = [], []
+        write_progress(progress_path, stage="global_scoring", completed_chunks=1, total_chunks=1, started_monotonic=time.monotonic(), query_count=global_scores.shape[0], candidate_count=global_scores.shape[1])
+    else:
+        global_scores, local, token_patch, reranked, logits, targets = score(model, corpus, device, args.query_chunk, args.candidate_chunk, args.phase == "mask_grounding", rerank_top_n=min(args.top_n, corpus["pairs"].shape[0]), progress_path=progress_path)
+    relevance = semantic_teacher_relevance_matrix(corpus["base_text"], corpus["captions"], corpus["mapping"], stable_caption_group_ids(corpus["captions"]), pair_count=corpus["pairs"].shape[0], top_k=0)
     masks = {}
     if args.phase == "mask_grounding":
         if not logits: raise RuntimeError("mask validation selected no supervised masks")
@@ -193,11 +209,34 @@ def main() -> int:
     }
     margin_reports = margin_family_reports(token_patch, reranked, corpus["mapping"], relevance, corpus["captions"], global_scores, top_n=min(args.top_n, corpus["pairs"].shape[0]), query_groups=query_groups)
     training = json.loads(args.training_report.read_text())
-    metrics["local_gradients_finite_nonzero"] = bool(training["gradient_audit"]["local_gradients_finite_nonzero"])
+    metrics["local_gradients_finite_nonzero"] = bool(training["gradient_audit"]["expected_trainable_gradients_finite_nonzero"])
     metrics["faithful_mask"] = True
-    baseline = {"semantic_r1": float(metrics["global_semantic_r1"]), "semantic_r5": float(metrics["global_semantic_r5"])}
-    gates = acceptance_gates(args.phase, metrics, v1_global_r1=baseline["semantic_r1"], v1_global_r5=baseline["semantic_r5"])
-    report = {"status": "PASS" if all(gates.values()) else "FAIL_GATE", "phase": args.phase, "checkpoint": str(args.checkpoint), "initialization": audit.__dict__, "fast_validation": {"pair_count": len(indices), "query_count": len(corpus["captions"]), "manifest": str(args.manifest)}, "v1_compatible_global_fast_baseline": baseline, "metrics": metrics, "margin_reports": margin_reports, "gates": gates}
+    baseline = {"text_derived_semantic_r1": float(metrics["global_semantic_r1"]), "text_derived_semantic_r5": float(metrics["global_semantic_r5"])}
+    if args.phase == "global_bootstrap":
+        clip_fraction = sum(bool(row.get("gradient_was_clipped")) for row in training.get("history", [])) / max(len(training.get("history", [])), 1)
+        gates = {
+            "all_values_finite": bool(metrics["all_scores_finite"]),
+            "expected_trainable_gradients_finite_nonzero": bool(metrics["local_gradients_finite_nonzero"]),
+            "clipping_fraction_at_most_0.2": clip_fraction <= 0.2,
+            "candidate_recall_reported": "candidate_recall_at_n" in metrics,
+        }
+    else:
+        gates = acceptance_gates(args.phase, metrics, v1_global_r1=baseline["text_derived_semantic_r1"], v1_global_r5=baseline["text_derived_semantic_r5"])
+    report = {
+        "status": "PASS" if all(gates.values()) else "FAIL_GATE",
+        "phase": args.phase,
+        "checkpoint": str(args.checkpoint),
+        "initialization": checkpoint_payload["initialization"],
+        "baseline_identity": "clean_v3_pretrained_bootstrap",
+        "historical_e0_continuity": False,
+        "historical_global_teacher_used": False,
+        "relevance_contract": "text_derived_semantic_pseudo_target_not_image_ground_truth",
+        "fast_validation": {"pair_count": len(indices), "query_count": len(corpus["captions"]), "manifest": str(args.manifest)},
+        "global_fast_baseline": baseline,
+        "metrics": metrics,
+        "margin_reports": margin_reports,
+        "gates": gates,
+    }
     args.output.parent.mkdir(parents=True, exist_ok=True); args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     progress = json.loads(progress_path.read_text())
     progress["stage"] = "complete"; progress["report"] = str(args.output); progress["complete"] = True

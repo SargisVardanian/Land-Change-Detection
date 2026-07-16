@@ -43,7 +43,6 @@ from land_change_detection.training.temporal_caption_dataset import (
 from land_change_detection.training.runtime_device import assert_runtime_tensor_devices, resolve_runtime_device
 from ucv2_cluster_common import build_model, run_metadata, strict_device
 from ucv2_retrieval_metrics import relevance_aware_retrieval_metrics
-from ucv2_progress import write_progress
 
 
 @dataclass(frozen=True)
@@ -1151,10 +1150,6 @@ def run(
     base._write_json(output_dir / "training_summary.json", {"status": "RUNNING", "step": step, "stage1_next": True, "qcpr_architecture_version": config.qcpr_architecture_version})
 
     history_path = output_dir / "metrics_history.jsonl"
-    progress_path = output_dir / "progress.json"
-    training_started = time.perf_counter()
-    training_total_steps = config.max_steps or (config.epochs * max(len(make_train_loader(train, config, frequencies, 0)), 1))
-    write_progress(progress_path, stage="training", completed=step, total=training_total_steps, started=training_started)
     epochs_since_composite = 0
     temporal_supervised_pairs_total = 0
     for epoch in range(start_epoch, config.epochs):
@@ -1464,21 +1459,6 @@ def run(
                     "learning_rates": [float(group["lr"]) for group in optimizer.param_groups],
                 },
             )
-            write_progress(
-                progress_path,
-                stage="training",
-                completed=min(step, training_total_steps),
-                total=training_total_steps,
-                started=training_started,
-                metrics={
-                    "epoch": epoch + 1,
-                    "step": step,
-                    "loss": loss_value,
-                    "grad_norm_before_clip": grad_norm,
-                    "gradient_was_clipped": grad_norm > config.grad_clip_norm,
-                    "effective_temperature": float(1.0 / model.retrieval_head.similarity_scale().detach().cpu()),
-                },
-            )
             if config.checkpoint_interval_steps > 0 and step % config.checkpoint_interval_steps == 0:
                 save_checkpoint(
                     output_dir / f"step_{step}.pt",
@@ -1502,14 +1482,7 @@ def run(
         training_peak_reserved = int(torch.cuda.max_memory_reserved(device))
 
         validation_started = time.perf_counter()
-        metrics = relevance_aware_retrieval_metrics(
-            model,
-            val_loader,
-            device,
-            config,
-            progress_path=progress_path,
-            progress_stage="validation_encoding",
-        )
+        metrics = relevance_aware_retrieval_metrics(model, val_loader, device, config)
         validation_seconds = time.perf_counter() - validation_started
         train_eval_metrics: dict[str, Any] = {}
         if (
@@ -1690,13 +1663,4 @@ def run(
         },
     )
     base._write_json(output_dir / "training_summary.json", {"status": "BOUNDED_COMPLETED" if config.max_steps is not None and step >= config.max_steps else "COMPLETED", "step": step, "best_scores": best_scores, "stage1_next": True, "qcpr_architecture_version": config.qcpr_architecture_version, **run_metadata()})
-    write_progress(
-        progress_path,
-        stage="complete",
-        completed=training_total_steps,
-        total=training_total_steps,
-        started=training_started,
-        complete=True,
-        metrics={"step": step, "best_scores": best_scores},
-    )
     return 0

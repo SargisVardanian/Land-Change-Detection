@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-def progress_payload(
+def write_progress(
+    path: str | Path,
     *,
     stage: str,
     completed: int,
@@ -37,29 +38,8 @@ def progress_payload(
     for key, value in payload.items():
         if isinstance(value, float) and not math.isfinite(value):
             raise ValueError(f"non-finite progress value for {key}")
-    return payload
-
-
-def write_progress(
-    path: str | Path,
-    *,
-    stage: str,
-    completed: int,
-    total: int,
-    started: float,
-    complete: bool = False,
-    metrics: Mapping[str, Any] | None = None,
-) -> dict[str, Any]:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    payload = progress_payload(
-        stage=stage,
-        completed=completed,
-        total=total,
-        started=started,
-        complete=complete,
-        metrics=metrics,
-    )
     temporary = destination.with_name(f".{destination.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     temporary.replace(destination)

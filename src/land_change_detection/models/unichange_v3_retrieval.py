@@ -14,12 +14,26 @@ from land_change_detection.models.qcpr_v3 import QCPRV3GenericGrounding, QCPRV3S
 @dataclass(frozen=True)
 class UniChangeV3Output:
     pair_embedding: Tensor
+    base_text_embedding: Tensor
     text_embedding: Tensor
     text_token_embeddings: Tensor
     text_attention_mask: Tensor
     text_content_mask: Tensor
     per_time_tokens: Tensor
     scores: QCPRV3ScoreOutput
+    visual_metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class UniChangeV3GlobalOutput:
+    pair_embedding: Tensor
+    base_text_embedding: Tensor
+    text_embedding: Tensor
+    text_token_embeddings: Tensor
+    text_attention_mask: Tensor
+    text_content_mask: Tensor
+    per_time_tokens: Tensor
+    global_score: Tensor
     visual_metadata: dict[str, Any]
 
 
@@ -66,15 +80,17 @@ class UniChangeV3RetrievalModel(nn.Module):
         pair = F.normalize(self.retrieval_head(temporal.pair_embedding).pair_embedding, dim=-1)
         return pair, temporal.per_time_tokens, visual.metadata
 
-    def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         with torch.no_grad():
             features = self.text_encoder(captions, role="query")
         if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
             raise TypeError("text encoder must return TextFeatures-compatible output")
-        global_embedding = features.global_embedding
+        base_embedding = F.normalize(features.global_embedding, dim=-1)
+        global_embedding = base_embedding
         if self.text_adapter is not None:
             global_embedding = self.text_adapter(global_embedding)
         return (
+            base_embedding,
             F.normalize(global_embedding, dim=-1),
             features.token_embeddings,
             features.attention_mask.bool(),
@@ -99,6 +115,31 @@ class UniChangeV3RetrievalModel(nn.Module):
             text_content_mask=text_content_mask,
         )
 
+    def forward_global(
+        self,
+        images: Tensor,
+        captions: list[str],
+        temporal_valid_mask: Tensor | None = None,
+    ) -> UniChangeV3GlobalOutput:
+        pair, per_time, metadata = self.encode_pairs(images, temporal_valid_mask)
+        base_text, text, tokens, attention, content = self.encode_texts(captions)
+        base_text = base_text.to(pair.device)
+        text = text.to(pair.device)
+        tokens = tokens.to(pair.device)
+        attention = attention.to(pair.device)
+        content = content.to(pair.device)
+        return UniChangeV3GlobalOutput(
+            pair,
+            base_text,
+            text,
+            tokens,
+            attention,
+            content,
+            per_time,
+            text @ pair.T,
+            metadata,
+        )
+
     def forward(
         self,
         images: Tensor,
@@ -107,10 +148,11 @@ class UniChangeV3RetrievalModel(nn.Module):
         temporal_valid_mask: Tensor | None = None,
     ) -> UniChangeV3Output:
         pair, per_time, metadata = self.encode_pairs(images, temporal_valid_mask)
-        text, tokens, attention, content = self.encode_texts(captions)
+        base_text, text, tokens, attention, content = self.encode_texts(captions)
         tokens = tokens.to(pair.device)
         attention = attention.to(pair.device)
         content = content.to(pair.device)
         text = text.to(pair.device)
+        base_text = base_text.to(pair.device)
         scores = self.score_encoded(pair, per_time, text, tokens, attention, content)
-        return UniChangeV3Output(pair, text, tokens, attention, content, per_time, scores, metadata)
+        return UniChangeV3Output(pair, base_text, text, tokens, attention, content, per_time, scores, metadata)
