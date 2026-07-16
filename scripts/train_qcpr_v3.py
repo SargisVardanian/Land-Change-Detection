@@ -284,8 +284,58 @@ def _validation_direction(history: list[dict[str, float | int]]) -> dict[str, ob
         "validation_soft_iou_increased": last["nonempty_soft_iou"] > first["nonempty_soft_iou"],
         "validation_localization_margin_increased": last["localization_margin"] > first["localization_margin"],
         "validation_empty_mean_probability_not_increased": last["empty_mean_probability"] <= first["empty_mean_probability"],
+        "validation_query_swap_count_positive": last["query_swap_count"] > 0,
+        "validation_soft_query_swap_gap_positive": last["soft_query_swap_iou_gap"] > 0.0,
     }
     return {"positive": all(checks.values()), "checks": checks, "step0": first, "final": last}
+
+
+def _direction_query_separation_loss(
+    all_logits: torch.Tensor,
+    mapping: torch.Tensor,
+    query_indices: torch.Tensor,
+    changes: list[str | None],
+    targets: torch.Tensor,
+    *,
+    margin: float = 0.05,
+) -> tuple[torch.Tensor, int]:
+    """Contrast correct and opposite text on the same images and target.
+
+    Comparing one query map with two targets permits a query-independent union
+    mask. This contract instead requires the correct directional query to have
+    greater foreground-minus-background evidence than its paired opposite query.
+    """
+    if all_logits.ndim != 4 or targets.ndim != 3:
+        raise ValueError("direction separation expects [Q,C,H,W] logits and [S,H,W] targets")
+    if query_indices.numel() != len(changes) or targets.shape[0] != len(changes):
+        raise ValueError("selected directional query metadata must align")
+    selected_query_ids = [int(value) for value in query_indices.detach().cpu().tolist()]
+    lookup = {
+        (int(mapping[query_id]), str(change)): local_index
+        for local_index, (query_id, change) in enumerate(zip(selected_query_ids, changes, strict=True))
+        if change in {"appeared", "disappeared"}
+    }
+    terms: list[torch.Tensor] = []
+    for local_index, (query_id, change) in enumerate(zip(selected_query_ids, changes, strict=True)):
+        if change not in {"appeared", "disappeared"}:
+            continue
+        opposite = "disappeared" if change == "appeared" else "appeared"
+        opposite_local = lookup.get((int(mapping[query_id]), opposite))
+        if opposite_local is None:
+            continue
+        target = targets[local_index] >= 0.5
+        if not bool(target.any()) or not bool((~target).any()):
+            continue
+        candidate_id = int(mapping[query_id])
+        opposite_query_id = selected_query_ids[opposite_local]
+        correct_probability = all_logits[query_id, candidate_id].sigmoid()
+        opposite_probability = all_logits[opposite_query_id, candidate_id].sigmoid()
+        correct_evidence = correct_probability[target].mean() - correct_probability[~target].mean()
+        opposite_evidence = opposite_probability[target].mean() - opposite_probability[~target].mean()
+        terms.append(torch.relu(correct_evidence.new_tensor(float(margin)) - correct_evidence + opposite_evidence))
+    if not terms:
+        return all_logits.sum() * 0.0, 0
+    return torch.stack(terms).mean(), len(terms)
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -589,28 +639,13 @@ def run(args: argparse.Namespace) -> dict:
                         )
                     losses["query_mask"] = mask_losses["total"]
                     probabilities = selected.sigmoid()
-                    paired_lookup = {
-                        (int(mapping[int(query_index)]), str(change)): local_index
-                        for local_index, (query_index, change) in enumerate(zip(query_indices.tolist(), changes))
-                        if change in {"appeared", "disappeared"}
-                    }
-                    separation_terms = []
-                    for local_index, (query_index, change) in enumerate(zip(query_indices.tolist(), changes)):
-                        if change not in {"appeared", "disappeared"}:
-                            continue
-                        opposite = "disappeared" if change == "appeared" else "appeared"
-                        opposite_index = paired_lookup.get((int(mapping[query_index]), opposite))
-                        if opposite_index is None:
-                            continue
-                        own_target = targets[local_index]
-                        opposite_target = targets[opposite_index]
-                        if not bool(own_target.any()) or not bool(opposite_target.any()):
-                            continue
-                        own_evidence = (probabilities[local_index] * own_target).sum() / own_target.sum().clamp_min(1.0)
-                        opposite_evidence = (probabilities[local_index] * opposite_target).sum() / opposite_target.sum().clamp_min(1.0)
-                        separation_terms.append(torch.relu(0.05 - own_evidence + opposite_evidence))
-                    if separation_terms:
-                        losses["direction_query_separation"] = 0.25 * torch.stack(separation_terms).mean()
+                    with torch.autocast("cuda", enabled=False):
+                        separation_loss, separation_count = _direction_query_separation_loss(
+                            result.scores.decoded_mask_logits.float(), mapping, query_indices,
+                            changes, targets.float(),
+                        )
+                    if separation_count:
+                        losses["direction_query_separation"] = 0.25 * separation_loss
                     foreground = targets >= 0.5
                     nonempty = foreground.flatten(1).any(dim=1)
                     background_nonempty = nonempty[:, None, None] & ~foreground
@@ -630,7 +665,7 @@ def run(args: argparse.Namespace) -> dict:
                         "mask_edge_center_ratio": float((edge / center.clamp_min(1e-6)).detach()),
                         "verified_query_specific_count": sum(kind in {"query_specific", "verified_query_specific", "localization_only"} for kind in kinds),
                         "verified_mismatch_count": 0,
-                        "direction_query_separation_count": len(separation_terms),
+                        "direction_query_separation_count": separation_count,
                         "verified_mismatch_training_status": "DISABLED_DUPLICATE_DIRECTIONAL_ROW",
                     }
             if not losses:
