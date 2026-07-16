@@ -273,6 +273,8 @@ def run(args: argparse.Namespace) -> dict:
         train_manifests=(str(derived / train_manifest),),
         val_manifests=(str(derived / val_manifest),),
         dataset_sampling_weights=(),
+        target_aware_mask_crop=args.phase in {"mask_only_diagnostic", "mask_grounding"},
+        target_crop_context=args.target_crop_context,
     )
     config = data_compat.Stage1NextConfig(**{key: value for key, value in config_dict.items() if key in data_compat.Stage1NextConfig.__dataclass_fields__})
     train, val = data_compat.build_datasets(config)
@@ -712,6 +714,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--micro-train-samples", type=int, default=8)
     parser.add_argument("--validation-probe-samples", type=int, default=16)
     parser.add_argument("--probe-interval", type=int, default=5)
+    parser.add_argument("--target-crop-context", type=float, default=2.0)
     return parser.parse_args()
 
 

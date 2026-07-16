@@ -19,6 +19,7 @@ from torchvision.transforms import functional as TF
 from land_change_detection.data.event_targets import ComponentTargets, TemporalContext, build_component_targets
 from land_change_detection.data.unichange_mci import _load_mask, _load_rgb
 from land_change_detection.temporal_caption_manifest import SCHEMA_VERSION, load_json_rows
+from land_change_detection.training.qcpr_v3_resolution_contract import apply_spatial_contract, target_aware_crop_box
 
 
 @dataclass(frozen=True)
@@ -104,6 +105,8 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         max_pairs: int | None = None,
         allowed_caption_sources: set[str] | None = None,
         exclude_rscc_model_generated: bool = True,
+        target_aware_mask_crop: bool = False,
+        target_crop_context: float = 2.0,
     ):
         manifest_paths = [manifests] if isinstance(manifests, (str, Path)) else list(manifests)
         rows: list[dict[str, Any]] = []
@@ -137,6 +140,8 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         self.samples = rows
         self.image_size = image_size
         self.output_grid = output_grid
+        self.target_aware_mask_crop = bool(target_aware_mask_crop)
+        self.target_crop_context = float(target_crop_context)
         self.indices_by_dataset: dict[str, list[int]] = defaultdict(list)
         for index, row in enumerate(rows):
             self.indices_by_dataset[str(row["dataset_name"])].append(index)
@@ -156,7 +161,20 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
             has_mask=bool(mask_path),
             has_semantics=has_semantics,
         )
-        if mask_path:
+        crop_box = None
+        cropped_t1 = cropped_t2 = None
+        if mask_path and self.target_aware_mask_crop:
+            raw_mask = _load_mask(mask_path, None)
+            if bool(raw_mask.any()):
+                crop_box = target_aware_crop_box(raw_mask, output_size=int(self.image_size or 256), context=self.target_crop_context)
+                cropped_t1, cropped_t2, mask = apply_spatial_contract(
+                    _load_rgb(row["t1_path"], None), _load_rgb(row["t2_path"], None), raw_mask, crop_box,
+                    output_size=int(self.image_size or raw_mask.shape[-1]),
+                )
+            else:
+                mask = _load_mask(mask_path, self.image_size)
+            segmentation_target_source = target_kind
+        elif mask_path:
             mask = _load_mask(mask_path, self.image_size)
             segmentation_target_source = target_kind
         elif has_semantics:
@@ -173,8 +191,8 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         return TemporalCaptionItem(
             pair_id=str(row["pair_id"]),
             dataset_name=str(row["dataset_name"]),
-            t1=_load_rgb(row["t1_path"], self.image_size),
-            t2=_load_rgb(row["t2_path"], self.image_size),
+            t1=cropped_t1 if cropped_t1 is not None else _load_rgb(row["t1_path"], self.image_size),
+            t2=cropped_t2 if cropped_t2 is not None else _load_rgb(row["t2_path"], self.image_size),
             captions=[str(caption) for caption in row.get("captions", []) if str(caption).strip()],
             mask=mask,
             components=build_component_targets(mask, grid_size=(self.output_grid, self.output_grid), min_area=4),
@@ -200,6 +218,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
                 "segmentation_supervision_weight": supervision_weight,
                 "changed_mask": changed_mask,
                 "change_type": row.get("change_type", row.get("source_metadata", {}).get("change_type")),
+                "target_aware_crop_box": crop_box,
             },
         )
 

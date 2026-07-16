@@ -80,6 +80,8 @@ class Stage1NextConfig:
     dataset_config: str | None = None
     dataset_sampling_weights: tuple[str, ...] = ("levir_mci=0.55", "second_cc=0.45")
     allowed_caption_sources: tuple[str, ...] = ()
+    target_aware_mask_crop: bool = False
+    target_crop_context: float = 2.0
 
     temporal_depth: int = 4
     use_direction_embeddings: bool = True
@@ -623,6 +625,8 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
             output_grid=config.output_grid,
             max_pairs=config.max_train_samples,
             allowed_caption_sources=set(config.allowed_caption_sources) if config.allowed_caption_sources else None,
+            target_aware_mask_crop=config.target_aware_mask_crop,
+            target_crop_context=config.target_crop_context,
         )
         val = TemporalCaptionManifestDataset(
             val_manifests,
@@ -631,6 +635,8 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
             output_grid=config.output_grid,
             max_pairs=config.max_val_samples,
             allowed_caption_sources=set(config.allowed_caption_sources) if config.allowed_caption_sources else None,
+            target_aware_mask_crop=config.target_aware_mask_crop,
+            target_crop_context=config.target_crop_context,
         )
         return train, val
     return base._build_datasets(config)
