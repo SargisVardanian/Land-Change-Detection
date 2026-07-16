@@ -47,3 +47,21 @@ def test_only_explicit_recomputed_mismatch_is_penalized() -> None:
     values["total"].backward()
     assert values["verified_mismatch_count"] == 1
     assert mismatched.grad is not None and torch.all(mismatched.grad > 0)
+
+
+def test_sparse_positive_gradient_raises_foreground_and_lowers_background() -> None:
+    from land_change_detection.models.qcpr_v3_losses import query_mask_loss
+    logits = torch.zeros(1, 8, 8, requires_grad=True)
+    target = torch.zeros_like(logits); target[0, 3, 4] = 1
+    query_mask_loss(logits, target).total.backward()
+    assert logits.grad[0, 3, 4] < 0
+    assert logits.grad[target == 0].mean() > 0
+
+
+def test_generic_union_has_lower_primary_weight_than_verified_query_mask() -> None:
+    generic = torch.zeros(1, 4, 4, requires_grad=True)
+    query = generic.detach().clone().requires_grad_(True)
+    target = torch.zeros_like(generic); target[0, 1, 1] = 1
+    generic_loss = separated_query_mask_losses(generic, target, ["binary_generic"], [None])["total"]
+    query_loss = separated_query_mask_losses(query, target, ["query_specific"], ["appeared"])["total"]
+    torch.testing.assert_close(query_loss, 4.0 * generic_loss)

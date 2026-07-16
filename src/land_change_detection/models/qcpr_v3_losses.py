@@ -90,6 +90,8 @@ def separated_query_mask_losses(
     *,
     verified_mismatched_logits: Tensor | None = None,
     mismatch_empty_weight: float = 1.0,
+    generic_weight: float = 0.25,
+    query_specific_weight: float = 1.0,
 ) -> dict[str, Tensor | int]:
     """Separate mask losses by provenance and add mismatched-query empty negatives.
 
@@ -113,8 +115,10 @@ def separated_query_mask_losses(
         result[f"{name}_loss"] = value
         result[f"{name}_count"] = int(mask.sum())
         # Direction is an evaluation stratum, not a second supervision target.
-        if name in {"generic_changed", "query_specific"}:
-            total = total + value
+        if name == "generic_changed":
+            total = total + float(generic_weight) * value
+        elif name == "query_specific":
+            total = total + float(query_specific_weight) * value
     mismatch = logits.sum() * 0.0
     if verified_mismatched_logits is not None:
         if verified_mismatched_logits.ndim != 3 or verified_mismatched_logits.shape[-2:] != logits.shape[-2:]:
@@ -125,6 +129,8 @@ def separated_query_mask_losses(
         ).empty_false_positive * float(mismatch_empty_weight)
     result["verified_mismatch_count"] = 0 if verified_mismatched_logits is None else int(verified_mismatched_logits.shape[0])
     result["mismatch_provenance"] = "none" if verified_mismatched_logits is None else "explicit_recomputed_verified"
+    result["generic_weight"] = float(generic_weight)
+    result["query_specific_weight"] = float(query_specific_weight)
     result["mismatched_query_empty_loss"] = mismatch
     result["total"] = total + mismatch
     return result
@@ -141,7 +147,7 @@ def query_mask_loss(
     *,
     dice_weight: float = 1.0,
     focal_weight: float = 1.0,
-    tversky_weight: float = 0.0,
+    tversky_weight: float = 1.0,
     boundary_weight: float = 0.0,
     empty_weight: float = 1.0,
     focal_gamma: float = 2.0,
@@ -156,7 +162,14 @@ def query_mask_loss(
     dice = dice_each[foreground].mean() if foreground.any() else flat_logits.sum() * 0.0
     bce = F.binary_cross_entropy_with_logits(flat_logits, flat_targets, reduction="none")
     pt = torch.where(flat_targets > 0.5, probabilities, 1.0 - probabilities)
-    focal_each = ((1.0 - pt).pow(focal_gamma) * bce).mean(dim=1)
+    focal_pixels = (1.0 - pt).pow(focal_gamma) * bce
+    positive_pixels = flat_targets > 0.5
+    negative_pixels = ~positive_pixels
+    positive_focal = (focal_pixels * positive_pixels).sum(dim=1) / positive_pixels.sum(dim=1).clamp_min(1)
+    negative_focal = (focal_pixels * negative_pixels).sum(dim=1) / negative_pixels.sum(dim=1).clamp_min(1)
+    # Sparse query masks need foreground-normalized gradients; otherwise the
+    # background pixel count makes the all-zero solution deceptively cheap.
+    focal_each = 0.75 * positive_focal + 0.25 * negative_focal
     focal = focal_each[foreground].mean() if foreground.any() else flat_logits.sum() * 0.0
     false_positive = (probabilities * (1.0 - flat_targets)).sum(dim=1)
     false_negative = ((1.0 - probabilities) * flat_targets).sum(dim=1)
