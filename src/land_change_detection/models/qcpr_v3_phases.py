@@ -24,7 +24,7 @@ class TrainingPhaseProfile:
 
 PHASES: dict[str, TrainingPhaseProfile] = {
     "global_bootstrap": TrainingPhaseProfile(
-        "global_bootstrap", ("temporal_encoder", "retrieval_head", "text_adapter"),
+        "global_bootstrap", ("temporal_encoder", "retrieval_head.pair_projection", "text_adapter"),
         ("visual_encoder", "text_encoder", "grounder"),
         ("global_multi_positive", "base_text_preservation"),
         ("levir_mci", "second_cc"), "capped_natural",
@@ -39,16 +39,26 @@ PHASES: dict[str, TrainingPhaseProfile] = {
         "text_derived_semantic_r1", ("global_r1_within_0.01", "global_r5_within_0.01"),
     ),
     "late_interaction": TrainingPhaseProfile(
-        "late_interaction", ("grounder.temporal_field", "grounder.grounding_decoder", "grounder.local_projection", "grounder.rerank_logits"),
+        "late_interaction", (
+            "grounder.temporal_field",
+            "grounder.grounding_decoder.cross_attentions",
+            "grounder.grounding_decoder.cross_norms",
+            "grounder.grounding_decoder.patch_ffns",
+            "grounder.grounding_decoder.token_projection",
+        ),
         ("visual_encoder", "text_encoder", "temporal_encoder", "retrieval_head", "text_adapter", "grounder.mask_decoder", "grounder.region_slots"),
         ("local_contrastive",), ("levir_mci", "second_cc"), "natural",
         ("candidate_recall", "conditional_rerank", "semantic_r1", "semantic_r5", "local_margin"),
         "conditional_rerank", ("positive_local_margin", "rerank_not_worse", "finite_local_gradients"),
     ),
     "mask_grounding": TrainingPhaseProfile(
-        "mask_grounding", ("grounder.temporal_field", "grounder.grounding_decoder", "grounder.mask_decoder", "grounder.local_projection", "grounder.rerank_logits", "grounder.temporal_map_head"),
+        "mask_grounding", (
+            "grounder.temporal_field",
+            "grounder.grounding_decoder",
+            "grounder.mask_decoder",
+        ),
         ("visual_encoder", "text_encoder", "temporal_encoder", "retrieval_head", "text_adapter", "grounder.region_slots"),
-        ("local_contrastive", "mask_dice", "mask_focal", "empty_false_positive", "temporal_maps"),
+        ("local_contrastive", "mask_dice", "mask_focal", "empty_false_positive"),
         ("levir_mci", "second_cc", "s2looking_localization"), "curriculum",
         ("candidate_recall", "conditional_rerank", "nonempty_dice", "nonempty_iou", "empty_false_positive"),
         "nonempty_dice", ("mask_not_collapsed", "nonempty_recall_above_zero", "faithful_mask"),

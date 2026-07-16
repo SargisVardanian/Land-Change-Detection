@@ -19,7 +19,9 @@ class Wrapper(torch.nn.Module):
         self.visual_encoder = torch.nn.Linear(2, 2)
         self.text_encoder = torch.nn.Linear(2, 2)
         self.temporal_encoder = torch.nn.Linear(2, 2)
-        self.retrieval_head = torch.nn.Linear(2, 2)
+        self.retrieval_head = torch.nn.Module()
+        self.retrieval_head.pair_projection = torch.nn.Linear(2, 2)
+        self.retrieval_head.logit_scale = torch.nn.Parameter(torch.tensor(1.0))
         self.text_adapter = torch.nn.Linear(2, 2)
         self.grounder = QCPRV3GenericGrounding(QCPRV3Config(input_dim=8, text_dim=8, hidden_dim=8, heads=2, decoder_layers=1, scales=(2,), output_size=(8, 8)))
 
@@ -36,7 +38,22 @@ def test_phase_enables_only_declared_modules() -> None:
     model = Wrapper()
     audit = apply_phase_to_model(model, resolve_training_phase("late_interaction"))
     assert audit["trainable_parameters"]
-    assert all(name.startswith(("grounder.temporal_field", "grounder.grounding_decoder", "grounder.local_projection", "grounder.rerank_logits")) for name in audit["trainable_parameters"])
+    assert all(name.startswith(("grounder.temporal_field", "grounder.grounding_decoder")) for name in audit["trainable_parameters"])
+    assert not any("mask_head" in name for name in audit["trainable_parameters"])
+    assert not any(name.startswith(("grounder.local_projection", "grounder.rerank_logits")) for name in audit["trainable_parameters"])
+
+
+def test_phase_profiles_only_enable_parameters_connected_to_active_losses() -> None:
+    model = Wrapper()
+    global_audit = apply_phase_to_model(model, resolve_training_phase("global_bootstrap"))
+    assert "retrieval_head.logit_scale" not in global_audit["trainable_parameters"]
+
+    mask_audit = apply_phase_to_model(model, resolve_training_phase("mask_grounding"))
+    assert "temporal_maps" not in resolve_training_phase("mask_grounding").active_losses
+    assert not any(
+        name.startswith(("grounder.local_projection", "grounder.rerank_logits", "grounder.temporal_map_head"))
+        for name in mask_audit["trainable_parameters"]
+    )
 
 
 def test_mask_losses_separate_empty_and_nonempty() -> None:

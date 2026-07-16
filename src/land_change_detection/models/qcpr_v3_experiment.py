@@ -252,11 +252,11 @@ def parser_derived_late_interaction_loss(
     loss = torch.relu(float(margin) - positive[valid] + negative[valid]).mean() if bool(valid.any()) else token_patch_scores.sum() * 0.0
     result: dict[str, float | int] = {
         "structured_training_valid_queries": int(valid.sum()),
-        "structured_training_positive_mean": float(positive[valid].mean()) if bool(valid.any()) else 0.0,
-        "structured_training_positive_median": float(positive[valid].median()) if bool(valid.any()) else 0.0,
-        "structured_training_hard_negative_mean": float(negative[valid].mean()) if bool(valid.any()) else 0.0,
-        "structured_training_hard_negative_median": float(negative[valid].median()) if bool(valid.any()) else 0.0,
-        "structured_training_margin_mean": float((positive[valid] - negative[valid]).mean()) if bool(valid.any()) else 0.0,
+        "structured_training_positive_mean": float(positive[valid].detach().mean()) if bool(valid.any()) else 0.0,
+        "structured_training_positive_median": float(positive[valid].detach().median()) if bool(valid.any()) else 0.0,
+        "structured_training_hard_negative_mean": float(negative[valid].detach().mean()) if bool(valid.any()) else 0.0,
+        "structured_training_hard_negative_median": float(negative[valid].detach().median()) if bool(valid.any()) else 0.0,
+        "structured_training_margin_mean": float((positive[valid] - negative[valid]).detach().mean()) if bool(valid.any()) else 0.0,
         "structured_training_loss": float(loss.detach()),
     }
     for name, category in categories.items():

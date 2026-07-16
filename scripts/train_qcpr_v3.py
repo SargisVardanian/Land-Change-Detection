@@ -324,8 +324,12 @@ def run(args: argparse.Namespace) -> dict:
     round_trip = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
     if restored.keys() != round_trip.keys() or any(not torch.equal(restored[key], round_trip[key]) for key in restored):
         raise RuntimeError("checkpoint round-trip mismatch")
+    missing_gradients = sorted(name for name, present in gradient_presence.items() if not present)
+    gradients_ok = bool(gradient_presence) and not missing_gradients
+    all_finite = all(math.isfinite(value) for row in history for value in row.values() if isinstance(value, float))
     report = {
-        "status": "PASS", "phase": profile.to_dict(), "initialization": asdict(initialization),
+        "status": "PASS" if all_finite and gradients_ok else "FAIL",
+        "phase": profile.to_dict(), "initialization": asdict(initialization),
         "baseline_identity": "clean_v3_pretrained_bootstrap" if args.initialization_mode == "clean_pretrained" else "historical_e0_continuation",
         "historical_e0_continuity": args.initialization_mode == "historical_e0",
         "historical_global_teacher_used": teacher is not None,
@@ -341,10 +345,11 @@ def run(args: argparse.Namespace) -> dict:
             "cuda_current_device": torch.cuda.current_device(),
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         },
-        "all_finite": all(math.isfinite(value) for row in history for value in row.values() if isinstance(value, float)),
+        "all_finite": all_finite,
         "gradient_audit": {
-            "expected_trainable_gradients_finite_nonzero": bool(gradient_presence) and all(gradient_presence.values()),
+            "expected_trainable_gradients_finite_nonzero": gradients_ok,
             "parameters_with_gradient": sorted(name for name, present in gradient_presence.items() if present),
+            "parameters_without_finite_nonzero_gradient": missing_gradients,
         },
         "peak_gpu_allocated": torch.cuda.max_memory_allocated(), "peak_gpu_reserved": torch.cuda.max_memory_reserved(),
         "git_sha": os.popen("git rev-parse HEAD").read().strip(), "checkpoint": str(checkpoint),
@@ -354,8 +359,13 @@ def run(args: argparse.Namespace) -> dict:
     write_progress(
         progress_path, stage="complete", completed=args.steps, total=args.steps,
         started=started, complete=True,
-        metrics={"status": "PASS", "last_loss": history[-1]["loss"] if history else None},
+        metrics={"status": report["status"], "last_loss": history[-1]["loss"] if history else None},
     )
+    if report["status"] != "PASS":
+        raise RuntimeError(
+            "QCPR v3 runtime contract failed: "
+            f"all_finite={all_finite}, missing_gradients={missing_gradients}"
+        )
     return report
 
 
