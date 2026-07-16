@@ -81,6 +81,15 @@ def test_constant_decoder_field_has_no_padding_border_prior() -> None:
     torch.testing.assert_close(edge, center, atol=1e-6, rtol=0)
 
 
+def test_multiscale_fusion_sends_gradient_to_every_refiner() -> None:
+    model, _ = _inputs()
+    logits = torch.full((1, 1, 20), -12.0, requires_grad=True)
+    logits.data[..., 0] = 12.0
+    model.mask_decoder(logits, ((0, 16, 4), (16, 20, 2))).mean().backward()
+    for refiner in model.mask_decoder.refiners:
+        assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() and parameter.grad.abs().sum() > 0 for parameter in refiner.parameters())
+
+
 def test_empty_content_tokens_are_finite_and_near_empty_mask_gates_local_score() -> None:
     model, inputs = _inputs()
     empty_content = torch.zeros_like(inputs.text_attention_mask)

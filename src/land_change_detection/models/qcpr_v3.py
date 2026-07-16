@@ -236,16 +236,18 @@ class MultiScaleQueryMaskDecoder(nn.Module):
             raise ValueError("patch_logits must have shape [Q,C,N]")
         queries, candidates, _ = patch_logits.shape
         target_side = max(side for _, _, side in scale_slices)
-        fused = None
+        refined_scales: list[Tensor] = []
         for refiner, (start, end, side) in zip(self.refiners, scale_slices, strict=True):
             grid = patch_logits[..., start:end].reshape(queries * candidates, 1, side, side)
             refined = refiner(grid) + grid
             if side != target_side:
                 refined = F.interpolate(refined, (target_side, target_side), mode="bilinear", align_corners=False)
-            # Preserve small high-resolution evidence instead of averaging it
-            # away with a coarse scale where the foreground may disappear.
-            fused = refined if fused is None else torch.maximum(fused, refined)
-        assert fused is not None
+            refined_scales.append(refined)
+        if not refined_scales:
+            raise ValueError("at least one mask scale is required")
+        # Smooth max: preserves a strong small-scale foreground, is exactly
+        # constant-preserving, and sends finite gradients to every scale.
+        fused = torch.logsumexp(torch.stack(refined_scales, dim=0), dim=0) - math.log(len(refined_scales))
         fused = self.output_refiner(fused) + fused
         decoded = F.interpolate(fused, self.config.output_size, mode="bilinear", align_corners=False)
         return decoded.reshape(queries, candidates, *self.config.output_size)
