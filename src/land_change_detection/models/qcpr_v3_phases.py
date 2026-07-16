@@ -79,12 +79,13 @@ PHASES: dict[str, TrainingPhaseProfile] = {
         ("mask_supervised_only",), ("s2looking_localization",), "fixed_s2looking_probe",
         (
             "nonempty_dice", "nonempty_iou", "nonempty_precision", "nonempty_recall",
-            "foreground_background_margin", "pr_auc", "query_swap_gap",
+            "nonempty_soft_dice", "nonempty_soft_iou", "localization_margin",
+            "empty_mean_probability", "pixel_average_precision", "soft_query_swap_iou_gap",
         ),
         "nonempty_dice",
         (
-            "fixed_probe", "dice_iou_margin_improve", "precision_no_collapse",
-            "query_swap_gap_positive", "finite_mask_gradients",
+            "fixed_train_fit", "soft_dice_iou_margin_improve", "empty_probability_nonincrease",
+            "soft_query_swap_gap_positive", "finite_mask_gradients",
         ),
     ),
     "region_slots": TrainingPhaseProfile(

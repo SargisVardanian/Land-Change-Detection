@@ -26,8 +26,6 @@ class MaskObjective:
 
 MASK_OBJECTIVES = {
     "A": MaskObjective("A_dice_balanced_focal", 1.0, 1.0, 0.0, 0.75, 0.25),
-    "B": MaskObjective("B_dice_balanced_focal_tversky", 1.0, 1.0, 1.0, 0.75, 0.25),
-    "C": MaskObjective("C_tversky_stronger_negative", 1.0, 1.0, 1.0, 0.75, 0.50),
 }
 
 
@@ -166,19 +164,6 @@ def swapped_direction_indices(pair_ids: Sequence[str], change_types: Sequence[st
     return result
 
 
-def verified_empty_swap_indices(
-    pair_ids: Sequence[str], change_types: Sequence[str | None], masks: Tensor,
-) -> tuple[list[int], list[int]]:
-    swapped = swapped_direction_indices(pair_ids, change_types)
-    source: list[int] = []
-    wrong_query: list[int] = []
-    for source_index, opposite_index in enumerate(swapped):
-        if opposite_index >= 0 and not bool((masks[opposite_index] >= 0.5).any()):
-            source.append(source_index)
-            wrong_query.append(opposite_index)
-    return source, wrong_query
-
-
 def query_swap_metrics(correct_logits: Tensor, swapped_logits: Tensor, targets: Tensor) -> dict[str, float]:
     if correct_logits.shape != swapped_logits.shape or targets.shape != correct_logits.shape:
         raise ValueError("correct, swapped and target masks must align")
@@ -186,10 +171,15 @@ def query_swap_metrics(correct_logits: Tensor, swapped_logits: Tensor, targets: 
     swapped = query_mask_metrics(swapped_logits, targets)
     correct_iou = float(correct["nonempty_iou"])
     swapped_iou = float(swapped["nonempty_iou"])
+    correct_soft_iou = float(correct["nonempty_soft_iou"])
+    swapped_soft_iou = float(swapped["nonempty_soft_iou"])
     return {
         "correct_query_iou": correct_iou,
         "swapped_query_iou": swapped_iou,
         "query_swap_gap": correct_iou - swapped_iou,
+        "correct_query_soft_iou": correct_soft_iou,
+        "swapped_query_soft_iou": swapped_soft_iou,
+        "soft_query_swap_iou_gap": correct_soft_iou - swapped_soft_iou,
     }
 
 

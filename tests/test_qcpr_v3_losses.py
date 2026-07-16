@@ -67,28 +67,43 @@ def test_generic_union_has_lower_primary_weight_than_verified_query_mask() -> No
     torch.testing.assert_close(query_loss, 4.0 * generic_loss)
 
 
-def test_scientific_mask_metrics_are_unsmoothed_and_report_pr_auc() -> None:
+def test_scientific_mask_metrics_are_unsmoothed_and_report_pixel_average_precision() -> None:
     logits = torch.full((1, 2, 2), -8.0)
     targets = torch.zeros_like(logits); targets[0, 0, 0] = 1
     metrics = query_mask_metrics(logits, targets)
     assert metrics["nonempty_dice"] == 0.0
     assert metrics["nonempty_iou"] == 0.0
     assert metrics["nonempty_recall"] == 0.0
-    assert 0.0 <= metrics["pr_auc"] <= 1.0
+    assert 0.0 <= metrics["pixel_average_precision"] <= 1.0
+    assert "pr_auc" not in metrics
 
 
-def test_mask_objective_ablation_changes_only_declared_terms() -> None:
+def test_mask_objective_a_is_dice_plus_balanced_focal_with_separate_empty_bce() -> None:
     logits = torch.zeros(1, 4, 4, requires_grad=True)
     target = torch.zeros_like(logits); target[0, 1, 1] = 1
-    a = separated_query_mask_losses(
+    value = separated_query_mask_losses(
         logits, target, ["query_specific"], ["appeared"], tversky_weight=0.0,
+        empty_weight=0.25,
     )["total"]
-    b = separated_query_mask_losses(
-        logits, target, ["query_specific"], ["appeared"], tversky_weight=1.0,
-    )["total"]
-    c = separated_query_mask_losses(
-        logits, target, ["query_specific"], ["appeared"], tversky_weight=1.0,
-        negative_focal_weight=0.5,
-    )["total"]
-    assert b > a
-    assert c > b
+    assert torch.isfinite(value)
+
+
+def test_empty_mask_uses_quarter_weighted_bce_with_logits() -> None:
+    from land_change_detection.models.qcpr_v3_losses import query_mask_loss
+    logits = torch.zeros(1, 4, 4, requires_grad=True)
+    target = torch.zeros_like(logits)
+    loss = query_mask_loss(logits, target, dice_weight=1.0, focal_weight=1.0, tversky_weight=0.0)
+    torch.testing.assert_close(loss.total, 0.25 * torch.log(torch.tensor(2.0)))
+    loss.total.backward()
+    assert torch.all(logits.grad > 0)
+
+
+def test_localization_margin_excludes_empty_rows_from_background() -> None:
+    logits = torch.tensor([
+        [[4.0, -4.0], [-4.0, -4.0]],
+        [[8.0, 8.0], [8.0, 8.0]],
+    ])
+    target = torch.zeros_like(logits); target[0, 0, 0] = 1
+    metrics = query_mask_metrics(logits, target)
+    assert metrics["localization_margin"] > 0.9
+    assert metrics["empty_mean_probability"] > 0.99

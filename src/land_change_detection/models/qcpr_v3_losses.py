@@ -97,6 +97,7 @@ def separated_query_mask_losses(
     tversky_weight: float = 1.0,
     positive_focal_weight: float = 0.75,
     negative_focal_weight: float = 0.25,
+    empty_weight: float = 0.25,
 ) -> dict[str, Tensor | int]:
     """Separate mask losses by provenance and add mismatched-query empty negatives.
 
@@ -121,6 +122,7 @@ def separated_query_mask_losses(
             focal_weight=focal_weight, tversky_weight=tversky_weight,
             positive_focal_weight=positive_focal_weight,
             negative_focal_weight=negative_focal_weight,
+            empty_weight=empty_weight,
         ).total if bool(mask.any()) else logits.sum() * 0.0
         result[f"{name}_loss"] = value
         result[f"{name}_count"] = int(mask.sum())
@@ -162,7 +164,7 @@ def query_mask_loss(
     focal_weight: float = 1.0,
     tversky_weight: float = 1.0,
     boundary_weight: float = 0.0,
-    empty_weight: float = 1.0,
+    empty_weight: float = 0.25,
     focal_gamma: float = 2.0,
     positive_focal_weight: float = 0.75,
     negative_focal_weight: float = 0.25,
@@ -175,8 +177,9 @@ def query_mask_loss(
     probabilities = flat_logits.sigmoid()
     foreground = flat_targets.sum(dim=1) > 0
     intersection = (probabilities * flat_targets).sum(dim=1)
-    dice_each = 1.0 - (2.0 * intersection + 1.0) / (
-        probabilities.sum(dim=1) + flat_targets.sum(dim=1) + 1.0
+    eps = 1e-6
+    dice_each = 1.0 - (2.0 * intersection + eps) / (
+        probabilities.sum(dim=1) + flat_targets.sum(dim=1) + eps
     )
     dice = dice_each[foreground].mean() if foreground.any() else flat_logits.sum() * 0.0
     bce = F.binary_cross_entropy_with_logits(flat_logits, flat_targets, reduction="none")
@@ -192,12 +195,14 @@ def query_mask_loss(
     focal = focal_each[foreground].mean() if foreground.any() else flat_logits.sum() * 0.0
     false_positive = (probabilities * (1.0 - flat_targets)).sum(dim=1)
     false_negative = ((1.0 - probabilities) * flat_targets).sum(dim=1)
-    tversky_each = 1.0 - (intersection + 1.0) / (
-        intersection + 0.3 * false_positive + 0.7 * false_negative + 1.0
+    tversky_each = 1.0 - (intersection + eps) / (
+        intersection + 0.3 * false_positive + 0.7 * false_negative + eps
     )
     tversky = tversky_each[foreground].mean() if foreground.any() else flat_logits.sum() * 0.0
     empty = ~foreground
-    empty_false_positive = probabilities[empty].mean() if empty.any() else flat_logits.sum() * 0.0
+    # Standard BCEWithLogits(z, target=0) keeps a useful gradient even for
+    # confidently wrong positive logits. Empty targets are excluded from Dice.
+    empty_false_positive = F.softplus(flat_logits[empty]).mean() if empty.any() else flat_logits.sum() * 0.0
     boundary = flat_logits.sum() * 0.0
     if boundary_weight > 0:
         shape = logits.shape
@@ -238,7 +243,15 @@ def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) 
     recall = safe_ratio(tp, tp + fn)
     probabilities = flat_logits.sigmoid()
     foreground_probability = probabilities[truth].mean() if truth.any() else probabilities.new_zeros(())
-    background_probability = probabilities[~truth].mean() if (~truth).any() else probabilities.new_zeros(())
+    nonempty_background = nonempty[:, None] & ~truth
+    background_probability = probabilities[nonempty_background].mean() if nonempty_background.any() else probabilities.new_zeros(())
+    empty_probability = probabilities[empty].mean() if empty.any() else probabilities.new_zeros(())
+    soft_intersection = (probabilities * truth.float()).sum(dim=1)
+    soft_denominator = probabilities.sum(dim=1) + truth.float().sum(dim=1)
+    soft_dice = (2.0 * soft_intersection + 1e-6) / (soft_denominator + 1e-6)
+    soft_iou = (soft_intersection + 1e-6) / (
+        probabilities.sum(dim=1) + truth.float().sum(dim=1) - soft_intersection + 1e-6
+    )
     micro_tp, micro_fp, micro_fn = tp.sum(), fp.sum(), fn.sum()
 
     # Binary average precision without interpolation. Ties are stable because
@@ -250,9 +263,9 @@ def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) 
         ordered = labels[order]
         cumulative = ordered.cumsum(0)
         ranks = torch.arange(1, ordered.numel() + 1, device=ordered.device, dtype=ordered.dtype)
-        pr_auc = (cumulative.div(ranks) * ordered).sum() / labels.sum()
+        pixel_average_precision = (cumulative.div(ranks) * ordered).sum() / labels.sum()
     else:
-        pr_auc = scores.new_zeros(())
+        pixel_average_precision = scores.new_zeros(())
     return {
         "nonempty_count": int(nonempty.sum()),
         "empty_count": int(empty.sum()),
@@ -264,10 +277,13 @@ def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) 
         "micro_iou": float(safe_ratio(micro_tp, micro_tp + micro_fp + micro_fn)),
         "micro_precision": float(safe_ratio(micro_tp, micro_tp + micro_fp)),
         "micro_recall": float(safe_ratio(micro_tp, micro_tp + micro_fn)),
-        "pr_auc": float(pr_auc),
+        "nonempty_soft_dice": mean(soft_dice, nonempty),
+        "nonempty_soft_iou": mean(soft_iou, nonempty),
+        "pixel_average_precision": float(pixel_average_precision),
         "foreground_probability": float(foreground_probability),
-        "background_probability": float(background_probability),
-        "foreground_background_margin": float(foreground_probability - background_probability),
+        "background_probability_nonempty": float(background_probability),
+        "localization_margin": float(foreground_probability - background_probability),
+        "empty_mean_probability": float(empty_probability),
         "samples_with_true_positive": int((tp > 0).sum()),
         "empty_false_positive_area": mean(predicted.float().mean(dim=1), empty),
         "predicted_area": float(predicted.float().mean()),

@@ -13,7 +13,6 @@ from land_change_detection.models.qcpr_v3_mask_diagnostic import (
     query_swap_metrics,
     resolve_mask_objective,
     swapped_direction_indices,
-    verified_empty_swap_indices,
 )
 
 
@@ -55,20 +54,8 @@ def test_fixed_probe_skips_all_empty_base_pairs_and_keeps_direction_pair(tmp_pat
 
 def test_objective_ablation_contract_is_exact() -> None:
     assert resolve_mask_objective("A").tversky_weight == 0.0
-    assert resolve_mask_objective("B").negative_focal_weight == 0.25
-    assert resolve_mask_objective("C").negative_focal_weight == 0.50
     with pytest.raises(ValueError, match="unknown mask objective"):
-        resolve_mask_objective("D")
-
-
-def test_verified_mismatch_requires_truly_empty_opposite_target() -> None:
-    pair_ids = ["s2looking:train:1:appeared", "s2looking:train:1:disappeared"]
-    changes = ["appeared", "disappeared"]
-    masks = torch.zeros(2, 4, 4); masks[0, 1, 1] = 1
-    source, wrong = verified_empty_swap_indices(pair_ids, changes, masks)
-    assert source == [0]
-    assert wrong == [1]
-    assert swapped_direction_indices(pair_ids, changes) == [1, 0]
+        resolve_mask_objective("B")
 
 
 def test_query_swap_gap_uses_same_target_without_smoothing() -> None:
@@ -79,3 +66,4 @@ def test_query_swap_gap_uses_same_target_without_smoothing() -> None:
     assert metrics["correct_query_iou"] == 1.0
     assert metrics["swapped_query_iou"] == 0.0
     assert metrics["query_swap_gap"] == 1.0
+    assert metrics["soft_query_swap_iou_gap"] > 0.9

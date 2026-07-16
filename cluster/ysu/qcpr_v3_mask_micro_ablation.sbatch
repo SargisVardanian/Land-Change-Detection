@@ -22,20 +22,18 @@ test -z "$(git status --porcelain)"
 test ! -e "$OUTPUT_DIR"
 mkdir -p "$OUTPUT_DIR"
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
-for OBJECTIVE in A B C; do
-  "$PYTHON" scripts/train_qcpr_v3.py \
-    --output-dir "$OUTPUT_DIR/$OBJECTIVE" \
-    --phase mask_only_diagnostic \
-    --mask-objective "$OBJECTIVE" \
-    --initialization-mode clean_pretrained \
-    --derived-manifest-dir "$DERIVED_MANIFEST_DIR" \
-    --v3-checkpoint "$V3_CHECKPOINT" \
-    --steps 20 \
-    --micro-train-samples 8 \
-    --validation-probe-samples 16 \
-    --probe-interval 5 \
-    --batch-size 8 \
-    --seed 20260716
-done
-"$PYTHON" scripts/summarize_qcpr_v3_mask_ablation.py \
-  --root "$OUTPUT_DIR" --output "$OUTPUT_DIR/ablation_summary.json"
+STEPS=${STEPS:-30}
+case "$STEPS" in 20|30|40|50) ;; *) echo "mask diagnostic steps must be 20, 30, 40, or 50" >&2; exit 2;; esac
+"$PYTHON" scripts/train_qcpr_v3.py \
+  --output-dir "$OUTPUT_DIR" \
+  --phase mask_only_diagnostic \
+  --mask-objective A \
+  --initialization-mode clean_pretrained \
+  --derived-manifest-dir "$DERIVED_MANIFEST_DIR" \
+  --v3-checkpoint "$V3_CHECKPOINT" \
+  --steps "$STEPS" \
+  --micro-train-samples 8 \
+  --validation-probe-samples 16 \
+  --probe-interval 5 \
+  --batch-size 8 \
+  --seed 20260716
