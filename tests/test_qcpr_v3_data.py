@@ -14,8 +14,9 @@ from land_change_detection.models.qcpr_v3_data import (
 
 
 def test_directional_sanity_schedule_is_deterministic_and_60_20_20() -> None:
-    batches = list(DirectionalSanitySampler(steps=50, seed=7))
-    assert batches == list(DirectionalSanitySampler(steps=50, seed=7))
+    batches = list(DirectionalSanitySampler(row_index=11, steps=50, seed=7))
+    assert batches == list(DirectionalSanitySampler(row_index=11, steps=50, seed=7))
+    assert {batch[0][0] for batch in batches} == {11}
     modes = [batch[0][1] for batch in batches]
     assert modes.count("positive") == 30
     assert modes.count("hard_background") == 10

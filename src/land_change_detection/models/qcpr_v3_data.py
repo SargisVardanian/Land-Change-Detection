@@ -240,10 +240,12 @@ class DirectionalCurriculumBatchSampler(Sampler[list[tuple[int, str]]]):
 class DirectionalSanitySampler(Sampler[list[tuple[int, str, int]]]):
     """One-pair schedule: 60% jittered positive, 20% background, 20% reversal."""
 
-    def __init__(self, *, steps: int, seed: int):
+    def __init__(self, *, row_index: int = 0, steps: int, seed: int):
+        if row_index < 0:
+            raise ValueError("directional sanity row index must be non-negative")
         if steps <= 0:
             raise ValueError("directional sanity steps must be positive")
-        self.steps, self.seed = int(steps), int(seed)
+        self.row_index, self.steps, self.seed = int(row_index), int(steps), int(seed)
 
     def __len__(self) -> int:
         return self.steps
@@ -254,7 +256,7 @@ class DirectionalSanitySampler(Sampler[list[tuple[int, str, int]]]):
         offset = int(torch.randint(0, len(modes), (), generator=generator))
         for step in range(self.steps):
             mode = modes[(step + offset) % len(modes)]
-            yield [(0, mode, self.seed + step)]
+            yield [(self.row_index, mode, self.seed + step)]
 
 
 def derive_qcpr_v3_manifests(

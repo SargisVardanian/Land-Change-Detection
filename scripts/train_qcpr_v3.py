@@ -366,11 +366,15 @@ def run(args: argparse.Namespace) -> dict:
         )
         fixed_train_batch = next(iter(fixed_train_loader))
         fixed_validation_batch = next(iter(validation_loader))
+        if len(train.indices) != 1:
+            raise ValueError("directional sanity curriculum requires exactly one selected base pair")
         loader = DataLoader(
-            train,
-            batch_sampler=DirectionalSanitySampler(steps=args.steps, seed=config.seed),
+            train.dataset,
+            batch_sampler=DirectionalSanitySampler(
+                row_index=int(train.indices[0]), steps=args.steps, seed=config.seed,
+            ),
             num_workers=0,
-            collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
+            collate_fn=data_compat.make_collator(train.dataset, config, epoch=0, training=False),
         )
     elif args.phase == "mask_grounding" and any(row.get("quality_tier") for row in getattr(train, "samples", [])):
         sampler = DirectionalCurriculumBatchSampler(
