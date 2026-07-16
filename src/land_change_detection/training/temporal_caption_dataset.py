@@ -30,6 +30,8 @@ class TemporalCaptionItem:
     t2: Tensor
     captions: list[str]
     mask: Tensor
+    query_masks: list[Tensor]
+    query_change_types: list[str | None]
     components: ComponentTargets
     temporal_context: TemporalContext
     metadata: dict[str, Any]
@@ -154,6 +156,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
 
     def __getitem__(self, index: int) -> TemporalCaptionItem:
         row = self.samples[index]
+        directional_targets = list(row.get("directional_targets", []))
         mask_path = row.get("mask_path")
         has_semantics = bool(row.get("semantic_t1_path") and row.get("semantic_t2_path"))
         target_kind, supervision_weight = _segmentation_target_contract(
@@ -163,7 +166,27 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         )
         crop_box = None
         cropped_t1 = cropped_t2 = None
-        if mask_path and self.target_aware_mask_crop:
+        directional_raw_masks = [_load_mask(target["mask_path"], None) for target in directional_targets]
+        if directional_raw_masks:
+            union_raw = torch.stack(directional_raw_masks).amax(dim=0)
+            if self.target_aware_mask_crop and bool(union_raw.any()):
+                crop_box = target_aware_crop_box(union_raw, output_size=int(self.image_size or 256), context=self.target_crop_context)
+                transformed = [
+                    apply_spatial_contract(
+                        _load_rgb(row["t1_path"], None), _load_rgb(row["t2_path"], None), target,
+                        crop_box, output_size=int(self.image_size or target.shape[-1]),
+                    )
+                    for target in directional_raw_masks
+                ]
+                cropped_t1, cropped_t2 = transformed[0][0], transformed[0][1]
+                query_masks = [value[2] for value in transformed]
+            else:
+                query_masks = [_load_mask(target["mask_path"], self.image_size) for target in directional_targets]
+            mask = torch.stack(query_masks).amax(dim=0)
+            mask_path = None
+            target_kind, supervision_weight = "query_specific", 1.0
+            segmentation_target_source = "paired_directional_query_specific"
+        elif mask_path and self.target_aware_mask_crop:
             raw_mask = _load_mask(mask_path, None)
             if bool(raw_mask.any()):
                 crop_box = target_aware_crop_box(raw_mask, output_size=int(self.image_size or 256), context=self.target_crop_context)
@@ -183,9 +206,21 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         else:
             mask = _blank_mask_like(row["t1_path"], self.image_size)
             segmentation_target_source = "none"
+        captions = (
+            [str(target["caption"]) for target in directional_targets]
+            if directional_targets else
+            [str(caption) for caption in row.get("captions", []) if str(caption).strip()]
+        )
+        if not directional_targets:
+            query_masks = [mask for _ in captions]
+        query_change_types = (
+            [str(target["direction"]) for target in directional_targets]
+            if directional_targets else
+            [row.get("change_type", row.get("source_metadata", {}).get("change_type")) for _ in captions]
+        )
         changed_mask = mask
         changed_paths = row.get("source_metadata", {}).get("changed_mask_paths", [])
-        if changed_paths:
+        if changed_paths and not directional_targets and crop_box is None:
             changed_masks = [_load_mask(path, self.image_size) for path in changed_paths]
             changed_mask = torch.stack(changed_masks).amax(dim=0)
         return TemporalCaptionItem(
@@ -193,8 +228,10 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
             dataset_name=str(row["dataset_name"]),
             t1=cropped_t1 if cropped_t1 is not None else _load_rgb(row["t1_path"], self.image_size),
             t2=cropped_t2 if cropped_t2 is not None else _load_rgb(row["t2_path"], self.image_size),
-            captions=[str(caption) for caption in row.get("captions", []) if str(caption).strip()],
+            captions=captions,
             mask=mask,
+            query_masks=query_masks,
+            query_change_types=query_change_types,
             components=build_component_targets(mask, grid_size=(self.output_grid, self.output_grid), min_area=4),
             temporal_context=TemporalContext(),
             metadata={

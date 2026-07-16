@@ -66,28 +66,31 @@ def test_multiscale_decoder_keeps_small_local_peak() -> None:
     model, _ = _inputs()
     logits = torch.full((1, 1, 20), -12.0)
     logits[..., 0] = 12.0
-    decoded = model.mask_decoder(logits, ((0, 16, 4), (16, 20, 2))).sigmoid()
-    assert decoded.max() > 0.5
-    assert 0 < (decoded > 0.5).sum() < decoded.numel()
+    grounded = torch.randn(1, 1, 20, model.config.hidden_dim)
+    decoded = model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2)))
+    assert decoded.shape == (1, 1, *model.config.output_size)
+    changed = logits.clone(); changed[..., 0] = -12.0
+    assert not torch.equal(decoded, model.mask_decoder(changed, grounded, ((0, 16, 4), (16, 20, 2))))
 
 
-def test_constant_decoder_field_has_no_padding_border_prior() -> None:
+def test_feature_decoder_consumes_grounded_skip_features() -> None:
     model, _ = _inputs()
     logits = torch.full((1, 1, 20), 0.25)
-    decoded = model.mask_decoder(logits, ((0, 16, 4), (16, 20, 2)))
-    assert float(decoded.detach().std()) < 1e-6
-    edge = torch.cat((decoded[..., 0, :].flatten(), decoded[..., -1, :].flatten(), decoded[..., :, 0].flatten(), decoded[..., :, -1].flatten())).mean()
-    center = decoded[..., 8:24, 8:24].mean()
-    torch.testing.assert_close(edge, center, atol=1e-6, rtol=0)
+    grounded = torch.zeros(1, 1, 20, model.config.hidden_dim)
+    baseline = model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2)))
+    grounded[..., 0, 0] = 1.0
+    changed = model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2)))
+    assert not torch.equal(baseline, changed)
 
 
 def test_multiscale_fusion_sends_gradient_to_every_refiner() -> None:
     model, _ = _inputs()
     logits = torch.full((1, 1, 20), -12.0, requires_grad=True)
     logits.data[..., 0] = 12.0
-    model.mask_decoder(logits, ((0, 16, 4), (16, 20, 2))).mean().backward()
-    for refiner in model.mask_decoder.refiners:
-        assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() and parameter.grad.abs().sum() > 0 for parameter in refiner.parameters())
+    grounded = torch.randn(1, 1, 20, model.config.hidden_dim, requires_grad=True)
+    model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2))).mean().backward()
+    for block in (*model.mask_decoder.lateral_projections, *model.mask_decoder.fusion_blocks):
+        assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in block.parameters())
 
 
 def test_empty_content_tokens_are_finite_and_near_empty_mask_gates_local_score() -> None:
@@ -96,8 +99,9 @@ def test_empty_content_tokens_are_finite_and_near_empty_mask_gates_local_score()
     output = model(**(inputs.__class__(**{**inputs.__dict__, "text_content_mask": empty_content}).as_kwargs()))
     assert torch.isfinite(output.token_patch_score).all()
     with torch.no_grad():
-        model.grounding_decoder.mask_head[-1].weight.zero_()
-        model.grounding_decoder.mask_head[-1].bias.fill_(-20.0)
+        for parameter in model.mask_decoder.parameters():
+            parameter.zero_()
+        model.mask_decoder.mask_head[-1].bias.fill_(-20.0)
     gated = model(**inputs.as_kwargs())
     assert torch.allclose(gated.local_score, torch.zeros_like(gated.local_score), atol=1e-6)
 

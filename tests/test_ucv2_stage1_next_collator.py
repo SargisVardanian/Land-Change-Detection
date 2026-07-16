@@ -91,3 +91,27 @@ def test_validation_collator_keeps_all_captions():
     )
     collator = FrequencyBalancedCaptionCollator({}, max_captions_per_pair=1, frequency_power=1.0, seed=1, epoch=0, training=False)
     assert collator([item])["captions"] == ["a", "b", "c"]
+
+
+def test_pair_level_directional_masks_follow_selected_queries():
+    appeared = torch.zeros(4, 4); appeared[0, 0] = 1
+    disappeared = torch.zeros(4, 4); disappeared[-1, -1] = 1
+    item = SimpleNamespace(
+        pair_id="paired", dataset_name="s2looking",
+        t1=torch.zeros(3, 4, 4), t2=torch.ones(3, 4, 4),
+        captions=["new buildings appeared", "buildings disappeared"],
+        mask=torch.maximum(appeared, disappeared),
+        query_masks=[appeared, disappeared],
+        query_change_types=["appeared", "disappeared"],
+        metadata={"segmentation_supervision": True},
+    )
+    collator = FrequencyBalancedCaptionCollator(
+        {}, max_captions_per_pair=None, frequency_power=0.0,
+        seed=1, epoch=0, training=False,
+    )
+    batch = collator([item])
+    assert batch["caption_to_pair"].tolist() == [0, 0]
+    assert batch["query_change_types"] == ["appeared", "disappeared"]
+    assert torch.equal(batch["query_masks"][0], appeared)
+    assert torch.equal(batch["query_masks"][1], disappeared)
+    assert batch["query_segmentation_supervision"].tolist() == [True, True]

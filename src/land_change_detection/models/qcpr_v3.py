@@ -24,6 +24,7 @@ class QCPRV3Config:
     enable_region_slots: bool = False
     region_slots: int = 8
     slot_iterations: int = 3
+    mask_decoder_dim: int = 64
 
 
 @dataclass(frozen=True)
@@ -219,37 +220,50 @@ class MultiScaleQueryMaskDecoder(nn.Module):
     def __init__(self, config: QCPRV3Config):
         super().__init__()
         self.config = config
-        self.refiners = nn.ModuleList(
+        width = config.mask_decoder_dim
+        self.lateral_projections = nn.ModuleList(
+            nn.Sequential(nn.LayerNorm(config.hidden_dim), nn.Linear(config.hidden_dim, width))
+            for _ in config.scales
+        )
+        self.logit_projections = nn.ModuleList(nn.Conv2d(1, width, 1) for _ in config.scales)
+        self.fusion_blocks = nn.ModuleList(
             nn.Sequential(
-                nn.Conv2d(1, 16, 3, padding=1, padding_mode="replicate"), nn.GELU(),
-                nn.Conv2d(16, 1, 3, padding=1, padding_mode="replicate"),
+                nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"),
+                nn.GroupNorm(8, width), nn.GELU(),
+                nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
             )
             for _ in config.scales
         )
-        self.output_refiner = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1, padding_mode="replicate"), nn.GELU(),
-            nn.Conv2d(16, 1, 3, padding=1, padding_mode="replicate"),
+        self.mask_head = nn.Sequential(
+            nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
+            nn.Conv2d(width, 1, 1),
         )
 
-    def forward(self, patch_logits: Tensor, scale_slices: tuple[tuple[int, int, int], ...]) -> Tensor:
-        if patch_logits.ndim != 3:
-            raise ValueError("patch_logits must have shape [Q,C,N]")
+    def forward(self, patch_logits: Tensor, grounded: Tensor, scale_slices: tuple[tuple[int, int, int], ...]) -> Tensor:
+        if patch_logits.ndim != 3 or grounded.ndim != 4 or grounded.shape[:3] != patch_logits.shape:
+            raise ValueError("patch_logits [Q,C,N] and grounded [Q,C,N,D] must align")
         queries, candidates, _ = patch_logits.shape
         target_side = max(side for _, _, side in scale_slices)
-        refined_scales: list[Tensor] = []
-        for refiner, (start, end, side) in zip(self.refiners, scale_slices, strict=True):
-            grid = patch_logits[..., start:end].reshape(queries * candidates, 1, side, side)
-            refined = refiner(grid) + grid
-            if side != target_side:
-                refined = F.interpolate(refined, (target_side, target_side), mode="bilinear", align_corners=False)
-            refined_scales.append(refined)
-        if not refined_scales:
+        lateral: list[Tensor] = []
+        for projection, logit_projection, (start, end, side) in zip(
+            self.lateral_projections, self.logit_projections, scale_slices, strict=True
+        ):
+            features = projection(grounded[..., start:end, :])
+            features = features.reshape(queries * candidates, side, side, -1).permute(0, 3, 1, 2)
+            logits = patch_logits[..., start:end].reshape(queries * candidates, 1, side, side)
+            lateral.append(features + logit_projection(logits))
+        if not lateral:
             raise ValueError("at least one mask scale is required")
-        # Smooth max: preserves a strong small-scale foreground, is exactly
-        # constant-preserving, and sends finite gradients to every scale.
-        fused = torch.logsumexp(torch.stack(refined_scales, dim=0), dim=0) - math.log(len(refined_scales))
-        fused = self.output_refiner(fused) + fused
-        decoded = F.interpolate(fused, self.config.output_size, mode="bilinear", align_corners=False)
+        fused: Tensor | None = None
+        for index in reversed(range(len(lateral))):
+            current = lateral[index]
+            if fused is not None:
+                fused = F.interpolate(fused, current.shape[-2:], mode="bilinear", align_corners=False)
+                current = current + fused
+            fused = self.fusion_blocks[index](current)
+        assert fused is not None and fused.shape[-2:] == (target_side, target_side)
+        decoded = self.mask_head(fused)
+        decoded = F.interpolate(decoded, self.config.output_size, mode="bilinear", align_corners=False)
         return decoded.reshape(queries, candidates, *self.config.output_size)
 
     @staticmethod
@@ -363,7 +377,7 @@ class QCPRV3GenericGrounding(nn.Module):
         grounded, raw_patch_logits, projected_tokens = self.grounding_decoder(
             field.descriptors, text_token_embeddings, text_attention_mask
         )
-        decoded_logits = self.mask_decoder(raw_patch_logits, field.scale_slices)
+        decoded_logits = self.mask_decoder(raw_patch_logits, grounded, field.scale_slices)
         patch_logits = self.mask_decoder.sample_patch_logits(decoded_logits, field.scale_slices)
         query = F.normalize(self.global_query_projection(global_query_embeddings), dim=-1)
         pairs = F.normalize(pair_embeddings, dim=-1)

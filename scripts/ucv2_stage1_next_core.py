@@ -200,12 +200,33 @@ class FrequencyBalancedCaptionCollator:
         )
         captions: list[str] = []
         caption_to_pair: list[int] = []
+        query_masks: list[torch.Tensor] = []
+        query_change_types: list[str | None] = []
+        query_segmentation_supervision: list[bool] = []
         for pair_index, item in enumerate(items):
             selected = self._select_captions(str(item.pair_id), list(item.captions))
             if not selected:
                 raise RuntimeError(f"Pair {item.pair_id} has no usable captions")
             captions.extend(selected)
             caption_to_pair.extend([pair_index] * len(selected))
+            available = list(item.captions)
+            used: set[int] = set()
+            for caption in selected:
+                source_index = next(
+                    index for index, value in enumerate(available)
+                    if index not in used and value == caption
+                )
+                used.add(source_index)
+                item_query_masks = getattr(item, "query_masks", [item.mask for _ in available])
+                item_query_changes = getattr(
+                    item, "query_change_types",
+                    [getattr(item, "metadata", {}).get("change_type") for _ in available],
+                )
+                query_masks.append(item_query_masks[source_index].float())
+                query_change_types.append(item_query_changes[source_index])
+                query_segmentation_supervision.append(
+                    bool(getattr(item, "metadata", {}).get("segmentation_supervision", False))
+                )
         return {
             "pair_ids": [str(item.pair_id) for item in items],
             "dataset_names": [str(getattr(item, "dataset_name", getattr(item, "metadata", {}).get("dataset_name", "unknown"))) for item in items],
@@ -217,6 +238,12 @@ class FrequencyBalancedCaptionCollator:
             ),
             "captions": captions,
             "caption_to_pair": torch.tensor(caption_to_pair, dtype=torch.long),
+            "query_masks": torch.stack(query_masks, dim=0),
+            "query_change_types": query_change_types,
+            "query_segmentation_supervision": torch.tensor(
+                query_segmentation_supervision,
+                dtype=torch.bool,
+            ),
             "mask_fractions": torch.tensor(
                 [float(item.mask.float().mean().item()) for item in items],
                 dtype=torch.float32,

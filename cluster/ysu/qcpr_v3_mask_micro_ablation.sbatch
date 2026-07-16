@@ -22,7 +22,14 @@ test -z "$(git status --porcelain)"
 test ! -e "$OUTPUT_DIR"
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
 STEPS=${STEPS:-30}
+MICRO_TRAIN_SAMPLES=${MICRO_TRAIN_SAMPLES:-8}
+VALIDATION_PROBE_SAMPLES=${VALIDATION_PROBE_SAMPLES:-16}
+TRAIN_PAIR_ID=${TRAIN_PAIR_ID:-}
+VALIDATION_PAIR_ID=${VALIDATION_PAIR_ID:-}
 case "$STEPS" in 20|30|40|50) ;; *) echo "mask diagnostic steps must be 20, 30, 40, or 50" >&2; exit 2;; esac
+PAIR_ARGS=()
+if [[ -n "$TRAIN_PAIR_ID" ]]; then PAIR_ARGS+=(--train-probe-pair-id "$TRAIN_PAIR_ID"); fi
+if [[ -n "$VALIDATION_PAIR_ID" ]]; then PAIR_ARGS+=(--validation-probe-pair-id "$VALIDATION_PAIR_ID"); fi
 "$PYTHON" scripts/train_qcpr_v3.py \
   --output-dir "$OUTPUT_DIR" \
   --phase mask_only_diagnostic \
@@ -31,8 +38,9 @@ case "$STEPS" in 20|30|40|50) ;; *) echo "mask diagnostic steps must be 20, 30, 
   --derived-manifest-dir "$DERIVED_MANIFEST_DIR" \
   --v3-checkpoint "$V3_CHECKPOINT" \
   --steps "$STEPS" \
-  --micro-train-samples 8 \
-  --validation-probe-samples 16 \
+  --micro-train-samples "$MICRO_TRAIN_SAMPLES" \
+  --validation-probe-samples "$VALIDATION_PROBE_SAMPLES" \
   --probe-interval 5 \
   --batch-size 8 \
-  --seed 20260716
+  --seed 20260716 \
+  "${PAIR_ARGS[@]}"

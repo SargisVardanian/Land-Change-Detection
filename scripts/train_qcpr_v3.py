@@ -137,8 +137,52 @@ def _caption_by_pair(batch: dict, mapping: torch.Tensor) -> list[str]:
     return captions
 
 
+def _load_v31_parent(student, state_dict: dict[str, torch.Tensor]) -> dict[str, list[str]]:
+    """Strictly migrate a v3 parent while deliberately reinitializing only the v3.1 FPN."""
+    result = student.load_state_dict(state_dict, strict=False)
+    missing = sorted(result.missing_keys)
+    unexpected = sorted(result.unexpected_keys)
+    invalid_missing = [name for name in missing if not name.startswith("grounder.mask_decoder.")]
+    invalid_unexpected = [name for name in unexpected if not name.startswith("grounder.mask_decoder.")]
+    if invalid_missing or invalid_unexpected:
+        raise RuntimeError(
+            f"v3.1 parent migration mismatch: missing={invalid_missing}, unexpected={invalid_unexpected}"
+        )
+    return {"missing_reinitialized": missing, "obsolete_parent_keys": unexpected}
+
+
 def _swapped_query_forward(student, batch: dict, device: torch.device):
     mapping = batch["caption_to_pair"].to(device)
+    query_directions = list(batch.get("query_change_types", []))
+    if query_directions and len(query_directions) == mapping.numel():
+        lookup = {
+            (int(pair_index), str(direction)): query_index
+            for query_index, (pair_index, direction) in enumerate(
+                zip(mapping.detach().cpu().tolist(), query_directions)
+            )
+            if direction in {"appeared", "disappeared"}
+        }
+        source_indices: list[int] = []
+        opposite_query_indices: list[int] = []
+        for query_index, (pair_index, direction) in enumerate(
+            zip(mapping.detach().cpu().tolist(), query_directions)
+        ):
+            opposite = "disappeared" if direction == "appeared" else "appeared"
+            if direction in {"appeared", "disappeared"} and (pair_index, opposite) in lookup:
+                source_indices.append(query_index)
+                opposite_query_indices.append(lookup[(pair_index, opposite)])
+        if source_indices:
+            source_pairs = mapping.index_select(
+                0, torch.tensor(source_indices, device=device, dtype=torch.long)
+            )
+            wrong_captions = [batch["captions"][index] for index in opposite_query_indices]
+            wrong_mapping = torch.arange(len(source_indices), device=device)
+            wrong = student(
+                batch["images"].to(device).index_select(0, source_pairs), wrong_captions, wrong_mapping,
+                batch["temporal_valid_mask"].to(device).index_select(0, source_pairs),
+            )
+            logits = wrong.scores.decoded_mask_logits[wrong_mapping, wrong_mapping]
+            return (wrong, logits), source_indices
     captions_by_pair = _caption_by_pair(batch, mapping)
     opposites = swapped_direction_indices(batch["pair_ids"], batch["change_types"])
     source_indices = [index for index, opposite in enumerate(opposites) if opposite >= 0]
@@ -171,9 +215,14 @@ def _evaluate_fixed_mask_probe(
         result = student(images, batch["captions"], mapping, temporal_mask)
         query_indices = torch.arange(mapping.numel(), device=device)
         correct = result.scores.decoded_mask_logits[query_indices, mapping]
-        targets = foreground_preserving_resize(
-            batch["masks"].to(device).float(), correct.shape[-2:],
-        ).index_select(0, mapping)
+        if "query_masks" in batch:
+            targets = foreground_preserving_resize(
+                batch["query_masks"].to(device).float(), correct.shape[-2:],
+            )
+        else:
+            targets = foreground_preserving_resize(
+                batch["masks"].to(device).float(), correct.shape[-2:],
+            ).index_select(0, mapping)
         swapped_payload, source_indices = _swapped_query_forward(
             student, batch, device,
         )
@@ -317,6 +366,7 @@ def run(args: argparse.Namespace) -> dict:
     else:
         loader = data_compat.make_train_loader(train, config, frequencies, epoch=0)
 
+    migration_audit = {"missing_reinitialized": [], "obsolete_parent_keys": []}
     if args.initialization_mode == "clean_pretrained":
         student, teacher, initialization = build_clean_v3(backbone_config, device=device)
         if args.phase != "global_bootstrap":
@@ -333,7 +383,7 @@ def run(args: argparse.Namespace) -> dict:
                     f"clean v3 {args.phase} requires an accepted {expected_parent} checkpoint; "
                     f"got {prior.get('phase')!r}"
                 )
-            student.load_state_dict(prior["model"], strict=True)
+            migration_audit = _load_v31_parent(student, prior["model"])
     else:
         from qcpr_v3_historical_compat import build_historical_model
 
@@ -361,6 +411,7 @@ def run(args: argparse.Namespace) -> dict:
     gradient_presence = {name: False for name, parameter in student.named_parameters() if parameter.requires_grad}
     checkpoint_metadata = {
         "phase": profile.name,
+        "v31_parent_migration": migration_audit,
         "initialization": asdict(initialization),
         "backbone_config": asdict(backbone_config),
         "data_config": asdict(config),
@@ -485,14 +536,27 @@ def run(args: argparse.Namespace) -> dict:
                 target = teacher(images, batch["captions"], mapping, temporal_mask)
                 losses.update(teacher_preservation_losses(result.pair_embedding, result.text_embedding, result.scores.global_score, target))
             if "mask_dice" in profile.active_losses or "mask_supervised_only" in profile.active_losses:
-                supervised_pairs = batch["segmentation_supervision"].to(device).bool()
-                supervised_queries = supervised_pairs[mapping]
+                if "query_segmentation_supervision" in batch:
+                    supervised_queries = batch["query_segmentation_supervision"].to(device).bool()
+                else:
+                    supervised_pairs = batch["segmentation_supervision"].to(device).bool()
+                    supervised_queries = supervised_pairs[mapping]
                 query_indices = torch.nonzero(supervised_queries, as_tuple=False).flatten()
                 if query_indices.numel():
                     selected = result.scores.decoded_mask_logits[query_indices, mapping[query_indices]]
-                    targets = foreground_preserving_resize(batch["masks"].to(device).float(), selected.shape[-2:])[mapping[query_indices]]
+                    if "query_masks" in batch:
+                        targets = foreground_preserving_resize(
+                            batch["query_masks"].to(device).float(), selected.shape[-2:]
+                        )[query_indices]
+                    else:
+                        targets = foreground_preserving_resize(
+                            batch["masks"].to(device).float(), selected.shape[-2:]
+                        )[mapping[query_indices]]
                     kinds = [str(batch["segmentation_target_kinds"][int(mapping[index])]) for index in query_indices.tolist()]
-                    changes = [batch.get("change_types", [None] * images.shape[0])[int(mapping[index])] for index in query_indices.tolist()]
+                    if "query_change_types" in batch:
+                        changes = [batch["query_change_types"][index] for index in query_indices.tolist()]
+                    else:
+                        changes = [batch.get("change_types", [None] * images.shape[0])[int(mapping[index])] for index in query_indices.tolist()]
                     objective = resolve_mask_objective(args.mask_objective)
                     with torch.autocast("cuda", enabled=False):
                         mask_losses = separated_query_mask_losses(
@@ -507,6 +571,28 @@ def run(args: argparse.Namespace) -> dict:
                         )
                     losses["query_mask"] = mask_losses["total"]
                     probabilities = selected.sigmoid()
+                    paired_lookup = {
+                        (int(mapping[int(query_index)]), str(change)): local_index
+                        for local_index, (query_index, change) in enumerate(zip(query_indices.tolist(), changes))
+                        if change in {"appeared", "disappeared"}
+                    }
+                    separation_terms = []
+                    for local_index, (query_index, change) in enumerate(zip(query_indices.tolist(), changes)):
+                        if change not in {"appeared", "disappeared"}:
+                            continue
+                        opposite = "disappeared" if change == "appeared" else "appeared"
+                        opposite_index = paired_lookup.get((int(mapping[query_index]), opposite))
+                        if opposite_index is None:
+                            continue
+                        own_target = targets[local_index]
+                        opposite_target = targets[opposite_index]
+                        if not bool(own_target.any()) or not bool(opposite_target.any()):
+                            continue
+                        own_evidence = (probabilities[local_index] * own_target).sum() / own_target.sum().clamp_min(1.0)
+                        opposite_evidence = (probabilities[local_index] * opposite_target).sum() / opposite_target.sum().clamp_min(1.0)
+                        separation_terms.append(torch.relu(0.05 - own_evidence + opposite_evidence))
+                    if separation_terms:
+                        losses["direction_query_separation"] = 0.25 * torch.stack(separation_terms).mean()
                     foreground = targets >= 0.5
                     nonempty = foreground.flatten(1).any(dim=1)
                     background_nonempty = nonempty[:, None, None] & ~foreground
@@ -526,6 +612,7 @@ def run(args: argparse.Namespace) -> dict:
                         "mask_edge_center_ratio": float((edge / center.clamp_min(1e-6)).detach()),
                         "verified_query_specific_count": sum(kind in {"query_specific", "verified_query_specific", "localization_only"} for kind in kinds),
                         "verified_mismatch_count": 0,
+                        "direction_query_separation_count": len(separation_terms),
                         "verified_mismatch_training_status": "DISABLED_DUPLICATE_DIRECTIONAL_ROW",
                     }
             if not losses:
