@@ -283,8 +283,8 @@ def run(args: argparse.Namespace) -> dict:
     fixed_validation_batch = None
     probe_contract = None
     if args.phase == "mask_only_diagnostic":
-        train = fixed_probe_subset(train, count=args.micro_train_samples)
-        val = fixed_probe_subset(val, count=args.validation_probe_samples)
+        train = fixed_probe_subset(train, count=args.micro_train_samples, pair_ids=tuple(args.train_probe_pair_id))
+        val = fixed_probe_subset(val, count=args.validation_probe_samples, pair_ids=tuple(args.validation_probe_pair_id))
         probe_contract = fixed_probe_contract(
             train_subset=train, validation_subset=val,
             train_manifest=derived / train_manifest, validation_manifest=derived / val_manifest,
@@ -715,6 +715,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-probe-samples", type=int, default=16)
     parser.add_argument("--probe-interval", type=int, default=5)
     parser.add_argument("--target-crop-context", type=float, default=2.0)
+    parser.add_argument("--train-probe-pair-id", action="append", default=[])
+    parser.add_argument("--validation-probe-pair-id", action="append", default=[])
     return parser.parse_args()
 
 

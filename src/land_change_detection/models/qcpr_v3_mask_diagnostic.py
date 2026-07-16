@@ -63,7 +63,7 @@ def _mask_area_fraction(path: str | Path) -> float:
         return foreground / max(image.width * image.height, 1)
 
 
-def fixed_probe_subset(dataset: Dataset, *, count: int) -> Subset:
+def fixed_probe_subset(dataset: Dataset, *, count: int, pair_ids: tuple[str, ...] = ()) -> Subset:
     if count <= 0:
         raise ValueError("fixed probe count must be positive")
     if count % 2:
@@ -186,3 +186,13 @@ def query_swap_metrics(correct_logits: Tensor, swapped_logits: Tensor, targets: 
 def append_jsonl(path: str | Path, payload: dict[str, Any]) -> None:
     with Path(path).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    if pair_ids:
+        by_id = {str(row["pair_id"]): index for index, row in enumerate(rows)}
+        missing = [pair_id for pair_id in pair_ids if pair_id not in by_id]
+        if missing:
+            raise ValueError(f"fixed probe pair IDs are absent: {missing}")
+        selected = [by_id[pair_id] for pair_id in pair_ids]
+        directions = {str(rows[index]["pair_id"]).rsplit(":", 1)[-1] for index in selected}
+        if directions != {"appeared", "disappeared"}:
+            raise ValueError("explicit fixed probe must include appeared and disappeared directions")
+        return Subset(dataset, selected)
