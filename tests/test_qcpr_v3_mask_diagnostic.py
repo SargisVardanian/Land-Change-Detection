@@ -10,6 +10,7 @@ from PIL import Image
 from land_change_detection.models.qcpr_v3_mask_diagnostic import (
     append_jsonl,
     exact_s2looking_query_indices,
+    fixed_probe_contract,
     fixed_probe_subset,
     query_swap_metrics,
     resolve_mask_objective,
@@ -75,6 +76,18 @@ def test_pair_level_probe_allows_one_row_with_both_directions(tmp_path: Path) ->
     ]
     subset = fixed_probe_subset(SimpleNamespace(samples=[row]), count=1, pair_ids=(row["pair_id"],))
     assert list(subset.indices) == [0]
+
+    validation = dict(row); validation["pair_id"] = "s2looking:val:1078"
+    train_manifest = tmp_path / "train.jsonl"; train_manifest.write_text("train\n")
+    val_manifest = tmp_path / "val.jsonl"; val_manifest.write_text("val\n")
+    contract = fixed_probe_contract(
+        train_subset=subset,
+        validation_subset=fixed_probe_subset(
+            SimpleNamespace(samples=[validation]), count=1, pair_ids=(validation["pair_id"],)
+        ),
+        train_manifest=train_manifest, validation_manifest=val_manifest,
+    )
+    assert set(contract["train_directional_target_area_fractions"][0]) == {"appeared", "disappeared"}
 
 
 def test_objective_ablation_contract_is_exact() -> None:

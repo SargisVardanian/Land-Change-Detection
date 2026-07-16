@@ -148,8 +148,21 @@ def fixed_probe_contract(
     validation_rows = getattr(validation_subset.dataset, "samples")
     all_train_ids = [str(train_rows[index]["pair_id"]) for index in exact_s2looking_query_indices(train_subset.dataset)]
     all_validation_ids = [str(validation_rows[index]["pair_id"]) for index in exact_s2looking_query_indices(validation_subset.dataset)]
-    train_areas = [_mask_area_fraction(train_rows[int(index)]["mask_path"]) for index in train_subset.indices]
-    validation_areas = [_mask_area_fraction(validation_rows[int(index)]["mask_path"]) for index in validation_subset.indices]
+    def areas_for(row: dict[str, Any]) -> tuple[float, dict[str, float]]:
+        targets = row.get("directional_targets", [])
+        if targets:
+            directional = {
+                str(target["direction"]): _mask_area_fraction(target["mask_path"])
+                for target in targets
+            }
+            return max(directional.values(), default=0.0), directional
+        area = _mask_area_fraction(row["mask_path"])
+        return area, {str(row.get("source_metadata", {}).get("change_type", "unknown")): area}
+
+    train_payload = [areas_for(train_rows[int(index)]) for index in train_subset.indices]
+    validation_payload = [areas_for(validation_rows[int(index)]) for index in validation_subset.indices]
+    train_areas = [value[0] for value in train_payload]
+    validation_areas = [value[0] for value in validation_payload]
     if not any(area > 0 for area in train_areas) or not any(area > 0 for area in validation_areas):
         raise RuntimeError("fixed probes must contain non-empty directional masks")
     if set(train_ids) & set(validation_ids):
@@ -164,6 +177,8 @@ def fixed_probe_contract(
         "validation_pair_ids": validation_ids,
         "train_target_area_fractions": train_areas,
         "validation_target_area_fractions": validation_areas,
+        "train_directional_target_area_fractions": [value[1] for value in train_payload],
+        "validation_directional_target_area_fractions": [value[1] for value in validation_payload],
         "train_nonempty_count": sum(area > 0 for area in train_areas),
         "validation_nonempty_count": sum(area > 0 for area in validation_areas),
         "all_filtered_train_pair_ids": all_train_ids,
