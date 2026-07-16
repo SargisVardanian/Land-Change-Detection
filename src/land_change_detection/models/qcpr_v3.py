@@ -43,6 +43,10 @@ class QCPRV3ScoreOutput:
     patch_mask_logits: Tensor
     decoded_mask_logits: Tensor
     local_embedding: Tensor
+    mask_mass: Tensor
+    mask_entropy: Tensor
+    mask_effective_patch_count: Tensor
+    mask_validity: Tensor
     temporal_descriptors: Tensor
     grounded_patches: Tensor
     coordinates: Tensor
@@ -217,14 +221,14 @@ class MultiScaleQueryMaskDecoder(nn.Module):
         self.config = config
         self.refiners = nn.ModuleList(
             nn.Sequential(
-                nn.Conv2d(1, 16, 3, padding=1), nn.GELU(),
-                nn.Conv2d(16, 1, 3, padding=1),
+                nn.Conv2d(1, 16, 3, padding=1, padding_mode="replicate"), nn.GELU(),
+                nn.Conv2d(16, 1, 3, padding=1, padding_mode="replicate"),
             )
             for _ in config.scales
         )
         self.output_refiner = nn.Sequential(
-            nn.Conv2d(1, 16, 3, padding=1), nn.GELU(),
-            nn.Conv2d(16, 1, 3, padding=1),
+            nn.Conv2d(1, 16, 3, padding=1, padding_mode="replicate"), nn.GELU(),
+            nn.Conv2d(16, 1, 3, padding=1, padding_mode="replicate"),
         )
 
     def forward(self, patch_logits: Tensor, scale_slices: tuple[tuple[int, int, int], ...]) -> Tensor:
@@ -238,9 +242,10 @@ class MultiScaleQueryMaskDecoder(nn.Module):
             refined = refiner(grid) + grid
             if side != target_side:
                 refined = F.interpolate(refined, (target_side, target_side), mode="bilinear", align_corners=False)
-            fused = refined if fused is None else fused + refined
+            # Preserve small high-resolution evidence instead of averaging it
+            # away with a coarse scale where the foreground may disappear.
+            fused = refined if fused is None else torch.maximum(fused, refined)
         assert fused is not None
-        fused = fused / float(len(scale_slices))
         fused = self.output_refiner(fused) + fused
         decoded = F.interpolate(fused, self.config.output_size, mode="bilinear", align_corners=False)
         return decoded.reshape(queries, candidates, *self.config.output_size)
@@ -308,7 +313,9 @@ class QCPRV3GenericGrounding(nn.Module):
         )
         self.local_projection = nn.Linear(self.config.hidden_dim, self.config.hidden_dim)
         self.temporal_map_head = nn.Linear(self.config.hidden_dim, 3)
-        self.rerank_logits = nn.Parameter(torch.tensor([-2.0, -2.0]))
+        # B starts as global + token late interaction. Mask-local evidence is
+        # effectively disabled until Stage C learns a non-empty grounded mask.
+        self.rerank_logits = nn.Parameter(torch.tensor([-20.0, -2.0]))
         self.region_slots = GenericRegionSlots(self.config) if self.config.enable_region_slots else None
 
     @staticmethod
@@ -321,17 +328,24 @@ class QCPRV3GenericGrounding(nn.Module):
     def _token_patch_score(
         self, grounded: Tensor, projected_tokens: Tensor, attention_mask: Tensor
     ) -> Tensor:
-        similarities = torch.einsum("qcnd,qld->qcnl", F.normalize(grounded, dim=-1), projected_tokens)
-        similarities = similarities.masked_fill(~attention_mask[:, None, None, :].bool(), -1.0)
+        grounded = F.normalize(grounded, dim=-1)
+        projected_tokens = F.normalize(projected_tokens, dim=-1)
+        valid_rows = attention_mask.bool().any(dim=1)
+        safe_mask = attention_mask.bool().clone()
+        if bool((~valid_rows).any()):
+            safe_mask[~valid_rows, 0] = True
+        similarities = torch.einsum("qcnd,qld->qcnl", grounded, projected_tokens)
+        similarities = similarities.masked_fill(~safe_mask[:, None, None, :], -1.0)
         patch_k = max(1, min(self.config.token_top_k, similarities.shape[2]))
         per_token = similarities.topk(patch_k, dim=2).values.mean(dim=2)
-        valid = attention_mask[:, None].to(per_token.dtype)
+        valid = safe_mask[:, None].to(per_token.dtype)
         arithmetic = (per_token * valid).sum(dim=-1) / valid.sum(dim=-1).clamp_min(1.0)
         temperature = max(float(self.config.token_softmin_temperature), 1e-4)
-        masked = per_token.masked_fill(~attention_mask[:, None].bool(), float("inf"))
+        masked = per_token.masked_fill(~safe_mask[:, None], float("inf"))
         softmin = -temperature * torch.logsumexp(-masked / temperature, dim=-1)
         softmin = softmin + temperature * valid.sum(dim=-1).clamp_min(1.0).log()
-        return 0.5 * arithmetic + 0.5 * softmin
+        score = 0.5 * arithmetic + 0.5 * softmin
+        return torch.where(valid_rows[:, None], score, torch.zeros_like(score))
 
     def score_query_pair_chunks(
         self,
@@ -353,10 +367,26 @@ class QCPRV3GenericGrounding(nn.Module):
         pairs = F.normalize(pair_embeddings, dim=-1)
         global_score = query @ pairs.T
         local_embedding = self.masked_local_embedding(field.descriptors, patch_logits)
+        probabilities = patch_logits.sigmoid()
+        mask_mass = probabilities.mean(dim=-1)
+        mask_peak = probabilities.amax(dim=-1)
+        mask_validity = ((mask_peak - 0.10) / 0.40).clamp(0.0, 1.0)
+        normalized_weights = probabilities / probabilities.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        mask_effective_patch_count = normalized_weights.square().sum(dim=-1).clamp_min(1e-6).reciprocal()
+        mask_entropy = -(
+            probabilities.clamp(1e-6, 1 - 1e-6) * probabilities.clamp(1e-6, 1 - 1e-6).log()
+            + (1 - probabilities).clamp(1e-6, 1 - 1e-6) * (1 - probabilities).clamp(1e-6, 1 - 1e-6).log()
+        ).mean(dim=-1)
         local_score = torch.einsum("qd,qcd->qc", query, F.normalize(self.local_projection(local_embedding), dim=-1))
+        local_score = local_score * mask_validity
         content_mask = text_attention_mask if text_content_mask is None else text_content_mask
         if content_mask.shape != text_attention_mask.shape:
             raise ValueError("text_content_mask must match text_attention_mask")
+        content_mask = content_mask.bool()
+        fallback = ~content_mask.any(dim=1)
+        if bool(fallback.any()):
+            content_mask = content_mask.clone()
+            content_mask[fallback] = text_attention_mask.bool()[fallback]
         token_patch_score = self._token_patch_score(grounded, projected_tokens, content_mask)
         weights = F.softplus(self.rerank_logits)
         reranked = global_score + weights[0] * local_score + weights[1] * token_patch_score
@@ -370,6 +400,7 @@ class QCPRV3GenericGrounding(nn.Module):
             "patch_count": int(field.descriptors.shape[1]),
             "token_count": int(text_token_embeddings.shape[1]),
             "estimated_grounded_bytes": int(grounded.numel() * grounded.element_size()),
+            "near_empty_mask_count": int((mask_peak < 0.10).sum().detach()),
         }
         return QCPRV3ScoreOutput(
             global_score=global_score,
@@ -379,6 +410,10 @@ class QCPRV3GenericGrounding(nn.Module):
             patch_mask_logits=patch_logits,
             decoded_mask_logits=decoded_logits,
             local_embedding=local_embedding,
+            mask_mass=mask_mass,
+            mask_entropy=mask_entropy,
+            mask_effective_patch_count=mask_effective_patch_count,
+            mask_validity=mask_validity,
             temporal_descriptors=field.descriptors,
             grounded_patches=grounded,
             coordinates=field.coordinates,

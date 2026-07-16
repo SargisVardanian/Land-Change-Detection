@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import qcpr_v3_data_compat as data_compat
-from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, separated_query_mask_losses
+from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, query_mask_metrics, separated_query_mask_losses
 from land_change_detection.models.qcpr_v3_losses import duplicate_aware_positive_mask, multi_positive_contrastive_loss
 from land_change_detection.models.qcpr_v3_phases import apply_phase_to_model, resolve_training_phase
 from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig
@@ -134,8 +134,15 @@ def run(args: argparse.Namespace) -> dict:
             if args.v3_checkpoint is None:
                 raise ValueError("clean_pretrained phases after global_bootstrap require --v3-checkpoint")
             prior = torch.load(args.v3_checkpoint, map_location="cpu", weights_only=False)
-            if prior.get("phase") != "global_bootstrap":
-                raise ValueError("clean v3 continuation requires an accepted global_bootstrap checkpoint")
+            expected_parent = {
+                "late_interaction": "global_bootstrap",
+                "mask_grounding": "late_interaction",
+            }.get(args.phase)
+            if expected_parent is None or prior.get("phase") != expected_parent:
+                raise ValueError(
+                    f"clean v3 {args.phase} requires an accepted {expected_parent} checkpoint; "
+                    f"got {prior.get('phase')!r}"
+                )
             student.load_state_dict(prior["model"], strict=True)
     else:
         from qcpr_v3_historical_compat import build_historical_model
@@ -168,6 +175,8 @@ def run(args: argparse.Namespace) -> dict:
         "backbone_config": asdict(backbone_config),
         "data_config": asdict(config),
         "grounding_config": asdict(student.grounder.config),
+        "parent_checkpoint": None if args.v3_checkpoint is None else str(args.v3_checkpoint),
+        "parent_phase": None if args.v3_checkpoint is None else prior.get("phase"),
     }
     torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
     student.train()
@@ -185,7 +194,7 @@ def run(args: argparse.Namespace) -> dict:
             attempts += 1
             names = {str(name) for name in batch.get("dataset_names", [])}
             required = {name for name in args.required_datasets.split(",") if name}
-            if step > 1 or required.issubset(names):
+            if not required or required.issubset(names):
                 break
             if attempts > len(loader):
                 raise RuntimeError(f"required smoke datasets {sorted(required)!r} were not found together")
@@ -232,8 +241,11 @@ def run(args: argparse.Namespace) -> dict:
             if "global_contrastive" in profile.active_losses:
                 losses["global_contrastive"] = _retrieval_loss(selected_scores(global_scores), selection["selected_mapping"])
             local_audit: dict[str, float | int] = {}
-            if "local_contrastive" in profile.active_losses and selection["selected_queries"].numel():
-                local_scores = selected_scores(result.scores.token_patch_score)
+            mask_audit: dict[str, float | int] = {}
+            local_loss_name = next((name for name in ("local_contrastive", "masked_local_contrastive") if name in profile.active_losses), None)
+            if local_loss_name is not None and selection["selected_queries"].numel():
+                branch = result.scores.token_patch_score if args.phase == "late_interaction" else result.scores.local_score
+                local_scores = selected_scores(branch)
                 broad = semantic_teacher_relevance_matrix(
                     result.base_text_embedding[selection["selected_queries"]].detach(), selected_captions,
                     selection["selected_mapping"], selected_groups, pair_count=selection["selected_pairs"].numel(), top_k=0,
@@ -243,10 +255,16 @@ def run(args: argparse.Namespace) -> dict:
                     selected_scores(result.scores.global_score).detach(), broad, top_n=min(50, local_scores.shape[1]),
                 )
                 # Generic token-patch contrastive learning plus only verified-as-negative parser conflicts.
-                losses["local_contrastive"] = multi_positive_contrastive_loss(
+                losses[local_loss_name] = multi_positive_contrastive_loss(
                     local_scores, positive_mask, exclusion_mask=broad & ~positive_mask,
                     temperature=args.contrastive_temperature,
                 ) + structured_loss
+                if "rerank_contrastive" in profile.active_losses:
+                    losses["rerank_contrastive"] = multi_positive_contrastive_loss(
+                        selected_scores(result.scores.reranked_score), positive_mask,
+                        exclusion_mask=broad & ~positive_mask,
+                        temperature=args.contrastive_temperature,
+                    )
             if "teacher_distillation" in profile.active_losses:
                 if teacher is None:
                     raise RuntimeError("historical-global-teacher loss requested without historical E0")
@@ -264,6 +282,21 @@ def run(args: argparse.Namespace) -> dict:
                     mask_losses = separated_query_mask_losses(selected, targets, kinds, changes)
                     losses["query_mask"] = mask_losses["total"]
                     losses["query_mask_mismatched_empty"] = mask_losses["mismatched_query_empty_loss"]
+                    probabilities = selected.sigmoid()
+                    foreground = targets >= 0.5
+                    background = ~foreground
+                    edge = torch.cat((
+                        probabilities[..., 0, :].flatten(), probabilities[..., -1, :].flatten(),
+                        probabilities[..., :, 0].flatten(), probabilities[..., :, -1].flatten(),
+                    )).mean()
+                    center = probabilities[..., probabilities.shape[-2] // 4: 3 * probabilities.shape[-2] // 4, probabilities.shape[-1] // 4: 3 * probabilities.shape[-1] // 4].mean()
+                    mask_audit = {
+                        **query_mask_metrics(selected.detach(), targets.detach()),
+                        "mask_foreground_probability": float(probabilities[foreground].detach().mean()) if bool(foreground.any()) else 0.0,
+                        "mask_background_probability": float(probabilities[background].detach().mean()) if bool(background.any()) else 0.0,
+                        "mask_edge_center_ratio": float((edge / center.clamp_min(1e-6)).detach()),
+                        "verified_query_specific_count": sum(kind in {"query_specific", "verified_query_specific", "localization_only"} for kind in kinds),
+                    }
             if not losses:
                 raise RuntimeError("batch has no supervision for the selected phase")
             total = sum(losses.values())
@@ -303,7 +336,15 @@ def run(args: argparse.Namespace) -> dict:
         )
         post_clip_sq = sum(float(parameter.grad.detach().float().square().sum()) for parameter in parameters if parameter.grad is not None)
         row = {"step": step, "loss": float(total.detach()), "grad_norm_before_clip": float(norm), "grad_norm_after_clip": math.sqrt(post_clip_sq), "gradient_was_clipped": bool(norm > args.grad_clip_norm), "local_margin": float(margin) if margin is not None else None}
+        if not global_only:
+            row.update(
+                mask_mass_mean=float(result.scores.mask_mass.detach().mean()),
+                mask_entropy_mean=float(result.scores.mask_entropy.detach().mean()),
+                mask_effective_patch_count_mean=float(result.scores.mask_effective_patch_count.detach().mean()),
+                near_empty_mask_fraction=float((result.scores.mask_validity.detach() <= 0).float().mean()),
+            )
         row.update(local_audit)
+        row.update(mask_audit)
         row.update({name: float(value.detach()) for name, value in losses.items()})
         history.append(row)
         write_progress(

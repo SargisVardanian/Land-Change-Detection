@@ -88,6 +88,7 @@ def separated_query_mask_losses(
     target_kinds: list[str],
     change_types: list[str | None],
     *,
+    verified_mismatched_logits: Tensor | None = None,
     mismatch_empty_weight: float = 1.0,
 ) -> dict[str, Tensor | int]:
     """Separate mask losses by provenance and add mismatched-query empty negatives.
@@ -111,13 +112,19 @@ def separated_query_mask_losses(
         value = query_mask_loss(logits[mask], targets[mask]).total if bool(mask.any()) else logits.sum() * 0.0
         result[f"{name}_loss"] = value
         result[f"{name}_count"] = int(mask.sum())
-        total = total + value
-    query_mask = groups["query_specific"]
+        # Direction is an evaluation stratum, not a second supervision target.
+        if name in {"generic_changed", "query_specific"}:
+            total = total + value
     mismatch = logits.sum() * 0.0
-    if int(query_mask.sum()) > 1:
-        selected = logits[query_mask]
-        mismatched = selected.roll(shifts=1, dims=0)
-        mismatch = query_mask_loss(mismatched, torch.zeros_like(mismatched)).empty_false_positive * float(mismatch_empty_weight)
+    if verified_mismatched_logits is not None:
+        if verified_mismatched_logits.ndim != 3 or verified_mismatched_logits.shape[-2:] != logits.shape[-2:]:
+            raise ValueError("verified mismatched logits must have shape [M,H,W]")
+        mismatch = query_mask_loss(
+            verified_mismatched_logits,
+            torch.zeros_like(verified_mismatched_logits),
+        ).empty_false_positive * float(mismatch_empty_weight)
+    result["verified_mismatch_count"] = 0 if verified_mismatched_logits is None else int(verified_mismatched_logits.shape[0])
+    result["mismatch_provenance"] = "none" if verified_mismatched_logits is None else "explicit_recomputed_verified"
     result["mismatched_query_empty_loss"] = mismatch
     result["total"] = total + mismatch
     return result

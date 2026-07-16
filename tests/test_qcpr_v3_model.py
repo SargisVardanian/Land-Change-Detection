@@ -44,6 +44,8 @@ def test_generic_v3_shapes_and_no_semantic_specific_heads() -> None:
     assert output.token_patch_score.shape == (3, 4)
     assert output.patch_mask_logits.shape == (3, 4, 20)
     assert output.decoded_mask_logits.shape == (3, 4, 32, 32)
+    assert output.mask_mass.shape == (3, 4)
+    assert output.mask_validity.shape == (3, 4)
     assert output.temporal_descriptors.shape == (4, 20, 16)
     assert output.slot_activations is None
     names = set(dict(model.named_modules()))
@@ -67,6 +69,41 @@ def test_multiscale_decoder_keeps_small_local_peak() -> None:
     decoded = model.mask_decoder(logits, ((0, 16, 4), (16, 20, 2))).sigmoid()
     assert decoded.max() > 0.5
     assert 0 < (decoded > 0.5).sum() < decoded.numel()
+
+
+def test_constant_decoder_field_has_no_padding_border_prior() -> None:
+    model, _ = _inputs()
+    logits = torch.full((1, 1, 20), 0.25)
+    decoded = model.mask_decoder(logits, ((0, 16, 4), (16, 20, 2)))
+    assert float(decoded.detach().std()) < 1e-6
+    edge = torch.cat((decoded[..., 0, :].flatten(), decoded[..., -1, :].flatten(), decoded[..., :, 0].flatten(), decoded[..., :, -1].flatten())).mean()
+    center = decoded[..., 8:24, 8:24].mean()
+    torch.testing.assert_close(edge, center, atol=1e-6, rtol=0)
+
+
+def test_empty_content_tokens_are_finite_and_near_empty_mask_gates_local_score() -> None:
+    model, inputs = _inputs()
+    empty_content = torch.zeros_like(inputs.text_attention_mask)
+    output = model(**(inputs.__class__(**{**inputs.__dict__, "text_content_mask": empty_content}).as_kwargs()))
+    assert torch.isfinite(output.token_patch_score).all()
+    with torch.no_grad():
+        model.grounding_decoder.mask_head[-1].weight.zero_()
+        model.grounding_decoder.mask_head[-1].bias.fill_(-20.0)
+    gated = model(**inputs.as_kwargs())
+    assert torch.allclose(gated.local_score, torch.zeros_like(gated.local_score), atol=1e-6)
+
+
+def test_full_grounder_constant_visual_input_has_no_systematic_border() -> None:
+    model, inputs = _inputs()
+    constant = torch.zeros_like(inputs.per_time_tokens)
+    output = model(**(inputs.__class__(**{**inputs.__dict__, "per_time_tokens": constant}).as_kwargs()))
+    probability = output.decoded_mask_logits.sigmoid()
+    edge = torch.cat((
+        probability[..., 0, :].flatten(), probability[..., -1, :].flatten(),
+        probability[..., :, 0].flatten(), probability[..., :, -1].flatten(),
+    )).mean()
+    center = probability[..., 8:24, 8:24].mean()
+    assert float((edge - center).abs().detach()) < 0.10
 
 
 def test_patch_pooling_logits_are_sampled_from_displayed_mask_field() -> None:

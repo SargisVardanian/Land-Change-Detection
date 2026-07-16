@@ -50,10 +50,9 @@ def test_phase_profiles_only_enable_parameters_connected_to_active_losses() -> N
 
     mask_audit = apply_phase_to_model(model, resolve_training_phase("mask_grounding"))
     assert "temporal_maps" not in resolve_training_phase("mask_grounding").active_losses
-    assert not any(
-        name.startswith(("grounder.local_projection", "grounder.rerank_logits", "grounder.temporal_map_head"))
-        for name in mask_audit["trainable_parameters"]
-    )
+    assert any(name.startswith("grounder.local_projection") for name in mask_audit["trainable_parameters"])
+    assert "grounder.rerank_logits" in mask_audit["trainable_parameters"]
+    assert not any(name.startswith("grounder.temporal_map_head") for name in mask_audit["trainable_parameters"])
 
 
 def test_mask_losses_separate_empty_and_nonempty() -> None:

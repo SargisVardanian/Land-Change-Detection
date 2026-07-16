@@ -23,7 +23,7 @@ DERIVED_MANIFEST_DIR=${DERIVED_MANIFEST_DIR:-/mnt/weka/svardanyan/rs_change_proj
 COMMON=(--initialization-mode clean_pretrained --derived-manifest-dir "$DERIVED_MANIFEST_DIR")
 "$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/global" --phase global_bootstrap "${COMMON[@]}" --steps 2 --batch-size 8 --required-datasets levir_mci,second_cc
 "$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/late" --phase late_interaction "${COMMON[@]}" --v3-checkpoint "$OUTPUT_DIR/global/last.pt" --steps 1 --batch-size 8 --required-datasets levir_mci,second_cc
-"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/mask" --phase mask_grounding "${COMMON[@]}" --v3-checkpoint "$OUTPUT_DIR/global/last.pt" --steps 1 --batch-size 8 --required-datasets s2looking
+"$PYTHON" scripts/train_qcpr_v3.py --output-dir "$OUTPUT_DIR/mask" --phase mask_grounding "${COMMON[@]}" --v3-checkpoint "$OUTPUT_DIR/late/last.pt" --steps 1 --batch-size 8 --required-datasets s2looking
 "$PYTHON" - "$OUTPUT_DIR" <<'PY'
 import json,sys
 from pathlib import Path
