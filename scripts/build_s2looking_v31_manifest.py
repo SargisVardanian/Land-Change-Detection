@@ -54,6 +54,16 @@ def _image_shift(first: str, second: str) -> float:
     return float(np.abs(read(first) - read(second)).mean())
 
 
+def s2looking_chronological_paths(image1_path: str, image2_path: str) -> tuple[str, str]:
+    """Return (before, after) for the official S2Looking file convention.
+
+    The official paper's Figure 2 identifies Image1 as the newer acquisition
+    and Image2 as the older acquisition; Label1 is newly built and Label2 is
+    demolished. Therefore chronological inference is Image2 -> Image1.
+    """
+    return image2_path, image1_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -101,7 +111,10 @@ def main() -> None:
                 qualities.append("hard")
             else:
                 qualities.append("core")
-        shift = _image_shift(members[0]["t1_path"], members[0]["t2_path"])
+        before_path, after_path = s2looking_chronological_paths(
+            members[0]["t1_path"], members[0]["t2_path"],
+        )
+        shift = _image_shift(before_path, after_path)
         overlap_union = np.logical_or(directional_masks[0], directional_masks[1]).sum()
         directional_overlap_iou = float(
             np.logical_and(directional_masks[0], directional_masks[1]).sum() / max(overlap_union, 1)
@@ -114,7 +127,7 @@ def main() -> None:
         prepared.append({
             "schema_version": members[0]["schema_version"], "dataset_name": "s2looking",
             "split": split, "pair_id": f"s2looking:{split}:{base}", "original_id": base,
-            "t1_path": members[0]["t1_path"], "t2_path": members[0]["t2_path"],
+            "t1_path": before_path, "t2_path": after_path,
             "captions": [target["caption"] for target in targets],
             "normalized_caption_groups": [target["caption"].casefold() for target in targets],
             "caption_source": "deterministic_verified_mask_attributes",
@@ -122,9 +135,11 @@ def main() -> None:
             "directional_overlap_iou": directional_overlap_iou,
             "retrieval_supervision": False, "seg_supervision_mode": "query_specific",
             "image_height": 1024, "image_width": 1024, "sensor": "side_looking_vhr",
-            "time_order": ["before", "after"],
+            "time_order": ["Image2:before", "Image1:after"],
             "source_metadata": {"base_pair_id": base, "paired_directional_record": True,
-                                "retrieval_supervision": False, "seg_supervision_mode": "query_specific"},
+                                "retrieval_supervision": False, "seg_supervision_mode": "query_specific",
+                                "official_source_order": "Image2_to_Image1",
+                                "official_label_mapping": {"label1": "appeared", "label2": "disappeared"}},
         })
         if group_index == 1 or group_index % 100 == 0 or group_index == len(ordered_groups):
             elapsed = time.monotonic() - started
@@ -152,7 +167,7 @@ def main() -> None:
     overlaps = np.asarray([row["directional_overlap_iou"] for row in prepared], dtype=np.float64)
     audit = {"input": str(Path(args.input).resolve()), "pair_count": len(prepared), "tier_counts": counts,
              "manifest_sha256": hashlib.sha256(payload.encode()).hexdigest(),
-             "directional_mapping": "appeared=label1:T1_to_T2, disappeared=label2:T2_to_T1",
+             "directional_mapping": "Image2(before)->Image1(after); appeared=label1; disappeared=label2",
              "directional_overlap_iou_quantiles": {
                  str(q): float(np.quantile(overlaps, q)) for q in (0.0, 0.5, 0.9, 0.95, 0.99, 1.0)
              },
