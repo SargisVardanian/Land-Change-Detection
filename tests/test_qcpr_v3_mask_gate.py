@@ -13,6 +13,8 @@ def _row(*, dice: float, iou: float, margin: float, empty: float, swap: float):
         "empty_mean_probability": empty,
         "soft_query_swap_iou_gap": swap,
         "query_swap_count": 2,
+        "appeared_soft_query_swap_iou_gap": swap,
+        "disappeared_soft_query_swap_iou_gap": swap,
     }
 
 
@@ -26,7 +28,8 @@ def test_micro_gate_uses_fixed_train_soft_metrics_without_arbitrary_hard_thresho
     assert set(gate["checks"]) == {
         "train_soft_dice_increased", "train_soft_iou_increased",
         "train_localization_margin_increased", "train_empty_mean_probability_not_increased",
-        "train_soft_query_swap_gap_positive", "gradients_finite",
+        "train_soft_query_swap_gap_positive", "train_appeared_soft_query_swap_gap_positive",
+        "train_disappeared_soft_query_swap_gap_positive", "gradients_finite",
     }
 
 

@@ -144,7 +144,11 @@ def _load_v31_parent(student, state_dict: dict[str, torch.Tensor]) -> dict[str, 
     result = student.load_state_dict(state_dict, strict=False)
     missing = sorted(result.missing_keys)
     unexpected = sorted(result.unexpected_keys)
-    invalid_missing = [name for name in missing if not name.startswith("grounder.mask_decoder.")]
+    reinitialized_prefixes = (
+        "grounder.mask_decoder.",
+        "grounder.grounding_decoder.query_modulation.",
+    )
+    invalid_missing = [name for name in missing if not name.startswith(reinitialized_prefixes)]
     invalid_unexpected = [name for name in unexpected if not name.startswith("grounder.mask_decoder.")]
     if invalid_missing or invalid_unexpected:
         raise RuntimeError(
@@ -252,6 +256,20 @@ def _evaluate_fixed_mask_probe(
         swapped_result, swapped_logits = swapped_payload
         source = torch.tensor(source_indices, device=device, dtype=torch.long)
         metrics.update(query_swap_metrics(correct.index_select(0, source).float(), swapped_logits.float(), targets.index_select(0, source).float()))
+        query_directions = list(batch.get("query_change_types", []))
+        for direction in ("appeared", "disappeared"):
+            local = [
+                index for index, query_index in enumerate(source_indices)
+                if query_directions and query_directions[query_index] == direction
+            ]
+            if local:
+                local_tensor = torch.tensor(local, device=device, dtype=torch.long)
+                directional = query_swap_metrics(
+                    correct.index_select(0, source).index_select(0, local_tensor).float(),
+                    swapped_logits.index_select(0, local_tensor).float(),
+                    targets.index_select(0, source).index_select(0, local_tensor).float(),
+                )
+                metrics.update({f"{direction}_{name}": value for name, value in directional.items()})
         wrong_validity = swapped_result.scores.mask_validity[
             torch.arange(len(source_indices), device=device), torch.arange(len(source_indices), device=device)
         ]
@@ -272,6 +290,8 @@ def _micro_overfit_gate(
         "train_localization_margin_increased": last["localization_margin"] > first["localization_margin"],
         "train_empty_mean_probability_not_increased": last["empty_mean_probability"] <= first["empty_mean_probability"],
         "train_soft_query_swap_gap_positive": last["soft_query_swap_iou_gap"] > 0.0,
+        "train_appeared_soft_query_swap_gap_positive": last["appeared_soft_query_swap_iou_gap"] > 0.0,
+        "train_disappeared_soft_query_swap_gap_positive": last["disappeared_soft_query_swap_iou_gap"] > 0.0,
         "gradients_finite": gradients_finite,
     }
     return {"passed": all(checks.values()), "checks": checks, "step0": first, "final": last}
@@ -286,6 +306,8 @@ def _validation_direction(history: list[dict[str, float | int]]) -> dict[str, ob
         "validation_empty_mean_probability_not_increased": last["empty_mean_probability"] <= first["empty_mean_probability"],
         "validation_query_swap_count_positive": last["query_swap_count"] > 0,
         "validation_soft_query_swap_gap_positive": last["soft_query_swap_iou_gap"] > 0.0,
+        "validation_appeared_soft_query_swap_gap_positive": last["appeared_soft_query_swap_iou_gap"] > 0.0,
+        "validation_disappeared_soft_query_swap_gap_positive": last["disappeared_soft_query_swap_iou_gap"] > 0.0,
     }
     return {"positive": all(checks.values()), "checks": checks, "step0": first, "final": last}
 
@@ -645,7 +667,7 @@ def run(args: argparse.Namespace) -> dict:
                             changes, targets.float(),
                         )
                     if separation_count:
-                        losses["direction_query_separation"] = 0.25 * separation_loss
+                        losses["direction_query_separation"] = separation_loss
                     foreground = targets >= 0.5
                     nonempty = foreground.flatten(1).any(dim=1)
                     background_nonempty = nonempty[:, None, None] & ~foreground

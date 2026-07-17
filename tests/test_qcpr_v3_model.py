@@ -83,6 +83,15 @@ def test_feature_decoder_consumes_grounded_skip_features() -> None:
     assert not torch.equal(baseline, changed)
 
 
+def test_query_modulation_makes_dense_features_text_conditional() -> None:
+    model, _ = _inputs()
+    patches = torch.randn(1, 20, model.config.hidden_dim)
+    tokens = torch.randn(2, 3, model.config.text_dim)
+    attention = torch.ones(2, 3, dtype=torch.bool)
+    grounded, _, _ = model.grounding_decoder(patches, tokens, attention)
+    assert not torch.allclose(grounded[0], grounded[1])
+
+
 def test_multiscale_fusion_sends_gradient_to_every_refiner() -> None:
     model, _ = _inputs()
     logits = torch.full((1, 1, 20), -12.0, requires_grad=True)

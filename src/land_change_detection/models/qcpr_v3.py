@@ -169,6 +169,10 @@ class GenericCrossModalDecoder(nn.Module):
         super().__init__()
         self.config = config
         self.token_projection = nn.Linear(config.text_dim, config.hidden_dim)
+        self.query_modulation = nn.Sequential(
+            nn.LayerNorm(config.hidden_dim),
+            nn.Linear(config.hidden_dim, 2 * config.hidden_dim),
+        )
         self.cross_norms = nn.ModuleList(nn.LayerNorm(config.hidden_dim) for _ in range(config.decoder_layers))
         self.cross_attentions = nn.ModuleList(
             nn.MultiheadAttention(config.hidden_dim, config.heads, dropout=config.dropout, batch_first=True)
@@ -201,7 +205,13 @@ class GenericCrossModalDecoder(nn.Module):
         candidates, patch_count, hidden = patches.shape
         queries, token_count, _ = text_tokens.shape
         tokens = F.normalize(self.token_projection(text_tokens), dim=-1)
-        grounded = patches[None].expand(queries, -1, -1, -1).reshape(queries * candidates, patch_count, hidden)
+        valid = text_attention_mask.to(tokens.dtype).unsqueeze(-1)
+        query_context = (tokens * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+        scale, shift = self.query_modulation(query_context).chunk(2, dim=-1)
+        scale = 0.5 * torch.tanh(scale)
+        grounded = patches[None].expand(queries, -1, -1, -1)
+        grounded = grounded * (1.0 + scale[:, None, None, :]) + shift[:, None, None, :]
+        grounded = grounded.reshape(queries * candidates, patch_count, hidden)
         expanded_tokens = tokens[:, None].expand(-1, candidates, -1, -1).reshape(queries * candidates, token_count, hidden)
         expanded_mask = text_attention_mask[:, None].expand(-1, candidates, -1).reshape(queries * candidates, token_count)
         for norm, attention, ffn in zip(self.cross_norms, self.cross_attentions, self.patch_ffns, strict=True):
