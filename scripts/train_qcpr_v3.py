@@ -319,6 +319,8 @@ def _direction_query_separation_loss(
     query_indices: torch.Tensor,
     changes: list[str | None],
     targets: torch.Tensor,
+    *,
+    temperature: float = 0.07,
 ) -> tuple[torch.Tensor, int]:
     """Rank correct text above opposite text by query-target soft IoU.
 
@@ -332,6 +334,8 @@ def _direction_query_separation_loss(
         raise ValueError("direction separation expects [Q,C,H,W] logits and [S,H,W] targets")
     if query_indices.numel() != len(changes) or targets.shape[0] != len(changes):
         raise ValueError("selected directional query metadata must align")
+    if temperature <= 0:
+        raise ValueError("direction separation temperature must be positive")
     selected_query_ids = [int(value) for value in query_indices.detach().cpu().tolist()]
     lookup = {
         (int(mapping[query_id]), str(change)): local_index
@@ -364,7 +368,7 @@ def _direction_query_separation_loss(
         opposite_overlap = soft_iou(opposite_probability)
         # Pairwise logistic ranking remains differentiable at equal scores and
         # directly rewards a positive soft query-swap IoU gap.
-        terms.append(F.softplus(opposite_overlap - correct_overlap))
+        terms.append(F.softplus((opposite_overlap - correct_overlap) / float(temperature)))
     if not terms:
         return all_logits.sum() * 0.0, 0
     return torch.stack(terms).mean(), len(terms)

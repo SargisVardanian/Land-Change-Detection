@@ -85,3 +85,22 @@ def test_direction_separation_optimizes_soft_query_swap_gap() -> None:
     assert logits.grad is not None and torch.isfinite(logits.grad).all()
     assert logits.grad[0, 0, :2, :2].mean() < 0
     assert logits.grad[0, 0, 2:, 2:].mean() > 0
+
+
+def test_direction_separation_rejects_nonpositive_temperature() -> None:
+    target = torch.zeros(2, 4, 4)
+    target[0, :2, :2] = 1
+    target[1, 2:, 2:] = 1
+    try:
+        _direction_query_separation_loss(
+            torch.zeros(2, 1, 4, 4),
+            torch.tensor([0, 0]),
+            torch.tensor([0, 1]),
+            ["appeared", "disappeared"],
+            target,
+            temperature=0.0,
+        )
+    except ValueError as error:
+        assert "temperature" in str(error)
+    else:
+        raise AssertionError("nonpositive contrastive temperature must be rejected")
