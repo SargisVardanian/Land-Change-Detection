@@ -38,7 +38,10 @@ def build_clean_v3(
     student = build_clean_v3_model(
         config,
         device=device,
-        grounding_config=QCPRV3Config(enable_region_slots=enable_region_slots),
+        grounding_config=QCPRV3Config(
+            visual_source_dim=768,
+            enable_region_slots=enable_region_slots,
+        ),
     )
     audit = V3InitializationAudit(
         initialization_mode="clean_pretrained",
@@ -92,7 +95,10 @@ def build_v3_and_teacher(
     # attached to v3 and cannot enter its optimizer or scoring path.
     student_legacy = build_legacy_model(config, device)
     student_legacy.load_state_dict(payload["model"], strict=True)
-    grounder = QCPRV3GenericGrounding(QCPRV3Config(enable_region_slots=enable_region_slots)).to(device)
+    grounder = QCPRV3GenericGrounding(QCPRV3Config(
+        visual_source_dim=768,
+        enable_region_slots=enable_region_slots,
+    )).to(device)
     student = UniChangeV3RetrievalModel(
         student_legacy.visual_encoder,
         student_legacy.temporal_encoder,

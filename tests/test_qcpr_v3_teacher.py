@@ -37,9 +37,13 @@ def test_teacher_is_strict_frozen_separate_and_absent_from_student_optimizer(tmp
 
 def test_clean_v3_bootstrap_has_no_historical_teacher(monkeypatch) -> None:
     student = TinyTeacher()
+    observed = {}
+    def fake_builder(config, device, grounding_config):
+        observed["grounding_config"] = grounding_config
+        return student.to(device)
     monkeypatch.setattr(
         "land_change_detection.models.qcpr_v3_runtime.build_clean_v3_model",
-        lambda config, device, grounding_config: student.to(device),
+        fake_builder,
     )
     model, teacher, audit = build_clean_v3(
         QCPRV3BackboneConfig("universat-source", "universat-checkpoint", "jina"),
@@ -50,6 +54,7 @@ def test_clean_v3_bootstrap_has_no_historical_teacher(monkeypatch) -> None:
     assert audit.initialization_mode == "clean_pretrained"
     assert audit.checkpoint is None
     assert audit.strict_teacher_load is False
+    assert observed["grounding_config"].visual_source_dim == 768
 
 
 @pytest.mark.skipif(not IMMUTABLE_V1.exists(), reason="cluster immutable v1 checkpoint unavailable")
