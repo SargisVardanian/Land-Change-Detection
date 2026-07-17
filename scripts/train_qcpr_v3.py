@@ -147,6 +147,7 @@ def _load_v31_parent(student, state_dict: dict[str, torch.Tensor]) -> dict[str, 
     reinitialized_prefixes = (
         "grounder.mask_decoder.",
         "grounder.grounding_decoder.query_modulation.",
+        "grounder.temporal_field.source_projection.",
     )
     invalid_missing = [name for name in missing if not name.startswith(reinitialized_prefixes)]
     invalid_unexpected = [name for name in unexpected if not name.startswith("grounder.mask_decoder.")]

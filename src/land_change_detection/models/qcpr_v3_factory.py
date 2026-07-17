@@ -91,6 +91,6 @@ def build_clean_v3_model(
         temporal,
         text,
         retrieval,
-        QCPRV3GenericGrounding(grounding_config),
+        QCPRV3GenericGrounding(grounding_config or QCPRV3Config(visual_source_dim=768)),
         text_adapter=adapter,
     ).to(device)

@@ -52,6 +52,20 @@ def test_generic_v3_shapes_and_no_semantic_specific_heads() -> None:
     assert not any(term in name for name in names for term in ("object_head", "direction_head", "location_head", "count_head", "relation_head"))
 
 
+def test_temporal_field_projects_raw_visual_tokens_before_signed_difference() -> None:
+    config = QCPRV3Config(
+        input_dim=8, visual_source_dim=12, text_dim=8, hidden_dim=8,
+        heads=2, decoder_layers=1, scales=(4,), output_size=(8, 8), mask_decoder_dim=8,
+    )
+    model = QCPRV3GenericGrounding(config)
+    raw = torch.randn(2, 2, 16, 12)
+    field = model.temporal_field(raw)
+    assert field.descriptors.shape == (2, 16, 8)
+    assert model.temporal_field.source_projection.weight.grad is None
+    field.descriptors.mean().backward()
+    assert model.temporal_field.source_projection.weight.grad is not None
+
+
 def test_all_consumers_share_exact_scores_and_mask_logits() -> None:
     model, inputs = _inputs()
     outputs = [trainer_score(model, inputs), evaluator_score(model, inputs), renderer_score(model, inputs)]

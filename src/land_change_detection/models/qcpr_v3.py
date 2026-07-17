@@ -12,6 +12,7 @@ from torch.nn import functional as F
 @dataclass(frozen=True)
 class QCPRV3Config:
     input_dim: int = 512
+    visual_source_dim: int | None = None
     text_dim: int = 512
     hidden_dim: int = 512
     heads: int = 8
@@ -96,6 +97,11 @@ class GenericTemporalPatchField(nn.Module):
     def __init__(self, config: QCPRV3Config):
         super().__init__()
         self.config = config
+        source_dim = config.input_dim if config.visual_source_dim is None else config.visual_source_dim
+        self.source_projection = (
+            nn.Identity() if source_dim == config.input_dim
+            else nn.Linear(source_dim, config.input_dim)
+        )
         self.position = ContinuousPositionEncoding(config.hidden_dim)
         descriptor_dim = 4 * config.input_dim
         self.descriptor_projection = nn.Sequential(
@@ -131,8 +137,10 @@ class GenericTemporalPatchField(nn.Module):
     def forward(self, per_time_tokens: Tensor) -> TemporalPatchField:
         if per_time_tokens.ndim != 4 or per_time_tokens.shape[1] != 2:
             raise ValueError("per_time_tokens must have shape [B,2,N,D]")
-        if per_time_tokens.shape[-1] != self.config.input_dim:
-            raise ValueError("per_time_tokens feature dimension disagrees with QCPRV3Config.input_dim")
+        source_dim = self.config.input_dim if self.config.visual_source_dim is None else self.config.visual_source_dim
+        if per_time_tokens.shape[-1] != source_dim:
+            raise ValueError("per_time_tokens feature dimension disagrees with QCPRV3Config.visual_source_dim")
+        per_time_tokens = self.source_projection(per_time_tokens)
         source_side = int(math.isqrt(per_time_tokens.shape[2]))
         if source_side * source_side != per_time_tokens.shape[2]:
             raise ValueError("per_time_tokens must form a square source grid")

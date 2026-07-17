@@ -78,7 +78,9 @@ class UniChangeV3RetrievalModel(nn.Module):
             visual = self.visual_encoder(images)
         temporal = self.temporal_encoder(visual.features, temporal_valid_mask=temporal_valid_mask)
         pair = F.normalize(self.retrieval_head(temporal.pair_embedding).pair_embedding, dim=-1)
-        return pair, temporal.per_time_tokens, visual.metadata
+        # Global retrieval uses the temporal encoder, while dense grounding must
+        # retain the ordered, unmixed frozen UniverSat T1/T2 patch field.
+        return pair, visual.features, visual.metadata
 
     def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         with torch.no_grad():
