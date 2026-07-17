@@ -293,6 +293,7 @@ def _micro_overfit_gate(
         "train_soft_query_swap_gap_positive": last["soft_query_swap_iou_gap"] > 0.0,
         "train_appeared_soft_query_swap_gap_positive": last["appeared_soft_query_swap_iou_gap"] > 0.0,
         "train_disappeared_soft_query_swap_gap_positive": last["disappeared_soft_query_swap_iou_gap"] > 0.0,
+        "train_mask_not_empty_or_full": 0.0 < last["predicted_area"] < 1.0,
         "gradients_finite": gradients_finite,
     }
     return {"passed": all(checks.values()), "checks": checks, "step0": first, "final": last}
@@ -309,6 +310,7 @@ def _validation_direction(history: list[dict[str, float | int]]) -> dict[str, ob
         "validation_soft_query_swap_gap_positive": last["soft_query_swap_iou_gap"] > 0.0,
         "validation_appeared_soft_query_swap_gap_positive": last["appeared_soft_query_swap_iou_gap"] > 0.0,
         "validation_disappeared_soft_query_swap_gap_positive": last["disappeared_soft_query_swap_iou_gap"] > 0.0,
+        "validation_mask_not_empty_or_full": 0.0 < last["predicted_area"] < 1.0,
     }
     return {"positive": all(checks.values()), "checks": checks, "step0": first, "final": last}
 

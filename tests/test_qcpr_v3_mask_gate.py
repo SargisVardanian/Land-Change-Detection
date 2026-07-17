@@ -15,6 +15,7 @@ def _row(*, dice: float, iou: float, margin: float, empty: float, swap: float):
         "query_swap_count": 2,
         "appeared_soft_query_swap_iou_gap": swap,
         "disappeared_soft_query_swap_iou_gap": swap,
+        "predicted_area": 0.5,
     }
 
 
@@ -30,6 +31,7 @@ def test_micro_gate_uses_fixed_train_soft_metrics_without_arbitrary_hard_thresho
         "train_localization_margin_increased", "train_empty_mean_probability_not_increased",
         "train_soft_query_swap_gap_positive", "train_appeared_soft_query_swap_gap_positive",
         "train_disappeared_soft_query_swap_gap_positive", "gradients_finite",
+        "train_mask_not_empty_or_full",
     }
 
 
@@ -49,6 +51,14 @@ def test_validation_rejects_query_independent_mask_improvement() -> None:
     gate = _validation_direction(history)
     assert not gate["positive"]
     assert not gate["checks"]["validation_soft_query_swap_gap_positive"]
+
+
+def test_direction_gates_reject_all_foreground_predictions() -> None:
+    first = _row(dice=0.01, iou=0.005, margin=-0.01, empty=0.0, swap=-0.001)
+    last = _row(dice=0.02, iou=0.010, margin=0.01, empty=0.0, swap=0.001)
+    last["predicted_area"] = 1.0
+    assert not _micro_overfit_gate([first, last], gradients_finite=True)["passed"]
+    assert not _validation_direction([first, last])["positive"]
 
 
 def test_direction_separation_compares_opposite_query_on_same_target() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 
 from land_change_detection.models.qcpr_v3 import (
@@ -50,6 +52,17 @@ def test_generic_v3_shapes_and_no_semantic_specific_heads() -> None:
     assert output.slot_activations is None
     names = set(dict(model.named_modules()))
     assert not any(term in name for name in names for term in ("object_head", "direction_head", "location_head", "count_head", "relation_head"))
+
+
+def test_sparse_mask_prior_initializes_final_logit_bias() -> None:
+    model, _ = _inputs()
+    expected = math.log(
+        model.config.mask_prior_probability / (1.0 - model.config.mask_prior_probability)
+    )
+    torch.testing.assert_close(
+        model.mask_decoder.mask_head[-1].bias.detach(),
+        torch.tensor([expected], dtype=model.mask_decoder.mask_head[-1].bias.dtype),
+    )
 
 
 def test_temporal_field_projects_raw_visual_tokens_before_signed_difference() -> None:

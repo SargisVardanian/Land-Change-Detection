@@ -26,6 +26,7 @@ class QCPRV3Config:
     region_slots: int = 8
     slot_iterations: int = 3
     mask_decoder_dim: int = 64
+    mask_prior_probability: float = 0.05
 
 
 @dataclass(frozen=True)
@@ -243,6 +244,8 @@ class MultiScaleQueryMaskDecoder(nn.Module):
     def __init__(self, config: QCPRV3Config):
         super().__init__()
         self.config = config
+        if not 0.0 < config.mask_prior_probability < 1.0:
+            raise ValueError("mask_prior_probability must be strictly between zero and one")
         width = config.mask_decoder_dim
         self.lateral_projections = nn.ModuleList(
             nn.Sequential(nn.LayerNorm(config.hidden_dim), nn.Linear(config.hidden_dim, width))
@@ -274,6 +277,13 @@ class MultiScaleQueryMaskDecoder(nn.Module):
         self.mask_head = nn.Sequential(
             nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
             nn.Conv2d(width, 1, 1),
+        )
+        # Sparse EO targets should not begin as an all-foreground prediction.
+        # The prior only initializes the generic final logit bias; it does not
+        # encode any object, location, count, or temporal-direction rule.
+        nn.init.constant_(
+            self.mask_head[-1].bias,
+            math.log(config.mask_prior_probability / (1.0 - config.mask_prior_probability)),
         )
 
     def forward(self, patch_logits: Tensor, grounded: Tensor, scale_slices: tuple[tuple[int, int, int], ...]) -> Tensor:
