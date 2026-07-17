@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import pytest
 import torch
+from torch import nn
 
 from land_change_detection.models.qcpr_v31_encoder_ablation import (
+    load_global_retrieval_modules_strict,
     metrics_by_query_groups,
     normalized_temporal_delta,
     replacement_gate,
@@ -11,6 +13,17 @@ from land_change_detection.models.qcpr_v31_encoder_ablation import (
     score_zero_shot_temporal_delta,
     stable_fingerprint,
 )
+
+
+class _GlobalModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.visual_encoder = nn.Linear(2, 2)
+        self.temporal_encoder = nn.Linear(2, 2)
+        self.text_encoder = nn.Linear(2, 2)
+        self.retrieval_head = nn.Linear(2, 2)
+        self.text_adapter = nn.Linear(2, 2)
+        self.grounder = nn.Linear(3, 3)
 
 
 def test_temporal_delta_reversal_changes_sign() -> None:
@@ -77,3 +90,44 @@ def test_stable_fingerprint_changes_with_order() -> None:
 def test_invalid_temporal_shapes_are_rejected() -> None:
     with pytest.raises(ValueError, match="same"):
         normalized_temporal_delta(torch.zeros(2, 3), torch.zeros(3, 3))
+
+
+def test_global_checkpoint_load_is_strict_but_excludes_versioned_grounder() -> None:
+    source = _GlobalModel()
+    target = _GlobalModel()
+    old_state = source.state_dict()
+    # Simulate a checkpoint whose grounder architecture differs.
+    old_state = {
+        key: value
+        for key, value in old_state.items()
+        if not key.startswith("grounder.")
+    } | {"grounder.old_decoder.weight": torch.ones(1)}
+    report = load_global_retrieval_modules_strict(target, old_state)
+    assert report["global_path_strict"] is True
+    assert report["excluded_prefixes"] == {"grounder": 1}
+    for name in (
+        "visual_encoder",
+        "temporal_encoder",
+        "text_encoder",
+        "retrieval_head",
+        "text_adapter",
+    ):
+        torch.testing.assert_close(
+            getattr(source, name).weight,
+            getattr(target, name).weight,
+        )
+
+
+def test_global_checkpoint_load_rejects_missing_global_key() -> None:
+    model = _GlobalModel()
+    state = model.state_dict()
+    state.pop("temporal_encoder.weight")
+    with pytest.raises(RuntimeError, match="temporal_encoder"):
+        load_global_retrieval_modules_strict(_GlobalModel(), state)
+
+
+def test_global_checkpoint_load_rejects_unknown_non_grounder_prefix() -> None:
+    model = _GlobalModel()
+    state = model.state_dict() | {"mystery.weight": torch.ones(1)}
+    with pytest.raises(RuntimeError, match="unrecognized"):
+        load_global_retrieval_modules_strict(_GlobalModel(), state)

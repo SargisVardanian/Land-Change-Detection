@@ -28,6 +28,7 @@ import qcpr_v3_data_compat as data_compat
 from land_change_detection.models.qcpr_v3 import QCPRV3Config
 from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig, build_clean_v3_model
 from land_change_detection.models.qcpr_v31_encoder_ablation import (
+    load_global_retrieval_modules_strict,
     metrics_by_query_groups,
     replacement_gate,
     score_zero_shot_temporal_delta,
@@ -132,7 +133,7 @@ def encode_current(
         device=device,
         grounding_config=QCPRV3Config(**payload["grounding_config"]),
     )
-    load_result = model.load_state_dict(payload["model"], strict=True)
+    global_load = load_global_retrieval_modules_strict(model, payload["model"])
     model.eval()
     pairs: list[torch.Tensor] = []
     base_text: list[torch.Tensor] = []
@@ -165,9 +166,9 @@ def encode_current(
         {
             "checkpoint": str(checkpoint),
             "checkpoint_sha256": sha256_file(checkpoint),
-            "strict_load": True,
-            "missing_keys": list(load_result.missing_keys),
-            "unexpected_keys": list(load_result.unexpected_keys),
+            "strict_global_path_load": True,
+            "global_load_audit": global_load,
+            "grounder_load": "EXCLUDED_ARCHITECTURE_VERSIONED_AND_UNUSED",
             "score_contract": "learned_qcpr_global_pair_embedding",
             "architecture_compatible_replacement": True,
             "dense_grid": [32, 32],

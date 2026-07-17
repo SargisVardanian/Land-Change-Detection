@@ -16,6 +16,15 @@ from torch import Tensor
 from torch.nn import functional as F
 
 
+GLOBAL_RETRIEVAL_MODULES = (
+    "visual_encoder",
+    "temporal_encoder",
+    "text_encoder",
+    "retrieval_head",
+    "text_adapter",
+)
+
+
 def sha256_file(path: str | Path, chunk_bytes: int = 1024 * 1024) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -43,6 +52,61 @@ def normalized_temporal_delta(before: Tensor, after: Tensor) -> Tensor:
     if before.shape != after.shape or before.ndim != 2:
         raise ValueError("before and after must have the same [B,D] shape")
     return F.normalize(after - before, dim=-1)
+
+
+def load_global_retrieval_modules_strict(
+    model: torch.nn.Module,
+    state_dict: dict[str, Tensor],
+) -> dict[str, Any]:
+    """Strictly restore the global path while excluding versioned grounders.
+
+    Historical clean-global checkpoints predate the QCPR v3.1 FPN.  Encoder
+    ablation does not execute a grounder, so accepting or randomly filling its
+    keys would be misleading.  Every global module is instead loaded strictly
+    and all excluded keys are reported.
+    """
+    report: dict[str, Any] = {"modules": {}, "excluded_prefixes": {}}
+    consumed: set[str] = set()
+    for name in GLOBAL_RETRIEVAL_MODULES:
+        module = getattr(model, name, None)
+        prefix = f"{name}."
+        values = {
+            key[len(prefix) :]: value
+            for key, value in state_dict.items()
+            if key.startswith(prefix)
+        }
+        consumed.update(key for key in state_dict if key.startswith(prefix))
+        if module is None:
+            if values:
+                raise RuntimeError(
+                    f"checkpoint contains {name} parameters but current model has no such module"
+                )
+            report["modules"][name] = {"present": False, "key_count": 0, "strict": True}
+            continue
+        if not values and module.state_dict():
+            raise RuntimeError(f"checkpoint has no parameters for required global module {name}")
+        try:
+            result = module.load_state_dict(values, strict=True)
+        except RuntimeError as error:
+            raise RuntimeError(f"strict global module load failed for {name}: {error}") from error
+        report["modules"][name] = {
+            "present": True,
+            "key_count": len(values),
+            "strict": True,
+            "missing_keys": list(result.missing_keys),
+            "unexpected_keys": list(result.unexpected_keys),
+        }
+    excluded = sorted(set(state_dict) - consumed)
+    for key in excluded:
+        root = key.split(".", 1)[0]
+        report["excluded_prefixes"][root] = report["excluded_prefixes"].get(root, 0) + 1
+    invalid = sorted(prefix for prefix in report["excluded_prefixes"] if prefix != "grounder")
+    if invalid:
+        raise RuntimeError(f"unrecognized checkpoint prefixes outside global path: {invalid}")
+    report["excluded_key_count"] = len(excluded)
+    report["global_path_strict"] = True
+    report["full_model_strict"] = False
+    return report
 
 
 def score_zero_shot_temporal_delta(text: Tensor, before: Tensor, after: Tensor) -> Tensor:

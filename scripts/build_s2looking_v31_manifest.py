@@ -41,10 +41,42 @@ def _location(mask: np.ndarray) -> str:
     return f"{vertical} {horizontal}"
 
 
-def _caption(direction: str, count: int, location: str) -> str:
-    noun = "one building" if count == 1 else f"{count} buildings" if 1 < count <= 5 else "several buildings"
+def _caption(
+    direction: str,
+    count: int,
+    location: str,
+    *,
+    has_visual_target: bool | None = None,
+) -> str:
+    if count < 0:
+        raise ValueError("component count cannot be negative")
+    has_visual_target = count > 0 if has_visual_target is None else bool(has_visual_target)
+    if not has_visual_target:
+        return "no buildings appeared" if direction == "appeared" else "no buildings disappeared"
+    noun = (
+        "buildings" if count == 0 else
+        "one building" if count == 1 else
+        f"{count} buildings" if count <= 5 else
+        "several buildings"
+    )
     action = "appeared" if direction == "appeared" else "disappeared"
     return f"{noun} {action}" + (f" near the {location}" if location else "")
+
+
+def _direction_caption(
+    direction: str,
+    count: int,
+    *,
+    has_visual_target: bool | None = None,
+) -> str:
+    if count < 0:
+        raise ValueError("component count cannot be negative")
+    has_visual_target = count > 0 if has_visual_target is None else bool(has_visual_target)
+    if direction == "appeared":
+        return "new buildings appeared" if has_visual_target else "no new buildings appeared"
+    if direction == "disappeared":
+        return "buildings were demolished" if has_visual_target else "no buildings were demolished"
+    raise ValueError(f"unsupported direction {direction!r}")
 
 
 def _image_shift(first: str, second: str) -> float:
@@ -119,18 +151,31 @@ def main() -> None:
             mask = _mask(source["mask_path"])
             directional_masks.append(mask)
             components = _components(mask)
+            has_visual_target = bool(mask.any())
             area = float(mask.mean())
             cells = area * 32 * 32
             border = np.zeros_like(mask); border[[0, -1], :] = True; border[:, [0, -1]] = True
             edge_fraction = float((mask & border).sum() / max(mask.sum(), 1))
-            caption = _caption(direction, len(components), _location(mask))
+            caption = _caption(
+                direction,
+                len(components),
+                _location(mask),
+                has_visual_target=has_visual_target,
+            )
             ys, xs = np.nonzero(mask)
             bbox = None if not len(xs) else [int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1]
+            component_count = len(components)
             targets.append({
                 "direction": direction, "caption": caption, "mask_path": source["mask_path"],
-                "direction_caption": "new buildings appeared" if direction == "appeared" else "buildings were demolished",
+                "direction_caption": _direction_caption(
+                    direction,
+                    component_count,
+                    has_visual_target=has_visual_target,
+                ),
                 "foreground_area": area, "canonical_cell_equivalents": cells,
-                "component_count": len(components), "edge_fraction": edge_fraction,
+                "component_count": component_count, "has_visual_target": has_visual_target,
+                "target_polarity": "positive" if has_visual_target else "negative_empty",
+                "edge_fraction": edge_fraction,
                 "raw_geometry": {"height": int(mask.shape[0]), "width": int(mask.shape[1]), "bbox_xyxy": bbox},
                 "caption_provenance": "deterministic_verified_mask_attributes",
                 "caption_confidence": 1.0, "audit_status": "derived_not_human_reviewed",
@@ -210,6 +255,15 @@ def main() -> None:
     )
     (output / "stress_evaluation_manifest.jsonl").write_text(stress_payload)
     counts = {tier: sum(row["quality_tier"] == tier for row in prepared) for tier in ("core", "hard", "stress")}
+    empty_direction_counts = {
+        direction: sum(
+            not bool(target["has_visual_target"])
+            for row in prepared
+            for target in row["directional_targets"]
+            if target["direction"] == direction
+        )
+        for direction in ("appeared", "disappeared")
+    }
     overlaps = np.asarray([row["directional_overlap_iou"] for row in prepared], dtype=np.float64)
     audit = {"input": str(Path(args.input).resolve()), "pair_count": len(prepared), "tier_counts": counts,
              "manifest_sha256": hashlib.sha256(payload.encode()).hexdigest(),
@@ -218,6 +272,10 @@ def main() -> None:
                  str(q): float(np.quantile(overlaps, q)) for q in (0.0, 0.5, 0.9, 0.95, 0.99, 1.0)
              },
              "directional_overlap_policy": {"core_max": 0.10, "stress_above": 0.30}}
+    audit["empty_direction_counts"] = empty_direction_counts
+    audit["empty_direction_caption_policy"] = (
+        "empty directional masks use explicit no-change directional captions"
+    )
     audit["radiometric_policy"] = {
         "fit_split": "train",
         "geometry_valid_quantile": core_quantile,
