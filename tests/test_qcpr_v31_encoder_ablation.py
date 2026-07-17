@@ -3,11 +3,13 @@ from __future__ import annotations
 import pytest
 import torch
 from torch import nn
+from types import SimpleNamespace
 
 from land_change_detection.models.qcpr_v31_encoder_ablation import (
     load_global_retrieval_modules_strict,
     metrics_by_query_groups,
     normalized_temporal_delta,
+    pooled_feature_tensor,
     replacement_gate,
     retrieval_metrics,
     score_zero_shot_temporal_delta,
@@ -131,3 +133,24 @@ def test_global_checkpoint_load_rejects_unknown_non_grounder_prefix() -> None:
     state = model.state_dict() | {"mystery.weight": torch.ones(1)}
     with pytest.raises(RuntimeError, match="unrecognized"):
         load_global_retrieval_modules_strict(_GlobalModel(), state)
+
+
+@pytest.mark.parametrize(
+    "output",
+    (
+        torch.ones(2, 3),
+        SimpleNamespace(pooler_output=torch.ones(2, 3)),
+        (torch.ones(2, 4, 3), torch.ones(2, 3)),
+    ),
+)
+def test_pooled_feature_tensor_supports_transformers_return_contracts(output) -> None:
+    feature = pooled_feature_tensor(output, expected_batch=2)
+    assert feature.shape == (2, 3)
+    assert torch.isfinite(feature).all()
+
+
+def test_pooled_feature_tensor_rejects_wrong_batch_and_nonfinite() -> None:
+    with pytest.raises(ValueError, match="B=2"):
+        pooled_feature_tensor(torch.ones(1, 3), expected_batch=2)
+    with pytest.raises(ValueError, match="NaN"):
+        pooled_feature_tensor(torch.tensor([[float("nan")]]), expected_batch=1)

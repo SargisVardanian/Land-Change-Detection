@@ -30,6 +30,7 @@ from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig, b
 from land_change_detection.models.qcpr_v31_encoder_ablation import (
     load_global_retrieval_modules_strict,
     metrics_by_query_groups,
+    pooled_feature_tensor,
     replacement_gate,
     score_zero_shot_temporal_delta,
     sha256_file,
@@ -254,14 +255,30 @@ def encode_siglip2(
             return_tensors="pt",
         )
         inputs = {name: value.to(device) for name, value in inputs.items()}
-        text_parts.append(model.get_text_features(**inputs).cpu())
+        output = model.get_text_features(**inputs)
+        text_parts.append(
+            pooled_feature_tensor(
+                output,
+                expected_batch=int(inputs["input_ids"].shape[0]),
+            ).cpu()
+        )
     before_parts, after_parts = [], []
     total = math.ceil(len(rows) / batch_size)
     for index, before, after in image_batches(rows, batch_size):
         before_inputs = processor(images=before, return_tensors="pt")
         after_inputs = processor(images=after, return_tensors="pt")
-        before_parts.append(model.get_image_features(**{k: v.to(device) for k, v in before_inputs.items()}).cpu())
-        after_parts.append(model.get_image_features(**{k: v.to(device) for k, v in after_inputs.items()}).cpu())
+        before_output = model.get_image_features(
+            **{k: v.to(device) for k, v in before_inputs.items()}
+        )
+        after_output = model.get_image_features(
+            **{k: v.to(device) for k, v in after_inputs.items()}
+        )
+        before_parts.append(
+            pooled_feature_tensor(before_output, expected_batch=len(before)).cpu()
+        )
+        after_parts.append(
+            pooled_feature_tensor(after_output, expected_batch=len(after)).cpu()
+        )
         progress.write("siglip2", index, total)
     config_path = model_path / "config.json"
     return (

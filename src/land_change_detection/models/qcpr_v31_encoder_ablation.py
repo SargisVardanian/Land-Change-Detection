@@ -115,6 +115,29 @@ def score_zero_shot_temporal_delta(text: Tensor, before: Tensor, after: Tensor) 
     return F.normalize(text, dim=-1) @ normalized_temporal_delta(before, after).T
 
 
+def pooled_feature_tensor(output: Any, *, expected_batch: int) -> Tensor:
+    """Normalize Transformers feature-return variants to finite [B,D]."""
+    value = output if isinstance(output, Tensor) else getattr(output, "pooler_output", None)
+    if value is None and isinstance(output, (tuple, list)):
+        value = next(
+            (
+                candidate
+                for candidate in output
+                if isinstance(candidate, Tensor) and candidate.ndim == 2
+            ),
+            None,
+        )
+    if not isinstance(value, Tensor):
+        raise TypeError("encoder output has no pooled Tensor feature")
+    if value.ndim != 2 or value.shape[0] != expected_batch:
+        raise ValueError(
+            f"pooled feature must be [B,D] with B={expected_batch}, got {tuple(value.shape)}"
+        )
+    if not torch.isfinite(value).all():
+        raise ValueError("pooled feature contains NaN or Inf")
+    return value
+
+
 def retrieval_metrics(scores: Tensor, relevance: Tensor, exact_pair: Tensor) -> dict[str, Any]:
     """Compute deterministic retrieval metrics for one score matrix."""
     if scores.ndim != 2 or relevance.shape != scores.shape:
