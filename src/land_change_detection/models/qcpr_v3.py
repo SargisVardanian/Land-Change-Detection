@@ -199,6 +199,7 @@ class GenericCrossModalDecoder(nn.Module):
         patches: Tensor,
         text_tokens: Tensor,
         text_attention_mask: Tensor,
+        global_query_embedding: Tensor | None = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         if patches.ndim != 3 or text_tokens.ndim != 3 or text_attention_mask.ndim != 2:
             raise ValueError("patches [C,N,D], text_tokens [Q,L,D], mask [Q,L] required")
@@ -207,6 +208,10 @@ class GenericCrossModalDecoder(nn.Module):
         tokens = F.normalize(self.token_projection(text_tokens), dim=-1)
         valid = text_attention_mask.to(tokens.dtype).unsqueeze(-1)
         query_context = (tokens * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+        if global_query_embedding is not None:
+            if global_query_embedding.shape != query_context.shape:
+                raise ValueError("global query embedding must align with projected token context")
+            query_context = F.normalize(query_context, dim=-1) + F.normalize(global_query_embedding, dim=-1)
         scale, shift = self.query_modulation(query_context).chunk(2, dim=-1)
         scale = 0.5 * torch.tanh(scale)
         grounded = patches[None].expand(queries, -1, -1, -1)
@@ -403,12 +408,14 @@ class QCPRV3GenericGrounding(nn.Module):
         text_content_mask: Tensor | None = None,
     ) -> QCPRV3ScoreOutput:
         field = self.temporal_field(per_time_tokens)
+        query_condition = self.global_query_projection(global_query_embeddings)
         grounded, raw_patch_logits, projected_tokens = self.grounding_decoder(
-            field.descriptors, text_token_embeddings, text_attention_mask
+            field.descriptors, text_token_embeddings, text_attention_mask,
+            query_condition,
         )
         decoded_logits = self.mask_decoder(raw_patch_logits, grounded, field.scale_slices)
         patch_logits = self.mask_decoder.sample_patch_logits(decoded_logits, field.scale_slices)
-        query = F.normalize(self.global_query_projection(global_query_embeddings), dim=-1)
+        query = F.normalize(query_condition, dim=-1)
         pairs = F.normalize(pair_embeddings, dim=-1)
         global_score = query @ pairs.T
         local_embedding = self.masked_local_embedding(field.descriptors, patch_logits)

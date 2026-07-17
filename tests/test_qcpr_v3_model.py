@@ -92,6 +92,17 @@ def test_query_modulation_makes_dense_features_text_conditional() -> None:
     assert not torch.allclose(grounded[0], grounded[1])
 
 
+def test_global_query_embedding_directly_conditions_dense_features() -> None:
+    model, _ = _inputs()
+    patches = torch.randn(1, 20, model.config.hidden_dim)
+    shared_tokens = torch.randn(1, 3, model.config.text_dim).expand(2, -1, -1).clone()
+    attention = torch.ones(2, 3, dtype=torch.bool)
+    direction = torch.linspace(-1.0, 1.0, model.config.hidden_dim)
+    global_queries = torch.stack((direction, -direction))
+    grounded, _, _ = model.grounding_decoder(patches, shared_tokens, attention, global_queries)
+    assert not torch.allclose(grounded[0], grounded[1])
+
+
 def test_multiscale_fusion_sends_gradient_to_every_refiner() -> None:
     model, _ = _inputs()
     logits = torch.full((1, 1, 20), -12.0, requires_grad=True)
