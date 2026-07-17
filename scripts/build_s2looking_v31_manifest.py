@@ -64,6 +64,36 @@ def s2looking_chronological_paths(image1_path: str, image2_path: str) -> tuple[s
     return image2_path, image1_path
 
 
+def radiometric_core_threshold(rows: list[dict], *, quantile: float = 0.90) -> float:
+    """Fit a leakage-free radiometric threshold on geometry-valid train rows."""
+    if not 0.0 < quantile < 1.0:
+        raise ValueError("radiometric core quantile must be strictly between zero and one")
+    train_shifts = [
+        float(row["radiometric_shift"])
+        for row in rows
+        if row["split"] == "train" and row["geometry_tier"] == "core"
+    ]
+    if not train_shifts:
+        raise RuntimeError("cannot fit radiometric core threshold without geometry-valid train rows")
+    return float(np.quantile(np.asarray(train_shifts, dtype=np.float64), quantile))
+
+
+def select_directional_sanity_pair(rows: list[dict], split: str, target_shift: float) -> str:
+    """Choose a fixed core probe by data quality only, never model performance."""
+    candidates = [row for row in rows if row["split"] == split and row["quality_tier"] == "core"]
+    if not candidates:
+        raise RuntimeError(f"no core S2Looking rows available for {split!r} sanity selection")
+    selected = min(
+        candidates,
+        key=lambda row: (
+            abs(float(row["radiometric_shift"]) - float(target_shift)),
+            float(row["directional_overlap_iou"]),
+            str(row["pair_id"]),
+        ),
+    )
+    return str(selected["pair_id"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", required=True)
@@ -119,9 +149,9 @@ def main() -> None:
         directional_overlap_iou = float(
             np.logical_and(directional_masks[0], directional_masks[1]).sum() / max(overlap_union, 1)
         )
-        tier = (
+        geometry_tier = (
             "stress" if qualities.count("stress") == 2 or directional_overlap_iou > 0.30 else
-            "hard" if "stress" in qualities or "hard" in qualities or shift > 0.18 or directional_overlap_iou > 0.10 else
+            "hard" if "stress" in qualities or "hard" in qualities or directional_overlap_iou > 0.10 else
             "core"
         )
         prepared.append({
@@ -131,7 +161,8 @@ def main() -> None:
             "captions": [target["caption"] for target in targets],
             "normalized_caption_groups": [target["caption"].casefold() for target in targets],
             "caption_source": "deterministic_verified_mask_attributes",
-            "directional_targets": targets, "quality_tier": tier, "radiometric_shift": shift,
+            "directional_targets": targets, "geometry_tier": geometry_tier,
+            "quality_tier": geometry_tier, "radiometric_shift": shift,
             "directional_overlap_iou": directional_overlap_iou,
             "retrieval_supervision": False, "seg_supervision_mode": "query_specific",
             "image_height": 1024, "image_width": 1024, "sensor": "side_looking_vhr",
@@ -150,6 +181,21 @@ def main() -> None:
                 "completed_fraction": fraction, "elapsed_seconds": elapsed,
                 "eta_seconds": max(elapsed / fraction - elapsed, 0.0),
             }, indent=2, sort_keys=True) + "\n")
+    core_quantile = 0.90
+    core_shift_max = radiometric_core_threshold(prepared, quantile=core_quantile)
+    for row in prepared:
+        if row["geometry_tier"] == "core" and float(row["radiometric_shift"]) > core_shift_max:
+            row["quality_tier"] = "hard"
+    train_core_shifts = [
+        float(row["radiometric_shift"])
+        for row in prepared
+        if row["split"] == "train" and row["quality_tier"] == "core"
+    ]
+    sanity_target_shift = float(np.median(np.asarray(train_core_shifts, dtype=np.float64)))
+    sanity_pairs = {
+        split: select_directional_sanity_pair(prepared, split, sanity_target_shift)
+        for split in ("train", "val")
+    }
     manifest = output / "s2looking_pair_level.jsonl"
     payload = "".join(json.dumps(row, sort_keys=True) + "\n" for row in prepared)
     manifest.write_text(payload)
@@ -172,6 +218,13 @@ def main() -> None:
                  str(q): float(np.quantile(overlaps, q)) for q in (0.0, 0.5, 0.9, 0.95, 0.99, 1.0)
              },
              "directional_overlap_policy": {"core_max": 0.10, "stress_above": 0.30}}
+    audit["radiometric_policy"] = {
+        "fit_split": "train",
+        "geometry_valid_quantile": core_quantile,
+        "core_max": core_shift_max,
+        "sanity_target_shift": sanity_target_shift,
+    }
+    audit["directional_sanity_pair_ids"] = sanity_pairs
     (output / "s2looking_pair_level_audit.json").write_text(json.dumps(audit, indent=2, sort_keys=True) + "\n")
     (output / "progress.json").write_text(json.dumps({
         "status": "COMPLETED", "completed_pairs": len(prepared), "total_pairs": len(prepared),
