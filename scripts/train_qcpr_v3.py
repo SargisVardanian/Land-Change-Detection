@@ -319,14 +319,14 @@ def _direction_query_separation_loss(
     query_indices: torch.Tensor,
     changes: list[str | None],
     targets: torch.Tensor,
-    *,
-    margin: float = 0.05,
 ) -> tuple[torch.Tensor, int]:
-    """Contrast correct and opposite text on the same images and target.
+    """Rank correct text above opposite text by query-target soft IoU.
 
-    Comparing one query map with two targets permits a query-independent union
-    mask. This contract instead requires the correct directional query to have
-    greater foreground-minus-background evidence than its paired opposite query.
+    The scientific query-swap gate is defined by soft IoU.  Optimizing a
+    different foreground-minus-background statistic left a gap where training
+    could improve localization while making the opposite query overlap a target
+    more strongly.  This pairwise logistic objective uses the same spatial
+    quantity as the gate without introducing a direction-specific model head.
     """
     if all_logits.ndim != 4 or targets.ndim != 3:
         raise ValueError("direction separation expects [Q,C,H,W] logits and [S,H,W] targets")
@@ -351,11 +351,20 @@ def _direction_query_separation_loss(
             continue
         candidate_id = int(mapping[query_id])
         opposite_query_id = selected_query_ids[opposite_local]
+        target_float = target.to(dtype=all_logits.dtype)
         correct_probability = all_logits[query_id, candidate_id].sigmoid()
         opposite_probability = all_logits[opposite_query_id, candidate_id].sigmoid()
-        correct_evidence = correct_probability[target].mean() - correct_probability[~target].mean()
-        opposite_evidence = opposite_probability[target].mean() - opposite_probability[~target].mean()
-        terms.append(torch.relu(correct_evidence.new_tensor(float(margin)) - correct_evidence + opposite_evidence))
+
+        def soft_iou(probability: torch.Tensor) -> torch.Tensor:
+            intersection = (probability * target_float).sum()
+            union = probability.sum() + target_float.sum() - intersection
+            return (intersection + 1e-6) / (union + 1e-6)
+
+        correct_overlap = soft_iou(correct_probability)
+        opposite_overlap = soft_iou(opposite_probability)
+        # Pairwise logistic ranking remains differentiable at equal scores and
+        # directly rewards a positive soft query-swap IoU gap.
+        terms.append(F.softplus(opposite_overlap - correct_overlap))
     if not terms:
         return all_logits.sum() * 0.0, 0
     return torch.stack(terms).mean(), len(terms)

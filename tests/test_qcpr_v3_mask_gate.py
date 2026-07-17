@@ -62,10 +62,26 @@ def test_direction_separation_compares_opposite_query_on_same_target() -> None:
         logits, torch.tensor([0, 0]), torch.tensor([0, 1]),
         ["appeared", "disappeared"], targets,
     )
-    assert count == 2 and float(loss) == 0.0
+    assert count == 2
     shared = logits[[0, 0]].clone()
     shared_loss, _ = _direction_query_separation_loss(
         shared, torch.tensor([0, 0]), torch.tensor([0, 1]),
         ["appeared", "disappeared"], targets,
     )
-    assert float(shared_loss) > 0.0
+    assert float(loss) < float(shared_loss)
+
+
+def test_direction_separation_optimizes_soft_query_swap_gap() -> None:
+    target_appeared = torch.zeros(4, 4); target_appeared[:2, :2] = 1
+    target_disappeared = torch.zeros(4, 4); target_disappeared[2:, 2:] = 1
+    targets = torch.stack((target_appeared, target_disappeared))
+    logits = torch.zeros((2, 1, 4, 4), requires_grad=True)
+    loss, count = _direction_query_separation_loss(
+        logits, torch.tensor([0, 0]), torch.tensor([0, 1]),
+        ["appeared", "disappeared"], targets,
+    )
+    assert count == 2
+    loss.backward()
+    assert logits.grad is not None and torch.isfinite(logits.grad).all()
+    assert logits.grad[0, 0, :2, :2].mean() < 0
+    assert logits.grad[0, 0, 2:, 2:].mean() > 0
