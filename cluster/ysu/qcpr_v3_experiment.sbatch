@@ -17,7 +17,7 @@ case "$PHASE" in global_bootstrap|late_interaction|mask_grounding) ;; *) echo "i
 case "$STEPS" in 100|500) ;; *) echo "controlled steps must be 100 or 500" >&2; exit 2;; esac
 cd "$ROOT"; test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"; test -z "$(git status --porcelain)"
 FAST_PAIRS=${FAST_PAIRS:-0}
-DERIVED_MANIFEST_DIR=${DERIVED_MANIFEST_DIR:-/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3}
+DERIVED_MANIFEST_DIR=${DERIVED_MANIFEST_DIR:-/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3_clean_058779b7}
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
 ARGS=(--output-dir "$OUTPUT_DIR" --phase "$PHASE" --initialization-mode clean_pretrained --derived-manifest-dir "$DERIVED_MANIFEST_DIR" --steps "$STEPS" --batch-size "$BATCH_SIZE" --contrastive-temperature 0.07)
 if [[ "$PHASE" != "global_bootstrap" ]]; then

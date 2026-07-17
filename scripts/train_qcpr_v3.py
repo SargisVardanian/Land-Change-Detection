@@ -1065,7 +1065,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--jina-model", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/models/jina-v5-text-small-retrieval"))
     parser.add_argument("--grounding-backbone", choices=("universat", "siglip2"), default="universat")
     parser.add_argument("--siglip2-model", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/models/siglip2-base-patch16-256"))
-    parser.add_argument("--derived-manifest-dir", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3"))
+    parser.add_argument("--derived-manifest-dir", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3_clean_058779b7"))
     parser.add_argument("--steps", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--num-workers", type=int, default=4)

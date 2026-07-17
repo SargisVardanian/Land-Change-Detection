@@ -18,7 +18,7 @@ cd "$ROOT"; test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"; test -z "$(git statu
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
 PHASE=${PHASE:-global_bootstrap}
 V3_CHECKPOINT=${V3_CHECKPOINT:-}
-DERIVED_MANIFEST_DIR=${DERIVED_MANIFEST_DIR:-/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3}
+DERIVED_MANIFEST_DIR=${DERIVED_MANIFEST_DIR:-/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3_clean_058779b7}
 for batch in 8 16 20 24; do
   ARGS=(--output-dir "$OUTPUT_ROOT/bs${batch}" --phase "$PHASE" --initialization-mode clean_pretrained --derived-manifest-dir "$DERIVED_MANIFEST_DIR" --steps 3 --batch-size "$batch")
   if [[ "$PHASE" != "global_bootstrap" ]]; then
