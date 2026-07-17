@@ -35,13 +35,23 @@ def build_clean_v3(
     device: torch.device,
     enable_region_slots: bool = False,
 ) -> tuple[UniChangeV3RetrievalModel, None, V3InitializationAudit]:
+    grounding_config = (
+        QCPRV3Config(
+            visual_source_dim=768,
+            text_dim=768,
+            global_text_dim=512,
+            enable_region_slots=enable_region_slots,
+        )
+        if config.grounding_backbone_kind == "siglip2"
+        else QCPRV3Config(
+            visual_source_dim=768,
+            enable_region_slots=enable_region_slots,
+        )
+    )
     student = build_clean_v3_model(
         config,
         device=device,
-        grounding_config=QCPRV3Config(
-            visual_source_dim=768,
-            enable_region_slots=enable_region_slots,
-        ),
+        grounding_config=grounding_config,
     )
     audit = V3InitializationAudit(
         initialization_mode="clean_pretrained",

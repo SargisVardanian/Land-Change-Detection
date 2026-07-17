@@ -237,6 +237,48 @@ class DirectionalCurriculumBatchSampler(Sampler[list[tuple[int, str]]]):
             )
 
 
+class DirectionalM0BatchSampler(Sampler[list[tuple[int, str, int]]]):
+    """Deterministic 70/30 M0 crop sampler over immutable pair-level records."""
+
+    def __init__(self, rows: list[dict[str, Any]], batch_size: int, *, seed: int = 0):
+        if batch_size < 2:
+            raise ValueError("M0 directional sampler requires batch_size >= 2")
+        eligible = [
+            index for index, row in enumerate(rows)
+            if row.get("quality_tier") in {"core", "hard"}
+            and row.get("dataset_name") == "s2looking"
+            and bool(row.get("directional_targets"))
+        ]
+        if len(eligible) < batch_size:
+            raise ValueError("M0 sampler has insufficient non-stress pair-level rows")
+        self.rows, self.eligible = rows, eligible
+        self.batch_size, self.seed = int(batch_size), int(seed)
+        self.positive_count = max(1, int(round(self.batch_size * 0.70)))
+        self.background_count = self.batch_size - self.positive_count
+        if self.background_count <= 0:
+            raise ValueError("M0 sampler must allocate background crops")
+
+    def __len__(self) -> int:
+        return math.ceil(len(self.eligible) / self.batch_size)
+
+    def __iter__(self):
+        generator = torch.Generator().manual_seed(self.seed)
+        order = [self.eligible[index] for index in torch.randperm(len(self.eligible), generator=generator).tolist()]
+        cursor = 0
+        for batch_index in range(len(self)):
+            selected: list[int] = []
+            while len(selected) < self.batch_size:
+                candidate = order[cursor % len(order)]
+                cursor += 1
+                if candidate not in selected:
+                    selected.append(candidate)
+            modes = ["positive"] * self.positive_count + ["hard_background"] * self.background_count
+            yield [
+                (index, mode, self.seed + batch_index * self.batch_size + offset)
+                for offset, (index, mode) in enumerate(zip(selected, modes, strict=True))
+            ]
+
+
 class DirectionalSanitySampler(Sampler[list[tuple[int, str, int]]]):
     """One-pair schedule: 60% jittered positive, 20% background, 20% reversal."""
 

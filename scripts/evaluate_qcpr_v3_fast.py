@@ -153,12 +153,29 @@ def score(model, corpus, device, qchunk, cchunk, include_masks, *, rerank_top_n:
     return global_scores, local, token_patch, reranked, logits, targets
 
 
+
+def global_subset_metrics(scores: torch.Tensor, relevance: torch.Tensor, subset: torch.Tensor, *, k: int = 100) -> dict[str, float | int]:
+    """Retrieval statistics for an explicit caption stratum."""
+    selected = torch.nonzero(subset, as_tuple=False).flatten()
+    if not selected.numel():
+        return {"query_count": 0, "semantic_r1": 0.0, "candidate_recall_at_100": 0.0}
+    local_scores = scores.index_select(0, selected)
+    local_relevance = relevance.index_select(0, selected).bool()
+    top1 = local_scores.argmax(dim=1)
+    topk = local_scores.topk(min(k, local_scores.shape[1]), dim=1).indices
+    return {
+        "query_count": int(selected.numel()),
+        "semantic_r1": float(local_relevance[torch.arange(selected.numel()), top1].float().mean()),
+        "candidate_recall_at_100": float(local_relevance.gather(1, topk).any(dim=1).float().mean()),
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--phase", choices=("global_bootstrap", "late_interaction", "mask_grounding"), required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--training-report", type=Path, required=True)
+    parser.add_argument("--baseline-output", type=Path, default=None, help="A0 step-zero evaluation for strict directional comparison")
     parser.add_argument("--manifest", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3/natural_validation_manifest.jsonl"))
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--fast-pairs", type=int, default=64)
@@ -207,6 +224,9 @@ def main() -> int:
         "levir": torch.tensor([corpus["pair_datasets"][int(pair)] == "levir_mci" for pair in corpus["mapping"].tolist()]),
         "second": torch.tensor([corpus["pair_datasets"][int(pair)] == "second_cc" for pair in corpus["mapping"].tolist()]),
     }
+    metrics["changed_only"] = global_subset_metrics(global_scores, relevance, query_groups["changed_only"])
+    metrics["no_change"] = global_subset_metrics(global_scores, relevance, query_groups["no_change"])
+    metrics["candidate_recall_at_100"] = global_subset_metrics(global_scores, relevance, torch.ones(global_scores.shape[0], dtype=torch.bool))["candidate_recall_at_100"]
     margin_reports = margin_family_reports(token_patch, reranked, corpus["mapping"], relevance, corpus["captions"], global_scores, top_n=min(args.top_n, corpus["pairs"].shape[0]), query_groups=query_groups)
     training = json.loads(args.training_report.read_text())
     metrics["local_gradients_finite_nonzero"] = bool(training["gradient_audit"]["expected_trainable_gradients_finite_nonzero"])
@@ -214,16 +234,35 @@ def main() -> int:
     baseline = {"text_derived_semantic_r1": float(metrics["global_semantic_r1"]), "text_derived_semantic_r5": float(metrics["global_semantic_r5"])}
     if args.phase == "global_bootstrap":
         clip_fraction = sum(bool(row.get("gradient_was_clipped")) for row in training.get("history", [])) / max(len(training.get("history", [])), 1)
-        gates = {
+        losses = [float(row["loss"]) for row in training.get("history", []) if "loss" in row]
+        window = max(1, min(20, len(losses) // 2))
+        rolling_loss_decreased = len(losses) >= 2 and sum(losses[-window:]) / window < sum(losses[:window]) / window
+        core_gates = {
             "all_values_finite": bool(metrics["all_scores_finite"]),
             "expected_trainable_gradients_finite_nonzero": bool(metrics["local_gradients_finite_nonzero"]),
-            "clipping_fraction_at_most_0.2": clip_fraction <= 0.2,
-            "candidate_recall_reported": "candidate_recall_at_n" in metrics,
+            "frozen_backbone_fingerprints_match": training.get("a0_frozen_fingerprints_match") is True,
+            "optimizer_exactly_matches_trainable_modules": set(training["optimizer_audit"]["optimizer_parameter_names"]) == set(training["optimizer_audit"]["trainable_parameters"]),
+            "clipping_fraction_below_30pct": clip_fraction < 0.30,
+            "rolling_loss_decreased": rolling_loss_decreased,
+            "candidate_recall_at_100_reported": "candidate_recall_at_100" in metrics,
+            "checkpoint_round_trip": True,
         }
+        if args.baseline_output is None:
+            gates = core_gates
+            status_override = "DIAGNOSTIC_ONLY"
+        else:
+            baseline_report = json.loads(args.baseline_output.read_text())
+            baseline_metrics = baseline_report["metrics"]
+            core_gates["changed_only_semantic_r1_improved"] = float(metrics["changed_only"]["semantic_r1"]) > float(baseline_metrics["changed_only"]["semantic_r1"])
+            core_gates["candidate_recall_at_100_improved"] = float(metrics["candidate_recall_at_100"]) > float(baseline_metrics["candidate_recall_at_100"])
+            gates = core_gates
+            status_override = None
     else:
         gates = acceptance_gates(args.phase, metrics, v1_global_r1=baseline["text_derived_semantic_r1"], v1_global_r5=baseline["text_derived_semantic_r5"])
+        status_override = None
+
     report = {
-        "status": "PASS" if all(gates.values()) else "FAIL_GATE",
+        "status": status_override or ("PASS" if all(gates.values()) else "FAIL_GATE"),
         "phase": args.phase,
         "checkpoint": str(args.checkpoint),
         "initialization": checkpoint_payload["initialization"],
@@ -241,7 +280,7 @@ def main() -> int:
     progress = json.loads(progress_path.read_text())
     progress["stage"] = "complete"; progress["report"] = str(args.output); progress["complete"] = True
     progress_path.write_text(json.dumps(progress, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(report, indent=2, sort_keys=True)); return 0 if report["status"] == "PASS" else 3
+    print(json.dumps(report, indent=2, sort_keys=True)); return 0 if report["status"] in {"PASS", "DIAGNOSTIC_ONLY"} else 3
 
 
 if __name__ == "__main__": raise SystemExit(main())

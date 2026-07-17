@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -10,6 +11,7 @@ import sys
 import time
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import torch
@@ -22,7 +24,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import qcpr_v3_data_compat as data_compat
-from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, query_mask_metrics, separated_query_mask_losses
+from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, m0_balanced_mask_loss, m0_symmetric_query_swap_loss, query_mask_metrics, separated_query_mask_losses
 from land_change_detection.models.qcpr_v3_losses import duplicate_aware_positive_mask, multi_positive_contrastive_loss
 from land_change_detection.models.qcpr_v3_phases import apply_phase_to_model, resolve_training_phase
 from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig
@@ -30,8 +32,9 @@ from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, assert_te
 from land_change_detection.models.qcpr_v3_teacher import teacher_preservation_losses
 from land_change_detection.models.qcpr_v3_adapters import CanonicalV3Inputs, evaluator_score, renderer_score, trainer_score
 from land_change_detection.models.qcpr_v3_experiment import parser_derived_late_interaction_loss
-from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler, DirectionalSanitySampler
+from land_change_detection.models.qcpr_v3_data import CappedCompositionalBatchSampler, DirectionalCurriculumBatchSampler, DirectionalM0BatchSampler, DirectionalSanitySampler
 from land_change_detection.models.qcpr_v3 import stable_global_top_n
+from land_change_detection.models.qcpr_v31_encoder_ablation import load_global_retrieval_modules_strict
 from land_change_detection.models.qcpr_v3_mask_diagnostic import (
     append_jsonl,
     fixed_probe_contract,
@@ -139,8 +142,20 @@ def _caption_by_pair(batch: dict, mapping: torch.Tensor) -> list[str]:
     return captions
 
 
-def _load_v31_parent(student, state_dict: dict[str, torch.Tensor]) -> dict[str, list[str]]:
+def _load_v31_parent(student, state_dict: dict[str, torch.Tensor]) -> dict[str, Any]:
     """Strictly migrate a v3 parent while deliberately reinitializing only the v3.1 FPN."""
+    if student.grounding_backbone is not None:
+        global_audit = load_global_retrieval_modules_strict(student, state_dict)
+        return {
+            "missing_reinitialized": sorted(
+                name for name in student.state_dict() if name.startswith("grounder.")
+            ),
+            "obsolete_parent_keys": sorted(
+                name for name in state_dict if name.startswith("grounder.")
+            ),
+            "global_path_load": global_audit,
+            "grounder_migration": "REINITIALIZED_FOR_SIGLIP2_DENSE_CONTRACT",
+        }
     result = student.load_state_dict(state_dict, strict=False)
     missing = sorted(result.missing_keys)
     unexpected = sorted(result.unexpected_keys)
@@ -376,6 +391,112 @@ def _direction_query_separation_loss(
     return torch.stack(terms).mean(), len(terms)
 
 
+
+@torch.no_grad()
+def _evaluate_m0_development(student, loader: DataLoader, device: torch.device) -> tuple[dict[str, float | int], list[dict[str, float | int | str]]]:
+    """Evaluate an immutable M0 development split without target-centred crops."""
+    was_training = student.training
+    student.eval()
+    records: list[dict[str, float | int | str]] = []
+    for batch in loader:
+        images = batch["images"].to(device, non_blocking=True)
+        mapping = batch["caption_to_pair"].to(device)
+        temporal_mask = batch["temporal_valid_mask"].to(device)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
+            result = student(images, batch["captions"], mapping, temporal_mask)
+        query_ids = torch.arange(mapping.numel(), device=device)
+        correct = result.scores.decoded_mask_logits[query_ids, mapping].float()
+        targets = foreground_preserving_resize(batch["query_masks"].to(device).float(), correct.shape[-2:])
+        directions = [str(value) for value in batch.get("query_change_types", [])]
+        lookup = {(int(pair), direction): query for query, (pair, direction) in enumerate(zip(mapping.detach().cpu().tolist(), directions, strict=True)) if direction in {"appeared", "disappeared"}}
+        for query, direction in enumerate(directions):
+            if direction not in {"appeared", "disappeared"}:
+                continue
+            pair = int(mapping[query])
+            opposite_query = lookup.get((pair, "disappeared" if direction == "appeared" else "appeared"))
+            if opposite_query is None:
+                continue
+            target = targets[query:query + 1]
+            metric = query_mask_metrics(correct[query:query + 1], target)
+            swapped_metric = query_mask_metrics(result.scores.decoded_mask_logits[opposite_query:opposite_query + 1, pair].float(), target)
+            probability = correct[query].sigmoid()
+            edge = torch.cat((probability[0].flatten(), probability[-1].flatten(), probability[:, 0].flatten(), probability[:, -1].flatten())).mean()
+            center = probability[probability.shape[-2] // 4:3 * probability.shape[-2] // 4, probability.shape[-1] // 4:3 * probability.shape[-1] // 4].mean().clamp_min(1e-6)
+            target_area = float(metric["target_area"])
+            records.append({
+                "pair_id": str(batch["pair_ids"][pair]), "direction": direction,
+                "soft_dice": float(metric["nonempty_soft_dice"]), "soft_iou": float(metric["nonempty_soft_iou"]),
+                "localization_margin": float(metric["localization_margin"]),
+                "predicted_area": float(metric["predicted_area"]), "target_area": target_area,
+                "predicted_target_area_ratio": float(metric["predicted_area"]) / max(target_area, 1e-8),
+                "soft_query_swap_iou_gap": float(metric["nonempty_soft_iou"]) - float(swapped_metric["nonempty_soft_iou"]),
+                "edge_center_ratio": float(edge / center),
+                "all_empty_or_foreground": int(float(metric["predicted_area"]) <= 0.0 or float(metric["predicted_area"]) >= 1.0),
+            })
+    if was_training:
+        student.train()
+    if not records:
+        raise RuntimeError("M0 development evaluation produced no paired directional records")
+    by_direction = {direction: [record for record in records if record["direction"] == direction] for direction in ("appeared", "disappeared")}
+    pair_groups: dict[str, list[dict[str, float | int | str]]] = {}
+    for record in records:
+        pair_groups.setdefault(str(record["pair_id"]), []).append(record)
+    pair_positive = [all(float(item["soft_query_swap_iou_gap"]) > 0.0 for item in items) for items in pair_groups.values() if len(items) == 2]
+    def median(name: str, rows: list[dict[str, float | int | str]] = records) -> float:
+        return float(np.median([float(row[name]) for row in rows]))
+    return {
+        "query_record_count": len(records), "pair_count": len(pair_groups),
+        "soft_dice_median": median("soft_dice"), "soft_iou_median": median("soft_iou"),
+        "localization_margin_median": median("localization_margin"),
+        "predicted_target_area_ratio_median": median("predicted_target_area_ratio"),
+        "all_empty_or_foreground_fraction": float(np.mean([int(row["all_empty_or_foreground"]) for row in records])),
+        "edge_center_ratio_median": median("edge_center_ratio"),
+        "appeared_soft_query_swap_iou_gap_median": median("soft_query_swap_iou_gap", by_direction["appeared"]),
+        "disappeared_soft_query_swap_iou_gap_median": median("soft_query_swap_iou_gap", by_direction["disappeared"]),
+        "positive_pair_swap_gap_fraction": float(np.mean(pair_positive)) if pair_positive else 0.0,
+    }, records
+
+
+def _m0_gate(history: list[dict[str, float | int]], *, gradients_finite: bool) -> dict[str, object]:
+    if len(history) < 2:
+        raise ValueError("M0 gate requires step-zero and final development evaluation")
+    first, final = history[0], history[-1]
+    improved = float(final["soft_dice_median"]) >= float(first["soft_dice_median"]) + 0.01 or float(final["soft_dice_median"]) >= float(first["soft_dice_median"]) * 1.20
+    checks = {
+        "development_soft_dice_improved": improved,
+        "median_localization_margin_positive": float(final["localization_margin_median"]) > 0.0,
+        "appeared_median_swap_gap_nonnegative": float(final["appeared_soft_query_swap_iou_gap_median"]) >= 0.0,
+        "disappeared_median_swap_gap_nonnegative": float(final["disappeared_soft_query_swap_iou_gap_median"]) >= 0.0,
+        "positive_pair_swap_gaps_at_least_60pct": float(final["positive_pair_swap_gap_fraction"]) >= 0.60,
+        "median_area_ratio_in_range": 0.25 <= float(final["predicted_target_area_ratio_median"]) <= 4.0,
+        "collapse_fraction_at_most_10pct": float(final["all_empty_or_foreground_fraction"]) <= 0.10,
+        "no_systematic_edge_artifact": 0.5 <= float(final["edge_center_ratio_median"]) <= 2.0,
+        "finite_gradients": gradients_finite,
+    }
+    return {"passed": all(checks.values()), "checks": checks, "step0": first, "final": final}
+
+
+def _m0_swap_weight(step: int, total_steps: int) -> float:
+    warmup = max(1, math.ceil(total_steps * 0.20))
+    return 0.0 if step <= warmup else 0.1 * min(1.0, (step - warmup) / max(total_steps - warmup, 1))
+
+
+def _frozen_parameter_fingerprint(model: torch.nn.Module, prefixes: tuple[str, ...]) -> str:
+    """SHA256 of exact frozen backbone parameters for A0 drift detection."""
+    digest = hashlib.sha256()
+    selected = [
+        (name, parameter) for name, parameter in model.named_parameters()
+        if any(name == prefix or name.startswith(prefix + ".") for prefix in prefixes)
+    ]
+    if not selected:
+        raise RuntimeError(f"no parameters found for frozen fingerprint prefixes {prefixes!r}")
+    for name, parameter in selected:
+        digest.update(name.encode())
+        tensor = parameter.detach().cpu().contiguous()
+        digest.update(str(tuple(tensor.shape)).encode())
+        digest.update(tensor.numpy().tobytes())
+    return digest.hexdigest()
+
 def run(args: argparse.Namespace) -> dict:
     if not torch.cuda.is_available():
         raise RuntimeError("QCPR v3 real run requires CUDA")
@@ -383,6 +504,7 @@ def run(args: argparse.Namespace) -> dict:
     device = resolve_runtime_device(requested_device)
     output = Path(args.output_dir); output.mkdir(parents=True, exist_ok=False)
     _seed(args.seed)
+    m0_mode = args.phase == "mask_only_diagnostic" and args.mask_diagnostic_mode == "multi_pair"
     derived = Path(args.derived_manifest_dir)
     backbone_config = QCPRV3BackboneConfig(
         universat_source=str(args.universat_source),
@@ -390,6 +512,8 @@ def run(args: argparse.Namespace) -> dict:
         jina_model=str(args.jina_model),
         temporal_depth=args.temporal_depth,
         text_max_length=args.text_max_length,
+        grounding_backbone_kind=args.grounding_backbone,
+        siglip2_model=str(args.siglip2_model) if args.grounding_backbone == "siglip2" else None,
     )
     if args.initialization_mode == "historical_e0":
         payload = torch.load(args.v1_checkpoint, map_location="cpu", weights_only=False)
@@ -401,8 +525,8 @@ def run(args: argparse.Namespace) -> dict:
             **asdict(backbone_config),
         }
     retrieval_phase = args.phase in {"global_bootstrap", "global_recovery", "late_interaction"}
-    train_manifest = "natural_train_retrieval_manifest.jsonl" if retrieval_phase else "natural_train_manifest.jsonl"
-    val_manifest = "natural_validation_retrieval_manifest.jsonl" if retrieval_phase else "natural_validation_manifest.jsonl"
+    train_manifest = "m0_train_manifest.jsonl" if m0_mode else ("natural_train_retrieval_manifest.jsonl" if retrieval_phase else "natural_train_manifest.jsonl")
+    val_manifest = "m0_dev_manifest.jsonl" if m0_mode else ("natural_validation_retrieval_manifest.jsonl" if retrieval_phase else "natural_validation_manifest.jsonl")
     config_dict.update(
         batch_size=args.batch_size,
         num_workers=args.num_workers,
@@ -413,6 +537,7 @@ def run(args: argparse.Namespace) -> dict:
         val_manifests=(str(derived / val_manifest),),
         dataset_sampling_weights=(),
         target_aware_mask_crop=args.phase in {"mask_only_diagnostic", "mask_grounding"},
+        validation_target_aware_mask_crop=False if m0_mode else args.phase in {"mask_only_diagnostic", "mask_grounding"},
         target_crop_context=args.target_crop_context,
         direction_only_captions=args.direction_only_probe_captions,
     )
@@ -422,7 +547,7 @@ def run(args: argparse.Namespace) -> dict:
     fixed_train_batch = None
     fixed_validation_batch = None
     probe_contract = None
-    if args.phase == "mask_only_diagnostic":
+    if args.phase == "mask_only_diagnostic" and not m0_mode:
         train = fixed_probe_subset(train, count=args.micro_train_samples, pair_ids=tuple(args.train_probe_pair_id))
         val = fixed_probe_subset(val, count=args.validation_probe_samples, pair_ids=tuple(args.validation_probe_pair_id))
         probe_contract = fixed_probe_contract(
@@ -441,6 +566,18 @@ def run(args: argparse.Namespace) -> dict:
         loader = DataLoader(
             train, batch_sampler=sampler, num_workers=config.num_workers,
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=True, frequencies=frequencies),
+            pin_memory=True, persistent_workers=False,
+        )
+    elif m0_mode:
+        m0_sampler = DirectionalM0BatchSampler(list(getattr(train, "samples", [])), config.batch_size, seed=config.seed)
+        loader = DataLoader(
+            train, batch_sampler=m0_sampler, num_workers=config.num_workers,
+            collate_fn=data_compat.make_collator(train, config, epoch=0, training=True, frequencies=frequencies),
+            pin_memory=True, persistent_workers=False,
+        )
+        m0_validation_loader = DataLoader(
+            val, batch_size=config.batch_size, shuffle=False, num_workers=config.num_workers,
+            collate_fn=data_compat.make_collator(val, config, epoch=0, training=False),
             pin_memory=True, persistent_workers=False,
         )
     elif args.phase == "mask_only_diagnostic":
@@ -479,7 +616,7 @@ def run(args: argparse.Namespace) -> dict:
     migration_audit = {"missing_reinitialized": [], "obsolete_parent_keys": []}
     if args.initialization_mode == "clean_pretrained":
         student, teacher, initialization = build_clean_v3(backbone_config, device=device)
-        if args.phase != "global_bootstrap":
+        if args.phase != "global_bootstrap" and not m0_mode:
             if args.v3_checkpoint is None:
                 raise ValueError("clean_pretrained phases after global_bootstrap require --v3-checkpoint")
             prior = torch.load(args.v3_checkpoint, map_location="cpu", weights_only=False)
@@ -503,6 +640,7 @@ def run(args: argparse.Namespace) -> dict:
     profile = resolve_training_phase(args.phase)
     optimizer_audit = apply_phase_to_model(student, profile)
     parameters = [parameter for parameter in student.parameters() if parameter.requires_grad]
+    a0_frozen_fingerprint_before = _frozen_parameter_fingerprint(student, ("visual_encoder", "text_encoder")) if args.phase == "global_bootstrap" else None
     text_adapter_ids = {
         id(parameter) for parameter in student.text_adapter.parameters()
     } if student.text_adapter is not None else set()
@@ -514,6 +652,10 @@ def run(args: argparse.Namespace) -> dict:
     if text_adapter_parameters:
         optimizer_groups.append({"params": text_adapter_parameters, "lr": args.text_adapter_learning_rate, "name": "text_adapter_low_lr"})
     optimizer = torch.optim.AdamW(optimizer_groups, weight_decay=args.weight_decay)
+    named_parameter_by_id = {id(parameter): name for name, parameter in student.named_parameters()}
+    optimizer_audit["optimizer_parameter_names"] = sorted(
+        named_parameter_by_id[id(parameter)] for group in optimizer.param_groups for parameter in group["params"]
+    )
     if teacher is not None:
         assert_teacher_not_in_optimizer(teacher, optimizer)
     scaler = torch.amp.GradScaler("cuda", enabled=False)
@@ -528,8 +670,14 @@ def run(args: argparse.Namespace) -> dict:
         "grounding_config": asdict(student.grounder.config),
         "parent_checkpoint": None if args.v3_checkpoint is None else str(args.v3_checkpoint),
         "parent_phase": None if args.v3_checkpoint is None else prior.get("phase"),
+        "grounding_backbone_provenance": (
+            None
+            if student.grounding_backbone is None
+            else student.grounding_backbone.provenance()
+        ),
         "parent_scientific_status": "ENGINEERING_PARENT_NOT_ACCEPTED_STAGE_B" if args.phase == "mask_only_diagnostic" else None,
         "fixed_probe_contract": probe_contract,
+        "a0_frozen_fingerprint_before": a0_frozen_fingerprint_before,
         "mask_objective": None if args.phase != "mask_only_diagnostic" else asdict(resolve_mask_objective(args.mask_objective)),
     }
     torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
@@ -541,7 +689,15 @@ def run(args: argparse.Namespace) -> dict:
     write_progress(progress_path, stage="training", completed=0, total=args.steps, started=started)
     fixed_train_history: list[dict[str, float | int]] = []
     fixed_validation_history: list[dict[str, float | int]] = []
-    if args.phase == "mask_only_diagnostic":
+    m0_development_history: list[dict[str, float | int]] = []
+    if m0_mode:
+        initial_m0, initial_m0_records = _evaluate_m0_development(student, m0_validation_loader, device)
+        initial_m0 = {"step": 0, **initial_m0}
+        m0_development_history.append(initial_m0)
+        append_jsonl(output / "m0_development_history.jsonl", initial_m0)
+        (output / "m0_development_step0000.json").write_text(json.dumps({"summary": initial_m0, "records": initial_m0_records}, indent=2, sort_keys=True))
+        student.train()
+    elif args.phase == "mask_only_diagnostic":
         assert fixed_train_batch is not None and fixed_validation_batch is not None
         initial_train = {"step": 0, **_evaluate_fixed_mask_probe(
             student, fixed_train_batch, device,
@@ -663,27 +819,36 @@ def run(args: argparse.Namespace) -> dict:
                         changes = [batch["query_change_types"][index] for index in query_indices.tolist()]
                     else:
                         changes = [batch.get("change_types", [None] * images.shape[0])[int(mapping[index])] for index in query_indices.tolist()]
-                    objective = resolve_mask_objective(args.mask_objective)
-                    with torch.autocast("cuda", enabled=False):
-                        mask_losses = separated_query_mask_losses(
-                            selected.float(), targets.float(), kinds, changes,
-                            verified_mismatched_logits=None,
-                            dice_weight=objective.dice_weight,
-                            focal_weight=objective.focal_weight,
-                            tversky_weight=objective.tversky_weight,
-                            positive_focal_weight=objective.positive_focal_weight,
-                            negative_focal_weight=objective.negative_focal_weight,
-                            empty_weight=0.25,
-                        )
-                    losses["query_mask"] = mask_losses["total"]
+                    if m0_mode:
+                        with torch.autocast("cuda", enabled=False):
+                            mask_losses = m0_balanced_mask_loss(selected.float(), targets.float(), area_weight=0.1, empty_weight=1.0)
+                        losses["m0_balanced_mask"] = mask_losses["total"]
+                    else:
+                        objective = resolve_mask_objective(args.mask_objective)
+                        with torch.autocast("cuda", enabled=False):
+                            mask_losses = separated_query_mask_losses(
+                                selected.float(), targets.float(), kinds, changes,
+                                verified_mismatched_logits=None, dice_weight=objective.dice_weight,
+                                focal_weight=objective.focal_weight, tversky_weight=objective.tversky_weight,
+                                positive_focal_weight=objective.positive_focal_weight,
+                                negative_focal_weight=objective.negative_focal_weight, empty_weight=0.25,
+                            )
+                        losses["query_mask"] = mask_losses["total"]
                     probabilities = selected.sigmoid()
                     with torch.autocast("cuda", enabled=False):
-                        separation_loss, separation_count = _direction_query_separation_loss(
-                            result.scores.decoded_mask_logits.float(), mapping, query_indices,
-                            changes, targets.float(),
-                        )
-                    if separation_count:
-                        losses["direction_query_separation"] = separation_loss
+                        if m0_mode:
+                            separation_loss, separation_count = m0_symmetric_query_swap_loss(
+                                result.scores.decoded_mask_logits.float(), mapping, query_indices, changes, targets.float(), margin=0.02,
+                            )
+                            swap_weight = _m0_swap_weight(step, args.steps)
+                            if separation_count and swap_weight > 0:
+                                losses["m0_symmetric_query_swap"] = swap_weight * separation_loss
+                        else:
+                            separation_loss, separation_count = _direction_query_separation_loss(
+                                result.scores.decoded_mask_logits.float(), mapping, query_indices, changes, targets.float(),
+                            )
+                            if separation_count:
+                                losses["direction_query_separation"] = separation_loss
                     foreground = targets >= 0.5
                     nonempty = foreground.flatten(1).any(dim=1)
                     background_nonempty = nonempty[:, None, None] & ~foreground
@@ -719,7 +884,17 @@ def run(args: argparse.Namespace) -> dict:
         norm = torch.nn.utils.clip_grad_norm_(parameters, args.grad_clip_norm)
         if not torch.isfinite(norm): raise FloatingPointError(f"non-finite gradient at step {step}")
         optimizer.step()
-        if args.phase == "mask_only_diagnostic" and step % args.probe_interval == 0:
+        if m0_mode and (step % args.m0_eval_interval == 0 or step == args.steps):
+            m0_summary, m0_records = _evaluate_m0_development(student, m0_validation_loader, device)
+            m0_summary = {"step": step, **m0_summary}
+            m0_development_history.append(m0_summary)
+            append_jsonl(output / "m0_development_history.jsonl", m0_summary)
+            (output / f"m0_development_step{step:04d}.json").write_text(
+                json.dumps({"summary": m0_summary, "records": m0_records}, indent=2, sort_keys=True)
+            )
+            student.train()
+
+        if args.phase == "mask_only_diagnostic" and not m0_mode and step % args.probe_interval == 0:
             assert fixed_train_batch is not None and fixed_validation_batch is not None
             train_probe = {"step": step, **_evaluate_fixed_mask_probe(
                 student, fixed_train_batch, device,
@@ -803,26 +978,30 @@ def run(args: argparse.Namespace) -> dict:
     round_trip = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
     if restored.keys() != round_trip.keys() or any(not torch.equal(restored[key], round_trip[key]) for key in restored):
         raise RuntimeError("checkpoint round-trip mismatch")
+    a0_frozen_fingerprint_after = _frozen_parameter_fingerprint(student, ("visual_encoder", "text_encoder")) if args.phase == "global_bootstrap" else None
+    a0_frozen_fingerprints_match = (a0_frozen_fingerprint_before == a0_frozen_fingerprint_after) if args.phase == "global_bootstrap" else None
     missing_gradients = sorted(name for name, present in gradient_presence.items() if not present)
     gradients_ok = bool(gradient_presence) and not missing_gradients
     all_finite = all(math.isfinite(value) for row in history for value in row.values() if isinstance(value, float))
     engineering_ok = all_finite and gradients_ok
     micro_gate = _micro_overfit_gate(
         fixed_train_history, gradients_finite=engineering_ok,
-    ) if args.phase == "mask_only_diagnostic" else None
+    ) if args.phase == "mask_only_diagnostic" and not m0_mode else None
     validation_signal = _validation_direction(
         fixed_validation_history,
-    ) if args.phase == "mask_only_diagnostic" else None
-    diagnostic_passed = bool(micro_gate and micro_gate["passed"] and validation_signal and validation_signal["positive"])
+    ) if args.phase == "mask_only_diagnostic" and not m0_mode else None
+    m0_gate = _m0_gate(m0_development_history, gradients_finite=engineering_ok) if m0_mode else None
+    diagnostic_passed = bool(m0_gate["passed"]) if m0_mode else bool(micro_gate and micro_gate["passed"] and validation_signal and validation_signal["positive"])
     report = {
         "runtime_status": "PASS" if all_finite else "FAIL",
         "gradient_status": "PASS" if gradients_ok else "FAIL",
-        "anti_empty_collapse_status": "PASS" if args.phase == "mask_only_diagnostic" and fixed_train_history[-1]["empty_mean_probability"] <= fixed_train_history[0]["empty_mean_probability"] else "NOT_EVALUATED",
-        "localization_status": "TRAIN_FIT_PASS" if micro_gate and micro_gate["passed"] else ("TRAIN_FIT_FAIL" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
-        "query_specificity_status": "PASS" if micro_gate and micro_gate["passed"] and fixed_train_history[-1]["soft_query_swap_iou_gap"] > 0 else ("FAIL_OR_INCONCLUSIVE" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
-        "validation_generalization_status": "POSITIVE_DIRECTION" if validation_signal and validation_signal["positive"] else ("NO_POSITIVE_DIRECTION" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
-        "scientific_status": "DIAGNOSTIC_PASS" if diagnostic_passed else ("SCIENTIFIC_HOLD" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
-        "stage_c_100_step_authorized": diagnostic_passed,
+        "anti_empty_collapse_status": "NOT_EVALUATED",
+        "localization_status": "M0_MULTI_PAIR_PASS" if m0_gate and m0_gate["passed"] else ("M0_MULTI_PAIR_HOLD" if m0_mode else ("TRAIN_FIT_PASS" if micro_gate and micro_gate["passed"] else ("TRAIN_FIT_FAIL" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"))),
+        "query_specificity_status": "PASS" if m0_gate and m0_gate["passed"] else ("FAIL_OR_INCONCLUSIVE" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"),
+        "validation_generalization_status": "M0_MULTI_PAIR_PASS" if m0_gate and m0_gate["passed"] else ("M0_MULTI_PAIR_HOLD" if m0_mode else ("POSITIVE_DIRECTION" if validation_signal and validation_signal["positive"] else ("NO_POSITIVE_DIRECTION" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED"))),
+        "scientific_status": ("M0_DIAGNOSTIC_PASS" if diagnostic_passed else "M0_SCIENTIFIC_HOLD") if m0_mode else ("DIAGNOSTIC_PASS" if diagnostic_passed else ("SCIENTIFIC_HOLD" if args.phase == "mask_only_diagnostic" else "NOT_EVALUATED")),
+        "m0_500_step_authorized": diagnostic_passed if m0_mode else False,
+        "stage_c_100_step_authorized": diagnostic_passed if not m0_mode else False,
         "phase": profile.to_dict(), "initialization": asdict(initialization),
         "baseline_identity": "clean_v3_pretrained_bootstrap" if args.initialization_mode == "clean_pretrained" else "historical_e0_continuation",
         "historical_e0_continuity": args.initialization_mode == "historical_e0",
@@ -833,6 +1012,9 @@ def run(args: argparse.Namespace) -> dict:
         "fixed_validation_history": fixed_validation_history,
         "micro_overfit_gate": micro_gate,
         "validation_direction": validation_signal,
+        "m0_development_history": m0_development_history,
+        "m0_gate": m0_gate,
+        "m0_contract": {"chronology": "Image2(before)->Image1(after); Label1=appeared; Label2=disappeared", "pre_a936f116_mask_local_artifacts": "INVALID", "development_target_centered_crops": False} if m0_mode else None,
         "observed_datasets": sorted(observed_datasets),
         "runtime_device_contract": {
             "requested_device": str(requested_device),
@@ -843,6 +1025,9 @@ def run(args: argparse.Namespace) -> dict:
             "cuda_current_device": torch.cuda.current_device(),
             "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
         },
+        "a0_frozen_fingerprint_before": a0_frozen_fingerprint_before,
+        "a0_frozen_fingerprint_after": a0_frozen_fingerprint_after,
+        "a0_frozen_fingerprints_match": a0_frozen_fingerprints_match,
         "all_finite": all_finite,
         "gradient_audit": {
             "expected_trainable_gradients_finite_nonzero": gradients_ok,
@@ -878,6 +1063,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--universat-source", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/external/UniverSat"))
     parser.add_argument("--universat-checkpoint", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/models/universat-base"))
     parser.add_argument("--jina-model", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/models/jina-v5-text-small-retrieval"))
+    parser.add_argument("--grounding-backbone", choices=("universat", "siglip2"), default="universat")
+    parser.add_argument("--siglip2-model", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/models/siglip2-base-patch16-256"))
     parser.add_argument("--derived-manifest-dir", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_v3"))
     parser.add_argument("--steps", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=8)
@@ -894,6 +1081,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-change-batch-fraction-cap", type=float, default=0.25)
     parser.add_argument("--required-datasets", default="")
     parser.add_argument("--mask-objective", choices=("A",), default="A")
+    parser.add_argument("--mask-diagnostic-mode", choices=("single_pair", "multi_pair"), default="single_pair")
+    parser.add_argument("--m0-eval-interval", type=int, default=10)
     parser.add_argument("--micro-train-samples", type=int, default=8)
     parser.add_argument("--validation-probe-samples", type=int, default=16)
     parser.add_argument("--probe-interval", type=int, default=5)

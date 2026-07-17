@@ -27,6 +27,8 @@ VALIDATION_PROBE_SAMPLES=${VALIDATION_PROBE_SAMPLES:-16}
 TRAIN_PAIR_ID=${TRAIN_PAIR_ID:-}
 VALIDATION_PAIR_ID=${VALIDATION_PAIR_ID:-}
 DIRECTION_ONLY_PROBE_CAPTIONS=${DIRECTION_ONLY_PROBE_CAPTIONS:-0}
+GROUNDING_BACKBONE=${GROUNDING_BACKBONE:-universat}
+SIGLIP2_MODEL=${SIGLIP2_MODEL:-/mnt/weka/svardanyan/rs_change_project/models/siglip2-base-patch16-256}
 case "$STEPS" in 20|30|40|50) ;; *) echo "mask diagnostic steps must be 20, 30, 40, or 50" >&2; exit 2;; esac
 PAIR_ARGS=()
 if [[ -n "$TRAIN_PAIR_ID" ]]; then PAIR_ARGS+=(--train-probe-pair-id "$TRAIN_PAIR_ID"); fi
@@ -45,4 +47,6 @@ if [[ "$DIRECTION_ONLY_PROBE_CAPTIONS" = 1 ]]; then PAIR_ARGS+=(--direction-only
   --probe-interval 5 \
   --batch-size 8 \
   --seed 20260716 \
+  --grounding-backbone "$GROUNDING_BACKBONE" \
+  --siglip2-model "$SIGLIP2_MODEL" \
   "${PAIR_ARGS[@]}"

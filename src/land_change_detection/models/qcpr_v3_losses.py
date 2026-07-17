@@ -224,6 +224,63 @@ def query_mask_loss(
     return QueryMaskLossOutput(total, dice, focal, tversky, boundary, empty_false_positive)
 
 
+def m0_balanced_mask_loss(logits: Tensor, targets: Tensor, *, area_weight: float = 0.1, empty_weight: float = 1.0) -> dict[str, Tensor]:
+    """M0: class-normalized BCE + soft Dice + area calibration."""
+    if logits.shape != targets.shape or logits.ndim != 3:
+        raise ValueError("M0 logits and targets must align as [B,H,W]")
+    if area_weight < 0 or empty_weight < 0:
+        raise ValueError("M0 loss weights must be non-negative")
+    flat_logits, flat_targets = _flatten_masks(logits, targets)
+    probabilities = flat_logits.sigmoid()
+    foreground = flat_targets.sum(dim=1) > 0
+    empty = ~foreground
+    zero = flat_logits.sum() * 0.0
+    if bool(foreground.any()):
+        selected_logits = flat_logits[foreground]
+        selected_targets = flat_targets[foreground]
+        selected_probs = probabilities[foreground]
+        positive = selected_targets > 0.5
+        negative = ~positive
+        bce = F.binary_cross_entropy_with_logits(selected_logits, selected_targets, reduction="none")
+        positive_bce = (bce * positive).sum(dim=1) / positive.sum(dim=1).clamp_min(1)
+        negative_bce = (bce * negative).sum(dim=1) / negative.sum(dim=1).clamp_min(1)
+        balanced_bce = 0.5 * (positive_bce + negative_bce).mean()
+        intersection = (selected_probs * selected_targets).sum(dim=1)
+        dice = 1.0 - ((2.0 * intersection + 1e-6) / (selected_probs.sum(dim=1) + selected_targets.sum(dim=1) + 1e-6)).mean()
+        area = (selected_probs.mean(dim=1) - selected_targets.mean(dim=1)).abs().mean()
+    else:
+        balanced_bce = dice = area = zero
+    empty_loss = F.softplus(flat_logits[empty]).mean() if bool(empty.any()) else zero
+    total = balanced_bce + dice + float(area_weight) * area + float(empty_weight) * empty_loss
+    return {"total": total, "balanced_bce": balanced_bce, "dice": dice, "area": area, "empty": empty_loss}
+
+
+def m0_symmetric_query_swap_loss(all_logits: Tensor, mapping: Tensor, query_indices: Tensor, changes: list[str | None], targets: Tensor, *, margin: float = 0.02) -> tuple[Tensor, int]:
+    """Direct appeared/disappeared contrast from independently computed logits."""
+    if margin < 0 or all_logits.ndim != 4 or targets.ndim != 3:
+        raise ValueError("invalid M0 symmetric query-swap contract")
+    selected = [int(value) for value in query_indices.detach().cpu().tolist()]
+    lookup = {(int(mapping[q]), str(change)): local for local, (q, change) in enumerate(zip(selected, changes, strict=True)) if change in {"appeared", "disappeared"}}
+    terms: list[Tensor] = []
+    for direction, opposite in (("appeared", "disappeared"), ("disappeared", "appeared")):
+        for pair_index, local in [(pair, local) for (pair, item_direction), local in lookup.items() if item_direction == direction]:
+            other = lookup.get((pair_index, opposite))
+            if other is None:
+                continue
+            target = targets[local].float()
+            if not bool((target >= 0.5).any()):
+                continue
+            correct = all_logits[selected[local], pair_index].sigmoid()
+            wrong = all_logits[selected[other], pair_index].sigmoid()
+            def soft_iou(probability: Tensor) -> Tensor:
+                intersection = (probability * target).sum()
+                return (intersection + 1e-6) / (probability.sum() + target.sum() - intersection + 1e-6)
+            terms.append(F.relu(float(margin) - soft_iou(correct) + soft_iou(wrong)))
+    if not terms:
+        return all_logits.sum() * 0.0, 0
+    return torch.stack(terms).mean(), len(terms)
+
+
 def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) -> dict[str, float | int]:
     flat_logits, flat_targets = _flatten_masks(logits, targets)
     predicted = flat_logits.sigmoid() >= threshold

@@ -54,11 +54,18 @@ class Progress:
     def __init__(self, path: Path):
         self.path = path
         self.started = time.monotonic()
+        self.stage: str | None = None
+        self.stage_started = self.started
 
     def write(self, stage: str, completed: int, total: int, **extra: Any) -> None:
-        elapsed = max(time.monotonic() - self.started, 0.0)
+        now = time.monotonic()
+        if stage != self.stage:
+            self.stage = stage
+            self.stage_started = now
+        elapsed = max(now - self.started, 0.0)
+        stage_elapsed = max(now - self.stage_started, 0.0)
         fraction = completed / total if total else 0.0
-        eta = elapsed * (1.0 - fraction) / fraction if fraction > 0 else None
+        eta = stage_elapsed * (1.0 - fraction) / fraction if fraction > 0 else None
         atomic_json(
             self.path,
             {
@@ -68,6 +75,7 @@ class Progress:
                 "total": total,
                 "completed_fraction": fraction,
                 "elapsed_seconds": elapsed,
+                "stage_elapsed_seconds": stage_elapsed,
                 "eta_seconds": eta,
                 "updated_at_utc": datetime.now(timezone.utc).isoformat(),
                 "complete": bool(total and completed == total and stage == "complete"),

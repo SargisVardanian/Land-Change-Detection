@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import torch
 
 from land_change_detection.backbones.jina_v5_text import JinaV5TextConfig, JinaV5TextEncoder
+from land_change_detection.backbones.siglip2_grounding import FrozenSigLIP2GroundingBackbone
 from land_change_detection.backbones.sequence_universat import SequenceUniverSatEncoder
 from land_change_detection.backbones.universat_backend import UniverSatBackendConfig, UniverSatJointBackend
 from land_change_detection.backbones.universat_frame_backend import UniverSatFrameBackend
@@ -29,6 +30,8 @@ class QCPRV3BackboneConfig:
     trainable_temperature: bool = True
     initial_temperature: float = 0.07
     max_logit_scale: float = 100.0
+    grounding_backbone_kind: str = "universat"
+    siglip2_model: str | None = None
 
 
 def build_clean_v3_model(
@@ -86,11 +89,35 @@ def build_clean_v3_model(
         if config.use_text_adapter
         else None
     )
+    grounding_backbone = None
+    resolved_grounding_config = grounding_config
+    if config.grounding_backbone_kind == "siglip2":
+        if not config.siglip2_model:
+            raise ValueError("siglip2 grounding requires QCPRV3BackboneConfig.siglip2_model")
+        grounding_backbone = FrozenSigLIP2GroundingBackbone(config.siglip2_model)
+        if resolved_grounding_config is None:
+            resolved_grounding_config = QCPRV3Config(
+                visual_source_dim=grounding_backbone.hidden_dim,
+                text_dim=grounding_backbone.hidden_dim,
+                global_text_dim=512,
+            )
+        if (
+            resolved_grounding_config.visual_source_dim != grounding_backbone.hidden_dim
+            or resolved_grounding_config.text_dim != grounding_backbone.hidden_dim
+            or resolved_grounding_config.global_text_dim != 512
+        ):
+            raise ValueError("SigLIP2 grounding config must use visual/text 768 and global text 512")
+    elif config.grounding_backbone_kind != "universat":
+        raise ValueError(f"unsupported grounding backbone {config.grounding_backbone_kind!r}")
+    grounder = QCPRV3GenericGrounding(
+        resolved_grounding_config or QCPRV3Config(visual_source_dim=768)
+    )
     return UniChangeV3RetrievalModel(
         visual,
         temporal,
         text,
         retrieval,
-        QCPRV3GenericGrounding(grounding_config or QCPRV3Config(visual_source_dim=768)),
+        grounder,
         text_adapter=adapter,
+        grounding_backbone=grounding_backbone,
     ).to(device)

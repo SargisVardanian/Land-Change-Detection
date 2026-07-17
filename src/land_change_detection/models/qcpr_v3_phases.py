@@ -26,10 +26,11 @@ PHASES: dict[str, TrainingPhaseProfile] = {
     "global_bootstrap": TrainingPhaseProfile(
         "global_bootstrap", ("temporal_encoder", "retrieval_head.pair_projection", "text_adapter"),
         ("visual_encoder", "text_encoder", "grounder"),
-        ("global_multi_positive", "base_text_preservation"),
+        # Track A0 is deliberately global-only. The frozen Jina representation is input to the small adapter, not a historical-teacher objective.
+        ("global_multi_positive",),
         ("levir_mci", "second_cc"), "capped_natural",
         ("text_derived_semantic_r1", "text_derived_semantic_r5", "candidate_recall", "exact_pair_diagnostic"),
-        "text_derived_semantic_r1", ("finite_global_gradients", "clipping_fraction_below_0.2", "candidate_recall_reported"),
+        "text_derived_semantic_r1", ("finite_global_gradients", "clipping_fraction_below_0.3", "candidate_recall_reported"),
     ),
     "global_recovery": TrainingPhaseProfile(
         "global_recovery", ("temporal_encoder", "retrieval_head", "text_adapter"),

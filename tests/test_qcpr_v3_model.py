@@ -79,6 +79,49 @@ def test_temporal_field_projects_raw_visual_tokens_before_signed_difference() ->
     assert model.temporal_field.source_projection.weight.grad is not None
 
 
+def test_grounding_tokens_and_global_query_may_use_different_frozen_encoders() -> None:
+    config = QCPRV3Config(
+        input_dim=8,
+        visual_source_dim=12,
+        text_dim=12,
+        global_text_dim=8,
+        hidden_dim=8,
+        heads=2,
+        decoder_layers=1,
+        scales=(4, 2),
+        output_size=(8, 8),
+        mask_decoder_dim=8,
+    )
+    model = QCPRV3GenericGrounding(config)
+    output = model.score_query_pair_chunks(
+        torch.randn(2, 8),
+        torch.randn(2, 5, 12),
+        torch.ones(2, 5, dtype=torch.bool),
+        torch.randn(3, 8),
+        torch.randn(3, 2, 16, 12),
+    )
+    assert output.global_score.shape == (2, 3)
+    assert output.decoded_mask_logits.shape == (2, 3, 8, 8)
+
+
+def test_temporal_field_bilinearly_expands_siglip_grid_to_fpn_scale() -> None:
+    config = QCPRV3Config(
+        input_dim=8,
+        visual_source_dim=12,
+        text_dim=8,
+        hidden_dim=8,
+        heads=2,
+        decoder_layers=1,
+        scales=(8, 4),
+        output_size=(16, 16),
+        mask_decoder_dim=8,
+    )
+    field = QCPRV3GenericGrounding(config).temporal_field(
+        torch.randn(1, 2, 16, 12)
+    )
+    assert field.scale_slices == ((0, 64, 8), (64, 80, 4))
+
+
 def test_all_consumers_share_exact_scores_and_mask_logits() -> None:
     model, inputs = _inputs()
     outputs = [trainer_score(model, inputs), evaluator_score(model, inputs), renderer_score(model, inputs)]

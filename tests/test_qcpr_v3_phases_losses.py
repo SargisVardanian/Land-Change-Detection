@@ -90,4 +90,4 @@ def test_duplicate_aware_multi_positive_loss_does_not_penalize_equivalent_pairs(
 def test_global_bootstrap_has_no_historical_teacher_loss() -> None:
     profile = resolve_training_phase("global_bootstrap")
     assert "teacher_distillation" not in profile.active_losses
-    assert profile.active_losses == ("global_multi_positive", "base_text_preservation")
+    assert profile.active_losses == ("global_multi_positive",)

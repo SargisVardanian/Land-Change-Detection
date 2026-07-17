@@ -48,6 +48,7 @@ class UniChangeV3RetrievalModel(nn.Module):
         retrieval_head: nn.Module,
         grounder: QCPRV3GenericGrounding,
         text_adapter: nn.Module | None = None,
+        grounding_backbone: nn.Module | None = None,
     ):
         super().__init__()
         self.visual_encoder = visual_encoder
@@ -55,6 +56,7 @@ class UniChangeV3RetrievalModel(nn.Module):
         self.text_encoder = text_encoder
         self.retrieval_head = retrieval_head
         self.text_adapter = text_adapter
+        self.grounding_backbone = grounding_backbone
         self.grounder = grounder
         self.freeze_backbones()
 
@@ -66,11 +68,15 @@ class UniChangeV3RetrievalModel(nn.Module):
             parameter.requires_grad_(False)
         self.visual_encoder.eval()
         self.text_encoder.eval()
+        if self.grounding_backbone is not None:
+            self.grounding_backbone.eval()
 
     def train(self, mode: bool = True):
         super().train(mode)
         self.visual_encoder.eval()
         self.text_encoder.eval()
+        if self.grounding_backbone is not None:
+            self.grounding_backbone.eval()
         return self
 
     def encode_pairs(self, images: Tensor, temporal_valid_mask: Tensor | None = None) -> tuple[Tensor, Tensor, dict[str, Any]]:
@@ -78,9 +84,16 @@ class UniChangeV3RetrievalModel(nn.Module):
             visual = self.visual_encoder(images)
         temporal = self.temporal_encoder(visual.features, temporal_valid_mask=temporal_valid_mask)
         pair = F.normalize(self.retrieval_head(temporal.pair_embedding).pair_embedding, dim=-1)
-        # Global retrieval uses the temporal encoder, while dense grounding must
-        # retain the ordered, unmixed frozen UniverSat T1/T2 patch field.
-        return pair, visual.features, visual.metadata
+        # Global retrieval remains UniverSat. A separately selected frozen
+        # dense VLM may provide the ordered grounding field without changing
+        # candidate generation.
+        grounding_features = visual.features
+        metadata = dict(visual.metadata)
+        if self.grounding_backbone is not None:
+            with torch.no_grad():
+                grounding_features = self.grounding_backbone.encode_images(images)
+            metadata["grounding_backbone"] = self.grounding_backbone.provenance()
+        return pair, grounding_features, metadata
 
     def encode_texts(self, captions: list[str]) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         with torch.no_grad():
@@ -91,12 +104,23 @@ class UniChangeV3RetrievalModel(nn.Module):
         global_embedding = base_embedding
         if self.text_adapter is not None:
             global_embedding = self.text_adapter(global_embedding)
+        token_embeddings = features.token_embeddings
+        attention_mask = features.attention_mask.bool()
+        content_mask = features.content_token_mask.bool()
+        if self.grounding_backbone is not None:
+            grounding_text = self.grounding_backbone.encode_texts(
+                captions,
+                device=base_embedding.device,
+            )
+            token_embeddings = grounding_text.token_embeddings
+            attention_mask = grounding_text.attention_mask
+            content_mask = grounding_text.content_mask
         return (
             base_embedding,
             F.normalize(global_embedding, dim=-1),
-            features.token_embeddings,
-            features.attention_mask.bool(),
-            features.content_token_mask.bool(),
+            token_embeddings,
+            attention_mask,
+            content_mask,
         )
 
     def score_encoded(

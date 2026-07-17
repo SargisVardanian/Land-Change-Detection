@@ -14,6 +14,7 @@ class QCPRV3Config:
     input_dim: int = 512
     visual_source_dim: int | None = None
     text_dim: int = 512
+    global_text_dim: int | None = None
     hidden_dim: int = 512
     heads: int = 8
     decoder_layers: int = 2
@@ -131,6 +132,13 @@ class GenericTemporalPatchField(nn.Module):
         grid = tokens.reshape(batch * time, source_side, source_side, dim).permute(0, 3, 1, 2)
         if target_side == source_side:
             resized = grid
+        elif target_side > source_side:
+            resized = F.interpolate(
+                grid,
+                size=(target_side, target_side),
+                mode="bilinear",
+                align_corners=False,
+            )
         else:
             resized = F.adaptive_avg_pool2d(grid, (target_side, target_side))
         return resized.permute(0, 2, 3, 1).reshape(batch, time, target_side * target_side, dim)
@@ -375,9 +383,14 @@ class QCPRV3GenericGrounding(nn.Module):
         self.temporal_field = GenericTemporalPatchField(self.config)
         self.grounding_decoder = GenericCrossModalDecoder(self.config)
         self.mask_decoder = MultiScaleQueryMaskDecoder(self.config)
+        global_text_dim = (
+            self.config.text_dim
+            if self.config.global_text_dim is None
+            else self.config.global_text_dim
+        )
         self.global_query_projection = (
-            nn.Identity() if self.config.text_dim == self.config.hidden_dim
-            else nn.Linear(self.config.text_dim, self.config.hidden_dim, bias=False)
+            nn.Identity() if global_text_dim == self.config.hidden_dim
+            else nn.Linear(global_text_dim, self.config.hidden_dim, bias=False)
         )
         self.local_projection = nn.Linear(self.config.hidden_dim, self.config.hidden_dim)
         self.temporal_map_head = nn.Linear(self.config.hidden_dim, 3)

@@ -4,6 +4,9 @@ import pytest
 import torch
 from torch import nn
 from types import SimpleNamespace
+import json
+
+from evaluate_qcpr_v31_encoders import Progress
 
 from land_change_detection.models.qcpr_v31_encoder_ablation import (
     load_global_retrieval_modules_strict,
@@ -154,3 +157,16 @@ def test_pooled_feature_tensor_rejects_wrong_batch_and_nonfinite() -> None:
         pooled_feature_tensor(torch.ones(1, 3), expected_batch=2)
     with pytest.raises(ValueError, match="NaN"):
         pooled_feature_tensor(torch.tensor([[float("nan")]]), expected_batch=1)
+
+
+def test_encoder_progress_eta_resets_for_each_stage(tmp_path) -> None:
+    path = tmp_path / "progress.json"
+    progress = Progress(path)
+    progress.write("first", 1, 2)
+    first = json.loads(path.read_text())
+    progress.write("second", 0, 3)
+    second = json.loads(path.read_text())
+    assert first["stage"] == "first"
+    assert second["stage"] == "second"
+    assert second["eta_seconds"] is None
+    assert second["stage_elapsed_seconds"] <= second["elapsed_seconds"]
