@@ -9,8 +9,6 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 
-_STOPWORDS = frozenset({"a", "an", "and", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "the", "to", "with", "there", "this", "that", "has", "have", "was", "were", "scene", "image", "query"})
-
 _TOKEN_GROUP_TERMS = {
     "object": {"building", "buildings", "house", "houses", "road", "roads", "tree", "trees", "field", "fields", "water", "vegetation", "plant", "plants"},
     "direction": {"appeared", "built", "constructed", "added", "disappeared", "removed", "demolished", "increased", "expanded", "decreased", "reduced"},
@@ -32,7 +30,11 @@ def _content_token_mask(tokenizer, input_ids: Tensor, attention_mask: Tensor) ->
         tokens = tokenizer.convert_ids_to_tokens(ids)
         for column, (token_id, token) in enumerate(zip(ids, tokens, strict=True)):
             cleaned = _clean_token(str(token))
-            mask[row, column] = bool(attention_mask[row, column]) and token_id not in special and bool(cleaned) and cleaned not in _STOPWORDS
+            mask[row, column] = (
+                bool(attention_mask[row, column])
+                and token_id not in special
+                and bool(cleaned)
+            )
         # A malformed/stopword-only caption still has a deterministic non-special fallback.
         if not bool(mask[row].any()):
             for column, token_id in enumerate(ids):

@@ -44,11 +44,11 @@ def test_generic_v3_shapes_and_no_semantic_specific_heads() -> None:
     assert output.global_score.shape == (3, 4)
     assert output.local_score.shape == (3, 4)
     assert output.token_patch_score.shape == (3, 4)
-    assert output.patch_mask_logits.shape == (3, 4, 20)
+    assert output.patch_mask_logits.shape == (3, 4, 16)
     assert output.decoded_mask_logits.shape == (3, 4, 32, 32)
     assert output.mask_mass.shape == (3, 4)
     assert output.mask_validity.shape == (3, 4)
-    assert output.temporal_descriptors.shape == (4, 20, 16)
+    assert output.temporal_descriptors.shape == (4, 16, 16)
     assert output.slot_activations is None
     names = set(dict(model.named_modules()))
     assert not any(term in name for name in names for term in ("object_head", "direction_head", "location_head", "count_head", "relation_head"))
@@ -104,7 +104,7 @@ def test_grounding_tokens_and_global_query_may_use_different_frozen_encoders() -
     assert output.decoded_mask_logits.shape == (2, 3, 8, 8)
 
 
-def test_temporal_field_bilinearly_expands_siglip_grid_to_fpn_scale() -> None:
+def test_temporal_field_preserves_siglip_native_grid() -> None:
     config = QCPRV3Config(
         input_dim=8,
         visual_source_dim=12,
@@ -119,7 +119,7 @@ def test_temporal_field_bilinearly_expands_siglip_grid_to_fpn_scale() -> None:
     field = QCPRV3GenericGrounding(config).temporal_field(
         torch.randn(1, 2, 16, 12)
     )
-    assert field.scale_slices == ((0, 64, 8), (64, 80, 4))
+    assert field.scale_slices == ((0, 16, 4),)
 
 
 def test_all_consumers_share_exact_scores_and_mask_logits() -> None:
@@ -132,30 +132,41 @@ def test_all_consumers_share_exact_scores_and_mask_logits() -> None:
     assert torch.equal(faithful_mask_score(model, inputs), outputs[0].local_score)
 
 
+def test_b_direct_late_interaction_skips_cross_attention_and_mask_decoder() -> None:
+    model, inputs = _inputs()
+    output = model.score_query_pair_chunks(**inputs.as_kwargs(), decode_mask=False)
+    assert output.decoded_mask_logits.shape == (3, 4, 0, 0)
+    assert output.patch_mask_logits.shape == (3, 4, 0)
+    torch.testing.assert_close(
+        output.reranked_score,
+        output.global_score + 0.1 * output.token_patch_score,
+    )
+
+
 def test_multiscale_decoder_keeps_small_local_peak() -> None:
     model, _ = _inputs()
-    logits = torch.full((1, 1, 20), -12.0)
+    logits = torch.full((1, 1, 16), -12.0)
     logits[..., 0] = 12.0
-    grounded = torch.randn(1, 1, 20, model.config.hidden_dim)
-    decoded = model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2)))
+    grounded = torch.randn(1, 1, 16, model.config.hidden_dim)
+    decoded = model.mask_decoder(logits, grounded, ((0, 16, 4),))
     assert decoded.shape == (1, 1, *model.config.output_size)
     changed = logits.clone(); changed[..., 0] = -12.0
-    assert not torch.equal(decoded, model.mask_decoder(changed, grounded, ((0, 16, 4), (16, 20, 2))))
+    assert not torch.equal(decoded, model.mask_decoder(changed, grounded, ((0, 16, 4),)))
 
 
 def test_feature_decoder_consumes_grounded_skip_features() -> None:
     model, _ = _inputs()
-    logits = torch.full((1, 1, 20), 0.25)
-    grounded = torch.zeros(1, 1, 20, model.config.hidden_dim)
-    baseline = model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2)))
+    logits = torch.full((1, 1, 16), 0.25)
+    grounded = torch.zeros(1, 1, 16, model.config.hidden_dim)
+    baseline = model.mask_decoder(logits, grounded, ((0, 16, 4),))
     grounded[..., 0, 0] = 1.0
-    changed = model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2)))
+    changed = model.mask_decoder(logits, grounded, ((0, 16, 4),))
     assert not torch.equal(baseline, changed)
 
 
 def test_query_modulation_makes_dense_features_text_conditional() -> None:
     model, _ = _inputs()
-    patches = torch.randn(1, 20, model.config.hidden_dim)
+    patches = torch.randn(1, 16, model.config.hidden_dim)
     tokens = torch.randn(2, 3, model.config.text_dim)
     attention = torch.ones(2, 3, dtype=torch.bool)
     grounded, _, _ = model.grounding_decoder(patches, tokens, attention)
@@ -164,7 +175,7 @@ def test_query_modulation_makes_dense_features_text_conditional() -> None:
 
 def test_global_query_embedding_directly_conditions_dense_features() -> None:
     model, _ = _inputs()
-    patches = torch.randn(1, 20, model.config.hidden_dim)
+    patches = torch.randn(1, 16, model.config.hidden_dim)
     shared_tokens = torch.randn(1, 3, model.config.text_dim).expand(2, -1, -1).clone()
     attention = torch.ones(2, 3, dtype=torch.bool)
     direction = torch.linspace(-1.0, 1.0, model.config.hidden_dim)
@@ -175,10 +186,10 @@ def test_global_query_embedding_directly_conditions_dense_features() -> None:
 
 def test_multiscale_fusion_sends_gradient_to_every_refiner() -> None:
     model, _ = _inputs()
-    logits = torch.full((1, 1, 20), -12.0, requires_grad=True)
+    logits = torch.full((1, 1, 16), -12.0, requires_grad=True)
     logits.data[..., 0] = 12.0
-    grounded = torch.randn(1, 1, 20, model.config.hidden_dim, requires_grad=True)
-    model.mask_decoder(logits, grounded, ((0, 16, 4), (16, 20, 2))).mean().backward()
+    grounded = torch.randn(1, 1, 16, model.config.hidden_dim, requires_grad=True)
+    model.mask_decoder(logits, grounded, ((0, 16, 4),)).mean().backward()
     for block in (*model.mask_decoder.lateral_projections, *model.mask_decoder.fusion_blocks):
         assert all(parameter.grad is not None and torch.isfinite(parameter.grad).all() for parameter in block.parameters())
 
@@ -214,7 +225,7 @@ def test_patch_pooling_logits_are_sampled_from_displayed_mask_field() -> None:
     output = model(**inputs.as_kwargs())
     expected = model.mask_decoder.sample_patch_logits(
         output.decoded_mask_logits,
-        ((0, 16, 4), (16, 20, 2)),
+        ((0, 16, 4),),
     )
     torch.testing.assert_close(output.patch_mask_logits, expected)
 

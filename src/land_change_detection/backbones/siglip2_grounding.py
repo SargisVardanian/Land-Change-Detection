@@ -24,11 +24,6 @@ class FrozenSigLIP2GroundingBackbone(nn.Module):
     therefore absent from student checkpoints and optimizers.
     """
 
-    _STOPWORDS = {
-        "a", "an", "and", "are", "at", "by", "for", "from", "in", "is",
-        "near", "of", "on", "the", "to", "was", "were", "with",
-    }
-
     def __init__(self, model_path: str | Path):
         super().__init__()
         from transformers import AutoModel, AutoProcessor, AutoTokenizer
@@ -125,7 +120,7 @@ class FrozenSigLIP2GroundingBackbone(nn.Module):
                 zip(input_ids[row].tolist(), token_strings, strict=True)
             ):
                 normalized = str(token).casefold().lstrip("▁Ġ").strip(".,;:!?")
-                if token_id in special_ids or normalized in self._STOPWORDS or not normalized:
+                if token_id in special_ids or not normalized:
                     content[row, column] = False
         fallback = attention & ~torch.isin(
             input_ids,

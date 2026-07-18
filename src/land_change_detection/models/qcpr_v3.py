@@ -15,10 +15,10 @@ class QCPRV3Config:
     visual_source_dim: int | None = None
     text_dim: int = 512
     global_text_dim: int | None = None
-    hidden_dim: int = 512
+    hidden_dim: int = 256
     heads: int = 8
-    decoder_layers: int = 2
-    scales: tuple[int, ...] = (32, 16, 8)
+    decoder_layers: int = 1
+    scales: tuple[int, ...] = ()
     output_size: tuple[int, int] = (256, 256)
     dropout: float = 0.0
     token_top_k: int = 4
@@ -71,30 +71,29 @@ def _grid_coordinates(side: int, *, device: torch.device, dtype: torch.dtype) ->
     return torch.stack((x, y), dim=-1).reshape(-1, 2)
 
 
-class ContinuousPositionEncoding(nn.Module):
-    def __init__(self, hidden_dim: int, frequencies: int = 4):
-        super().__init__()
-        self.frequencies = int(frequencies)
-        input_dim = 5 + 4 * self.frequencies + 1
-        self.projection = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-    def forward(self, coordinates: Tensor, scale: float) -> Tensor:
-        x, y = coordinates.unbind(dim=-1)
-        values = [x, y, x.square(), y.square(), x * y]
-        for index in range(self.frequencies):
-            frequency = math.pi * (2.0**index)
-            values.extend((torch.sin(frequency * x), torch.cos(frequency * x)))
-            values.extend((torch.sin(frequency * y), torch.cos(frequency * y)))
-        values.append(torch.full_like(x, float(scale)))
-        return self.projection(torch.stack(values, dim=-1))
+def _fixed_2d_position(coordinates: Tensor, hidden_dim: int) -> Tensor:
+    """Deterministic Fourier position encoding with no learned location rules."""
+    quarter = max(1, hidden_dim // 4)
+    frequencies = torch.exp(
+        torch.linspace(0.0, math.log(100.0), quarter, device=coordinates.device, dtype=coordinates.dtype)
+    )
+    x, y = coordinates.unbind(dim=-1)
+    values = torch.cat(
+        (
+            torch.sin(x[:, None] * frequencies[None]),
+            torch.cos(x[:, None] * frequencies[None]),
+            torch.sin(y[:, None] * frequencies[None]),
+            torch.cos(y[:, None] * frequencies[None]),
+        ),
+        dim=-1,
+    )
+    if values.shape[-1] < hidden_dim:
+        values = F.pad(values, (0, hidden_dim - values.shape[-1]))
+    return values[:, :hidden_dim]
 
 
 class GenericTemporalPatchField(nn.Module):
-    """Class-agnostic multi-scale field from ordered T1/T2 patch tokens."""
+    """One native class-agnostic field from ordered T1/T2 patch tokens."""
 
     def __init__(self, config: QCPRV3Config):
         super().__init__()
@@ -104,44 +103,10 @@ class GenericTemporalPatchField(nn.Module):
             nn.Identity() if source_dim == config.input_dim
             else nn.Linear(source_dim, config.input_dim)
         )
-        self.position = ContinuousPositionEncoding(config.hidden_dim)
-        descriptor_dim = 4 * config.input_dim
-        self.descriptor_projection = nn.Sequential(
-            nn.LayerNorm(descriptor_dim),
-            nn.Linear(descriptor_dim, config.hidden_dim),
-            nn.GELU(),
-            nn.Linear(config.hidden_dim, config.hidden_dim),
-        )
-        self.context_blocks = nn.ModuleList(
-            nn.TransformerEncoderLayer(
-                config.hidden_dim,
-                config.heads,
-                dim_feedforward=4 * config.hidden_dim,
-                dropout=config.dropout,
-                activation="gelu",
-                batch_first=True,
-                norm_first=True,
-            )
-            for _ in range(max(1, config.decoder_layers // 2))
-        )
+        self.context_projection = nn.Linear(config.input_dim, config.hidden_dim)
+        self.delta_projection = nn.Linear(config.input_dim, config.hidden_dim)
+        self.magnitude_projection = nn.Linear(config.input_dim, config.hidden_dim)
         self.output_norm = nn.LayerNorm(config.hidden_dim)
-
-    @staticmethod
-    def _resize_tokens(tokens: Tensor, source_side: int, target_side: int) -> Tensor:
-        batch, time, _, dim = tokens.shape
-        grid = tokens.reshape(batch * time, source_side, source_side, dim).permute(0, 3, 1, 2)
-        if target_side == source_side:
-            resized = grid
-        elif target_side > source_side:
-            resized = F.interpolate(
-                grid,
-                size=(target_side, target_side),
-                mode="bilinear",
-                align_corners=False,
-            )
-        else:
-            resized = F.adaptive_avg_pool2d(grid, (target_side, target_side))
-        return resized.permute(0, 2, 3, 1).reshape(batch, time, target_side * target_side, dim)
 
     def forward(self, per_time_tokens: Tensor) -> TemporalPatchField:
         if per_time_tokens.ndim != 4 or per_time_tokens.shape[1] != 2:
@@ -153,31 +118,22 @@ class GenericTemporalPatchField(nn.Module):
         source_side = int(math.isqrt(per_time_tokens.shape[2]))
         if source_side * source_side != per_time_tokens.shape[2]:
             raise ValueError("per_time_tokens must form a square source grid")
-        descriptors: list[Tensor] = []
-        coordinates: list[Tensor] = []
-        scale_ids: list[Tensor] = []
-        scale_slices: list[tuple[int, int, int]] = []
-        offset = 0
-        for scale_index, side in enumerate(self.config.scales):
-            resized = self._resize_tokens(per_time_tokens, source_side, side)
-            before, after = resized[:, 0], resized[:, 1]
-            raw = torch.cat((before, after, after - before, (after - before).abs()), dim=-1)
-            descriptor = self.descriptor_projection(raw)
-            coords = _grid_coordinates(side, device=raw.device, dtype=raw.dtype)
-            descriptor = descriptor + self.position(coords, scale=float(side) / float(source_side)).unsqueeze(0)
-            descriptors.append(descriptor)
-            coordinates.append(coords)
-            scale_ids.append(torch.full((side * side,), scale_index, device=raw.device, dtype=torch.long))
-            scale_slices.append((offset, offset + side * side, side))
-            offset += side * side
-        field = torch.cat(descriptors, dim=1)
-        for block in self.context_blocks:
-            field = block(field)
+        before, after = per_time_tokens[:, 0], per_time_tokens[:, 1]
+        context = 0.5 * (before + after)
+        delta = after - before
+        magnitude = delta.abs()
+        coords = _grid_coordinates(source_side, device=before.device, dtype=before.dtype)
+        field = (
+            self.context_projection(context)
+            + self.delta_projection(delta)
+            + self.magnitude_projection(magnitude)
+            + _fixed_2d_position(coords, self.config.hidden_dim).unsqueeze(0)
+        )
         return TemporalPatchField(
             descriptors=F.normalize(self.output_norm(field), dim=-1),
-            coordinates=torch.cat(coordinates, dim=0),
-            scale_ids=torch.cat(scale_ids, dim=0),
-            scale_slices=tuple(scale_slices),
+            coordinates=coords,
+            scale_ids=torch.zeros(source_side * source_side, device=before.device, dtype=torch.long),
+            scale_slices=((0, source_side * source_side, source_side),),
         )
 
 
@@ -257,30 +213,23 @@ class MultiScaleQueryMaskDecoder(nn.Module):
         width = config.mask_decoder_dim
         self.lateral_projections = nn.ModuleList(
             nn.Sequential(nn.LayerNorm(config.hidden_dim), nn.Linear(config.hidden_dim, width))
-            for _ in config.scales
+            for _ in range(3)
         )
-        self.logit_projections = nn.ModuleList(nn.Conv2d(1, width, 1) for _ in config.scales)
+        self.logit_projections = nn.ModuleList(nn.Conv2d(1, width, 1) for _ in range(3))
         self.fusion_blocks = nn.ModuleList(
             nn.Sequential(
                 nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"),
                 nn.GroupNorm(8, width), nn.GELU(),
                 nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
             )
-            for _ in config.scales
+            for _ in range(3)
         )
-        largest_scale = max(config.scales)
-        if config.output_size[0] != config.output_size[1] or config.output_size[0] % largest_scale:
-            raise ValueError("mask output must be square and divisible by the largest temporal scale")
-        upsample_ratio = config.output_size[0] // largest_scale
-        if upsample_ratio < 1 or upsample_ratio & (upsample_ratio - 1):
-            raise ValueError("mask output/largest-scale ratio must be a power of two")
-        self.upsample_blocks = nn.ModuleList(
-            nn.Sequential(
-                nn.ConvTranspose2d(width, width, 4, stride=2, padding=1),
-                nn.GroupNorm(8, width), nn.GELU(),
-                nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
-            )
-            for _ in range(int(math.log2(upsample_ratio)))
+        self.upsample_refinement = nn.Sequential(
+            nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"),
+            nn.GroupNorm(8, width),
+            nn.GELU(),
+            nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"),
+            nn.GELU(),
         )
         self.mask_head = nn.Sequential(
             nn.Conv2d(width, width, 3, padding=1, padding_mode="replicate"), nn.GELU(),
@@ -298,14 +247,23 @@ class MultiScaleQueryMaskDecoder(nn.Module):
         if patch_logits.ndim != 3 or grounded.ndim != 4 or grounded.shape[:3] != patch_logits.shape:
             raise ValueError("patch_logits [Q,C,N] and grounded [Q,C,N,D] must align")
         queries, candidates, _ = patch_logits.shape
-        target_side = max(side for _, _, side in scale_slices)
+        if len(scale_slices) != 1:
+            raise ValueError("mask decoder requires one native temporal patch grid")
+        start, end, native_side = scale_slices[0]
+        native_features = grounded[..., start:end, :].reshape(
+            queries * candidates, native_side, native_side, -1
+        ).permute(0, 3, 1, 2)
+        native_logits = patch_logits[..., start:end].reshape(
+            queries * candidates, 1, native_side, native_side
+        )
         lateral: list[Tensor] = []
-        for projection, logit_projection, (start, end, side) in zip(
-            self.lateral_projections, self.logit_projections, scale_slices, strict=True
+        for level, (projection, logit_projection) in enumerate(
+            zip(self.lateral_projections, self.logit_projections, strict=True)
         ):
-            features = projection(grounded[..., start:end, :])
-            features = features.reshape(queries * candidates, side, side, -1).permute(0, 3, 1, 2)
-            logits = patch_logits[..., start:end].reshape(queries * candidates, 1, side, side)
+            side = max(1, native_side // (2**level))
+            features = F.adaptive_avg_pool2d(native_features, (side, side))
+            features = projection(features.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+            logits = F.adaptive_avg_pool2d(native_logits, (side, side))
             lateral.append(features + logit_projection(logits))
         if not lateral:
             raise ValueError("at least one mask scale is required")
@@ -316,9 +274,11 @@ class MultiScaleQueryMaskDecoder(nn.Module):
                 fused = F.interpolate(fused, current.shape[-2:], mode="bilinear", align_corners=False)
                 current = current + fused
             fused = self.fusion_blocks[index](current)
-        assert fused is not None and fused.shape[-2:] == (target_side, target_side)
-        for block in self.upsample_blocks:
-            fused = block(fused)
+        assert fused is not None and fused.shape[-2:] == (native_side, native_side)
+        fused = F.interpolate(
+            fused, size=self.config.output_size, mode="bilinear", align_corners=False
+        )
+        fused = self.upsample_refinement(fused)
         decoded = self.mask_head(fused)
         if decoded.shape[-2:] != self.config.output_size:
             raise RuntimeError(
@@ -381,6 +341,7 @@ class QCPRV3GenericGrounding(nn.Module):
         super().__init__()
         self.config = config or QCPRV3Config()
         self.temporal_field = GenericTemporalPatchField(self.config)
+        self.direct_token_projection = nn.Linear(self.config.text_dim, self.config.hidden_dim)
         self.grounding_decoder = GenericCrossModalDecoder(self.config)
         self.mask_decoder = MultiScaleQueryMaskDecoder(self.config)
         global_text_dim = (
@@ -393,11 +354,6 @@ class QCPRV3GenericGrounding(nn.Module):
             else nn.Linear(global_text_dim, self.config.hidden_dim, bias=False)
         )
         self.local_projection = nn.Linear(self.config.hidden_dim, self.config.hidden_dim)
-        self.temporal_map_head = nn.Linear(self.config.hidden_dim, 3)
-        # B starts as global + token late interaction. Mask-local evidence is
-        # effectively disabled until Stage C learns a non-empty grounded mask.
-        self.rerank_logits = nn.Parameter(torch.tensor([-20.0, -2.0]))
-        self.region_slots = GenericRegionSlots(self.config) if self.config.enable_region_slots else None
 
     @staticmethod
     def masked_local_embedding(descriptors: Tensor, mask_logits: Tensor) -> Tensor:
@@ -420,12 +376,7 @@ class QCPRV3GenericGrounding(nn.Module):
         patch_k = max(1, min(self.config.token_top_k, similarities.shape[2]))
         per_token = similarities.topk(patch_k, dim=2).values.mean(dim=2)
         valid = safe_mask[:, None].to(per_token.dtype)
-        arithmetic = (per_token * valid).sum(dim=-1) / valid.sum(dim=-1).clamp_min(1.0)
-        temperature = max(float(self.config.token_softmin_temperature), 1e-4)
-        masked = per_token.masked_fill(~safe_mask[:, None], float("inf"))
-        softmin = -temperature * torch.logsumexp(-masked / temperature, dim=-1)
-        softmin = softmin + temperature * valid.sum(dim=-1).clamp_min(1.0).log()
-        score = 0.5 * arithmetic + 0.5 * softmin
+        score = (per_token * valid).sum(dim=-1) / valid.sum(dim=-1).clamp_min(1.0)
         return torch.where(valid_rows[:, None], score, torch.zeros_like(score))
 
     def score_query_pair_chunks(
@@ -437,31 +388,13 @@ class QCPRV3GenericGrounding(nn.Module):
         per_time_tokens: Tensor,
         *,
         text_content_mask: Tensor | None = None,
+        decode_mask: bool = True,
     ) -> QCPRV3ScoreOutput:
         field = self.temporal_field(per_time_tokens)
         query_condition = self.global_query_projection(global_query_embeddings)
-        grounded, raw_patch_logits, projected_tokens = self.grounding_decoder(
-            field.descriptors, text_token_embeddings, text_attention_mask,
-            query_condition,
-        )
-        decoded_logits = self.mask_decoder(raw_patch_logits, grounded, field.scale_slices)
-        patch_logits = self.mask_decoder.sample_patch_logits(decoded_logits, field.scale_slices)
         query = F.normalize(query_condition, dim=-1)
         pairs = F.normalize(pair_embeddings, dim=-1)
         global_score = query @ pairs.T
-        local_embedding = self.masked_local_embedding(field.descriptors, patch_logits)
-        probabilities = patch_logits.sigmoid()
-        mask_mass = probabilities.mean(dim=-1)
-        mask_peak = probabilities.amax(dim=-1)
-        mask_validity = ((mask_peak - 0.10) / 0.40).clamp(0.0, 1.0)
-        normalized_weights = probabilities / probabilities.sum(dim=-1, keepdim=True).clamp_min(1e-6)
-        mask_effective_patch_count = normalized_weights.square().sum(dim=-1).clamp_min(1e-6).reciprocal()
-        mask_entropy = -(
-            probabilities.clamp(1e-6, 1 - 1e-6) * probabilities.clamp(1e-6, 1 - 1e-6).log()
-            + (1 - probabilities).clamp(1e-6, 1 - 1e-6) * (1 - probabilities).clamp(1e-6, 1 - 1e-6).log()
-        ).mean(dim=-1)
-        local_score = torch.einsum("qd,qcd->qc", query, F.normalize(self.local_projection(local_embedding), dim=-1))
-        local_score = local_score * mask_validity
         content_mask = text_attention_mask if text_content_mask is None else text_content_mask
         if content_mask.shape != text_attention_mask.shape:
             raise ValueError("text_content_mask must match text_attention_mask")
@@ -470,13 +403,43 @@ class QCPRV3GenericGrounding(nn.Module):
         if bool(fallback.any()):
             content_mask = content_mask.clone()
             content_mask[fallback] = text_attention_mask.bool()[fallback]
-        token_patch_score = self._token_patch_score(grounded, projected_tokens, content_mask)
-        weights = F.softplus(self.rerank_logits)
-        reranked = global_score + weights[0] * local_score + weights[1] * token_patch_score
-        temporal_maps = self.temporal_map_head(field.descriptors)
-        slot_activations = slot_embeddings = slot_mask_logits = None
-        if self.region_slots is not None:
-            slot_activations, slot_embeddings, slot_mask_logits = self.region_slots(grounded)
+        direct_tokens = self.direct_token_projection(text_token_embeddings)
+        direct_patches = field.descriptors[None].expand(
+            global_query_embeddings.shape[0], -1, -1, -1
+        )
+        token_patch_score = self._token_patch_score(
+            direct_patches, direct_tokens, content_mask
+        )
+        reranked = global_score + 0.1 * token_patch_score
+        if decode_mask:
+            grounded, raw_patch_logits, _ = self.grounding_decoder(
+                field.descriptors, text_token_embeddings, text_attention_mask,
+                query_condition,
+            )
+            decoded_logits = self.mask_decoder(raw_patch_logits, grounded, field.scale_slices)
+            patch_logits = self.mask_decoder.sample_patch_logits(decoded_logits, field.scale_slices)
+            local_embedding = self.masked_local_embedding(field.descriptors, patch_logits)
+        else:
+            queries, candidates = global_score.shape
+            grounded = field.descriptors.new_empty(queries, candidates, 0, self.config.hidden_dim)
+            decoded_logits = field.descriptors.new_empty(queries, candidates, 0, 0)
+            patch_logits = field.descriptors.new_empty(queries, candidates, 0)
+            local_embedding = field.descriptors.new_zeros(queries, candidates, self.config.hidden_dim)
+        probabilities = patch_logits.sigmoid()
+        mask_mass = probabilities.mean(dim=-1) if probabilities.numel() else global_score.new_zeros(global_score.shape)
+        mask_peak = probabilities.amax(dim=-1) if probabilities.numel() else global_score.new_zeros(global_score.shape)
+        mask_validity = ((mask_peak - 0.10) / 0.40).clamp(0.0, 1.0)
+        normalized_weights = probabilities / probabilities.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+        mask_effective_patch_count = (
+            normalized_weights.square().sum(dim=-1).clamp_min(1e-6).reciprocal()
+            if probabilities.numel() else global_score.new_zeros(global_score.shape)
+        )
+        mask_entropy = -(
+            probabilities.clamp(1e-6, 1 - 1e-6) * probabilities.clamp(1e-6, 1 - 1e-6).log()
+            + (1 - probabilities).clamp(1e-6, 1 - 1e-6) * (1 - probabilities).clamp(1e-6, 1 - 1e-6).log()
+        ).mean(dim=-1) if probabilities.numel() else global_score.new_zeros(global_score.shape)
+        local_score = torch.einsum("qd,qcd->qc", query, F.normalize(self.local_projection(local_embedding), dim=-1))
+        local_score = local_score * mask_validity
         diagnostics = {
             "query_count": int(global_query_embeddings.shape[0]),
             "candidate_count": int(pair_embeddings.shape[0]),
@@ -501,10 +464,10 @@ class QCPRV3GenericGrounding(nn.Module):
             grounded_patches=grounded,
             coordinates=field.coordinates,
             scale_ids=field.scale_ids,
-            temporal_map_logits=temporal_maps,
-            slot_activations=slot_activations,
-            slot_embeddings=slot_embeddings,
-            slot_mask_logits=slot_mask_logits,
+            temporal_map_logits=None,
+            slot_activations=None,
+            slot_embeddings=None,
+            slot_mask_logits=None,
             memory_diagnostics=diagnostics,
         )
 

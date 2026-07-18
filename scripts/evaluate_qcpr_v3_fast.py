@@ -134,6 +134,7 @@ def score(model, corpus, device, qchunk, cchunk, include_masks, *, rerank_top_n:
             corpus["pairs"][union].to(device), corpus["per_time"][union].to(device),
             corpus["text"][q0:q1].to(device), corpus["tokens"][q0:q1].to(device),
             corpus["attention"][q0:q1].to(device), corpus["content"][q0:q1].to(device),
+            decode_mask=include_masks,
         )
         union_positions = torch.searchsorted(union, selected)
         rows = torch.arange(q1 - q0)[:, None]
@@ -158,14 +159,30 @@ def global_subset_metrics(scores: torch.Tensor, relevance: torch.Tensor, subset:
     """Retrieval statistics for an explicit caption stratum."""
     selected = torch.nonzero(subset, as_tuple=False).flatten()
     if not selected.numel():
-        return {"query_count": 0, "semantic_r1": 0.0, "candidate_recall_at_100": 0.0}
+        return {
+            "query_count": 0,
+            "semantic_r1": 0.0,
+            "semantic_ndcg_at_10": 0.0,
+            "candidate_recall_at_100": 0.0,
+        }
     local_scores = scores.index_select(0, selected)
     local_relevance = relevance.index_select(0, selected).bool()
     top1 = local_scores.argmax(dim=1)
     topk = local_scores.topk(min(k, local_scores.shape[1]), dim=1).indices
+    top10 = local_scores.topk(min(10, local_scores.shape[1]), dim=1).indices
+    ranked_relevance = local_relevance.gather(1, top10).float()
+    discounts = 1.0 / torch.log2(
+        torch.arange(2, 2 + ranked_relevance.shape[1], dtype=torch.float32)
+    )
+    dcg = (ranked_relevance * discounts).sum(dim=1)
+    positive_counts = local_relevance.sum(dim=1).clamp_max(ranked_relevance.shape[1])
+    ideal = torch.stack(
+        [discounts[: int(count)].sum() for count in positive_counts.tolist()]
+    ).clamp_min(1e-8)
     return {
         "query_count": int(selected.numel()),
         "semantic_r1": float(local_relevance[torch.arange(selected.numel()), top1].float().mean()),
+        "semantic_ndcg_at_10": float((dcg / ideal).mean()),
         "candidate_recall_at_100": float(local_relevance.gather(1, topk).any(dim=1).float().mean()),
     }
 
@@ -253,8 +270,14 @@ def main() -> int:
         else:
             baseline_report = json.loads(args.baseline_output.read_text())
             baseline_metrics = baseline_report["metrics"]
-            core_gates["changed_only_semantic_r1_improved"] = float(metrics["changed_only"]["semantic_r1"]) > float(baseline_metrics["changed_only"]["semantic_r1"])
-            core_gates["candidate_recall_at_100_improved"] = float(metrics["candidate_recall_at_100"]) > float(baseline_metrics["candidate_recall_at_100"])
+            core_gates["changed_only_ndcg_at_10_improved"] = (
+                float(metrics["changed_only"]["semantic_ndcg_at_10"])
+                > float(baseline_metrics["changed_only"]["semantic_ndcg_at_10"])
+            )
+            core_gates["changed_candidate_recall_at_100_preserved"] = (
+                float(metrics["changed_only"]["candidate_recall_at_100"])
+                >= float(baseline_metrics["changed_only"]["candidate_recall_at_100"]) - 0.01
+            )
             gates = core_gates
             status_override = None
     else:

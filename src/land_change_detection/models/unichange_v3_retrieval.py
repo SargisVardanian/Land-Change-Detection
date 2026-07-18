@@ -131,6 +131,8 @@ class UniChangeV3RetrievalModel(nn.Module):
         text_tokens: Tensor,
         text_attention_mask: Tensor,
         text_content_mask: Tensor | None = None,
+        *,
+        decode_mask: bool = True,
     ) -> QCPRV3ScoreOutput:
         return self.grounder.score_query_pair_chunks(
             text_embedding,
@@ -139,6 +141,7 @@ class UniChangeV3RetrievalModel(nn.Module):
             pair_embedding,
             per_time_tokens,
             text_content_mask=text_content_mask,
+            decode_mask=decode_mask,
         )
 
     def forward_global(
@@ -172,6 +175,8 @@ class UniChangeV3RetrievalModel(nn.Module):
         captions: list[str],
         caption_to_pair: Tensor | None = None,
         temporal_valid_mask: Tensor | None = None,
+        *,
+        decode_mask: bool = True,
     ) -> UniChangeV3Output:
         pair, per_time, metadata = self.encode_pairs(images, temporal_valid_mask)
         base_text, text, tokens, attention, content = self.encode_texts(captions)
@@ -180,5 +185,8 @@ class UniChangeV3RetrievalModel(nn.Module):
         content = content.to(pair.device)
         text = text.to(pair.device)
         base_text = base_text.to(pair.device)
-        scores = self.score_encoded(pair, per_time, text, tokens, attention, content)
+        scores = self.score_encoded(
+            pair, per_time, text, tokens, attention, content,
+            decode_mask=decode_mask,
+        )
         return UniChangeV3Output(pair, base_text, text, tokens, attention, content, per_time, scores, metadata)

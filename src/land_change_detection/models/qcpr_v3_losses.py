@@ -7,27 +7,86 @@ from torch import Tensor
 from torch.nn import functional as F
 
 
-def duplicate_aware_positive_mask(
+@dataclass(frozen=True)
+class A0ContrastiveMasks:
+    text_to_pair_positive: Tensor
+    text_to_pair_exclusion: Tensor
+    pair_to_text_positive: Tensor
+    pair_to_text_exclusion: Tensor
+
+
+def a0_physical_pair_contrastive_masks(
     caption_to_pair: Tensor,
     caption_group_ids: Tensor,
     *,
     pair_count: int,
-) -> Tensor:
-    """Map exact and normalized-caption-equivalent queries to positive pairs."""
+) -> A0ContrastiveMasks:
+    """Build physical-pair positives and duplicate-caption ambiguity masks."""
     if caption_to_pair.ndim != 1 or caption_group_ids.shape != caption_to_pair.shape:
         raise ValueError("caption_to_pair and caption_group_ids must be aligned rank-1 tensors")
     if pair_count <= 0 or caption_to_pair.numel() == 0:
         raise ValueError("non-empty mappings and positive pair_count are required")
     if int(caption_to_pair.min()) < 0 or int(caption_to_pair.max()) >= pair_count:
         raise ValueError("caption_to_pair contains an out-of-range pair index")
+    query_count = caption_to_pair.numel()
     same_group = caption_group_ids[:, None] == caption_group_ids[None, :]
-    positives = torch.zeros(
-        caption_to_pair.numel(), pair_count, dtype=torch.bool, device=caption_to_pair.device
+    text_to_pair_positive = torch.zeros(
+        query_count, pair_count, dtype=torch.bool, device=caption_to_pair.device
     )
-    for caption_index in range(caption_to_pair.numel()):
-        positives[:, caption_to_pair[caption_index]] |= same_group[:, caption_index]
-    positives.scatter_(1, caption_to_pair[:, None], True)
-    return positives
+    text_to_pair_positive.scatter_(1, caption_to_pair[:, None], True)
+    text_to_pair_exclusion = torch.zeros_like(text_to_pair_positive)
+    for query_index in range(query_count):
+        text_to_pair_exclusion[
+            query_index, caption_to_pair[same_group[query_index]]
+        ] = True
+    text_to_pair_exclusion &= ~text_to_pair_positive
+
+    pair_to_text_positive = torch.zeros(
+        pair_count, query_count, dtype=torch.bool, device=caption_to_pair.device
+    )
+    pair_to_text_positive[
+        caption_to_pair, torch.arange(query_count, device=caption_to_pair.device)
+    ] = True
+    pair_to_text_exclusion = torch.zeros_like(pair_to_text_positive)
+    for pair_index in range(pair_count):
+        own = caption_to_pair == pair_index
+        if bool(own.any()):
+            pair_to_text_exclusion[pair_index] = same_group[own].any(dim=0) & ~own
+    return A0ContrastiveMasks(
+        text_to_pair_positive,
+        text_to_pair_exclusion,
+        pair_to_text_positive,
+        pair_to_text_exclusion,
+    )
+
+
+def a0_symmetric_physical_pair_contrastive_loss(
+    scores: Tensor,
+    caption_to_pair: Tensor,
+    caption_group_ids: Tensor,
+    *,
+    temperature: float = 0.07,
+) -> Tensor:
+    """Symmetric A0 loss; duplicate captions on other pairs are ambiguous."""
+    if scores.ndim != 2:
+        raise ValueError("A0 scores must have shape [captions,pairs]")
+    masks = a0_physical_pair_contrastive_masks(
+        caption_to_pair, caption_group_ids, pair_count=scores.shape[1]
+    )
+    text_to_pair = multi_positive_contrastive_loss(
+        scores,
+        masks.text_to_pair_positive,
+        exclusion_mask=masks.text_to_pair_exclusion,
+        temperature=temperature,
+    )
+    active_pairs = masks.pair_to_text_positive.any(dim=1)
+    pair_to_text = multi_positive_contrastive_loss(
+        scores.transpose(0, 1)[active_pairs],
+        masks.pair_to_text_positive[active_pairs],
+        exclusion_mask=masks.pair_to_text_exclusion[active_pairs],
+        temperature=temperature,
+    )
+    return 0.5 * (text_to_pair + pair_to_text)
 
 
 def multi_positive_contrastive_loss(

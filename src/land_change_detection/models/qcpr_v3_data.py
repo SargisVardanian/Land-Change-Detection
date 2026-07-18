@@ -419,10 +419,24 @@ def derive_qcpr_v3_manifests(
     write_jsonl("natural_train_localization_manifest.jsonl", natural_train_localization)
     write_jsonl("natural_validation_localization_manifest.jsonl", natural_validation_localization)
 
+    physical_pair_ids = set()
+    directional_query_target_count = 0
+    for row in rows:
+        pair_id = str(row["pair_id"])
+        dataset_name = str(row["dataset_name"])
+        if dataset_name == "s2looking" and pair_id.rsplit(":", 1)[-1] in {
+            "appeared",
+            "disappeared",
+        }:
+            pair_id = pair_id.rsplit(":", 1)[0]
+            directional_query_target_count += 1
+        physical_pair_ids.add((dataset_name, pair_id))
     coverage = {
         "schema_version": "qcpr-v3-coverage-v1",
         "source_manifest_sha256": source_hashes,
         "pair_rows": len(rows),
+        "physical_unique_pair_count": len(physical_pair_ids),
+        "directional_query_target_count": directional_query_target_count,
         "caption_rows": len(caption_audits),
         "dataset_pairs": dict(Counter(row["dataset_name"] for row in rows)),
         "split_pairs": dict(Counter(row["split"] for row in rows)),

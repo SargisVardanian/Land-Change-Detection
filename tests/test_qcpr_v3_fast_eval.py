@@ -40,8 +40,12 @@ def test_score_uses_only_global_top_n_candidates():
     from types import SimpleNamespace
     class Model:
         def __init__(self): self.candidate_counts = []
-        def score_encoded(self, pairs, per_time, text, tokens, attention, content):
+        def score_encoded(
+            self, pairs, per_time, text, tokens, attention, content, *,
+            decode_mask=True,
+        ):
             self.candidate_counts.append(pairs.shape[0])
+            assert decode_mask is False
             shape = (text.shape[0], pairs.shape[0])
             return SimpleNamespace(local_score=torch.ones(shape), token_patch_score=torch.full(shape, 2.0), reranked_score=torch.full(shape, 3.0), decoded_mask_logits=torch.zeros(*shape, 1, 1))
     model = Model()

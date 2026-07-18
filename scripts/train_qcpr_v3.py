@@ -25,7 +25,11 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import qcpr_v3_data_compat as data_compat
 from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, m0_balanced_mask_loss, m0_symmetric_query_swap_loss, query_mask_metrics, separated_query_mask_losses
-from land_change_detection.models.qcpr_v3_losses import duplicate_aware_positive_mask, multi_positive_contrastive_loss
+from land_change_detection.models.qcpr_v3_losses import (
+    a0_physical_pair_contrastive_masks,
+    a0_symmetric_physical_pair_contrastive_loss,
+    multi_positive_contrastive_loss,
+)
 from land_change_detection.models.qcpr_v3_phases import apply_phase_to_model, resolve_training_phase
 from land_change_detection.models.qcpr_v3_factory import QCPRV3BackboneConfig
 from land_change_detection.models.qcpr_v3_runtime import IMMUTABLE_V1, assert_teacher_not_in_optimizer, build_clean_v3, build_v3_and_teacher
@@ -524,7 +528,7 @@ def run(args: argparse.Namespace) -> dict:
             "output_dir": str(output),
             **asdict(backbone_config),
         }
-    retrieval_phase = args.phase in {"global_bootstrap", "global_recovery", "late_interaction"}
+    retrieval_phase = args.phase in {"global_bootstrap", "late_interaction"}
     train_manifest = "m0_train_manifest.jsonl" if m0_mode else ("natural_train_retrieval_manifest.jsonl" if retrieval_phase else "natural_train_manifest.jsonl")
     val_manifest = "m0_dev_manifest.jsonl" if m0_mode else ("natural_validation_retrieval_manifest.jsonl" if retrieval_phase else "natural_validation_manifest.jsonl")
     config_dict.update(
@@ -737,7 +741,13 @@ def run(args: argparse.Namespace) -> dict:
             result = (
                 student.forward_global(images, batch["captions"], temporal_mask)
                 if global_only
-                else student(images, batch["captions"], mapping, temporal_mask)
+                else student(
+                    images,
+                    batch["captions"],
+                    mapping,
+                    temporal_mask,
+                    decode_mask=args.phase != "late_interaction",
+                )
             )
             losses: dict[str, torch.Tensor] = {}
             global_scores = result.global_score if global_only else result.scores.global_score
@@ -749,16 +759,26 @@ def run(args: argparse.Namespace) -> dict:
                 if selected_mapping.numel()
                 else torch.empty(0, dtype=torch.long, device=device)
             )
-            positive_mask = (
-                duplicate_aware_positive_mask(
+            contrastive_masks = (
+                a0_physical_pair_contrastive_masks(
                     selected_mapping, selected_groups, pair_count=selection["selected_pairs"].numel()
                 )
                 if selected_mapping.numel()
                 else None
             )
-            if "global_multi_positive" in profile.active_losses and positive_mask is not None:
-                losses["global_multi_positive"] = multi_positive_contrastive_loss(
-                    selected_scores(global_scores), positive_mask, temperature=args.contrastive_temperature
+            positive_mask = (
+                contrastive_masks.text_to_pair_positive
+                if contrastive_masks is not None
+                else None
+            )
+            if "global_physical_pair_contrastive" in profile.active_losses and contrastive_masks is not None:
+                losses["global_physical_pair_contrastive"] = (
+                    a0_symmetric_physical_pair_contrastive_loss(
+                        selected_scores(global_scores),
+                        selected_mapping,
+                        selected_groups,
+                        temperature=args.contrastive_temperature,
+                    )
                 )
             if "base_text_preservation" in profile.active_losses and selected_mapping.numel():
                 selected_queries = selection["selected_queries"]
@@ -1055,8 +1075,12 @@ def run(args: argparse.Namespace) -> dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--phase", choices=("global_bootstrap", "global_recovery", "late_interaction", "mask_grounding", "mask_only_diagnostic", "region_slots", "joint_finetune"), required=True)
-    parser.add_argument("--initialization-mode", choices=("clean_pretrained", "historical_e0"), required=True)
+    parser.add_argument(
+        "--phase",
+        choices=("global_bootstrap", "late_interaction", "mask_grounding", "mask_only_diagnostic"),
+        required=True,
+    )
+    parser.add_argument("--initialization-mode", choices=("clean_pretrained",), required=True)
     parser.add_argument("--v1-checkpoint", type=Path, default=IMMUTABLE_V1)
     parser.add_argument("--v3-checkpoint", type=Path, default=None)
     parser.add_argument("--data-root", type=Path, default=Path("/mnt/weka/svardanyan/rs_change_project/datasets/processed/LEVIR-MCI"))
