@@ -392,9 +392,12 @@ class QCPRV3GenericGrounding(nn.Module):
     ) -> QCPRV3ScoreOutput:
         field = self.temporal_field(per_time_tokens)
         query_condition = self.global_query_projection(global_query_embeddings)
+        global_query = F.normalize(global_query_embeddings, dim=-1)
         query = F.normalize(query_condition, dim=-1)
         pairs = F.normalize(pair_embeddings, dim=-1)
-        global_score = query @ pairs.T
+        if global_query.shape[-1] != pairs.shape[-1]:
+            raise ValueError("global query and pair embedding dimensions must match")
+        global_score = global_query @ pairs.T
         content_mask = text_attention_mask if text_content_mask is None else text_content_mask
         if content_mask.shape != text_attention_mask.shape:
             raise ValueError("text_content_mask must match text_attention_mask")

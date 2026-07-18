@@ -104,6 +104,29 @@ def test_grounding_tokens_and_global_query_may_use_different_frozen_encoders() -
     assert output.decoded_mask_logits.shape == (2, 3, 8, 8)
 
 
+def test_production_global_512_and_local_256_dimensions_remain_separate() -> None:
+    config = QCPRV3Config(
+        input_dim=512,
+        text_dim=512,
+        global_text_dim=512,
+        hidden_dim=256,
+        heads=8,
+        output_size=(8, 8),
+        mask_decoder_dim=8,
+    )
+    model = QCPRV3GenericGrounding(config)
+    output = model.score_query_pair_chunks(
+        torch.randn(2, 512),
+        torch.randn(2, 5, 512),
+        torch.ones(2, 5, dtype=torch.bool),
+        torch.randn(3, 512),
+        torch.randn(3, 2, 16, 512),
+        decode_mask=False,
+    )
+    assert output.global_score.shape == (2, 3)
+    assert output.temporal_descriptors.shape == (3, 16, 256)
+
+
 def test_temporal_field_preserves_siglip_native_grid() -> None:
     config = QCPRV3Config(
         input_dim=8,
