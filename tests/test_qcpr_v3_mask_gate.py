@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import torch
+from types import SimpleNamespace
 
 from train_qcpr_v3 import (
     _direction_query_separation_loss,
+    _evaluate_m0_development,
     _frozen_parameter_fingerprint,
     _micro_overfit_gate,
     _validation_direction,
@@ -32,6 +34,49 @@ def test_frozen_fingerprint_supports_bfloat16_and_is_value_sensitive() -> None:
     with torch.no_grad():
         model.frozen.weight[0, 0] += 1
     assert first != _frozen_parameter_fingerprint(model, ("frozen",))
+
+
+def test_m0_development_decodes_bounded_pair_chunks_not_full_cartesian_batch() -> None:
+    class Student:
+        def __init__(self):
+            self.training = True
+            self.max_pairs = 0
+
+        def eval(self):
+            self.training = False
+            return self
+
+        def train(self):
+            self.training = True
+            return self
+
+        def __call__(self, images, captions, mapping, temporal_mask):
+            self.max_pairs = max(self.max_pairs, int(images.shape[0]))
+            logits = torch.zeros(len(captions), images.shape[0], 8, 8)
+            return SimpleNamespace(scores=SimpleNamespace(decoded_mask_logits=logits))
+
+    pair_count = 10
+    mapping = torch.arange(pair_count).repeat_interleave(2)
+    directions = ["appeared", "disappeared"] * pair_count
+    masks = torch.zeros(2 * pair_count, 8, 8)
+    masks[:, 2:4, 2:4] = 1
+    batch = {
+        "images": torch.zeros(pair_count, 2, 3, 8, 8),
+        "captions": directions,
+        "caption_to_pair": mapping,
+        "temporal_valid_mask": torch.ones(pair_count, 2, dtype=torch.bool),
+        "query_masks": masks,
+        "query_change_types": directions,
+        "pair_ids": [f"pair-{index}" for index in range(pair_count)],
+    }
+    student = Student()
+    summary, records = _evaluate_m0_development(
+        student, [batch], torch.device("cpu")
+    )
+    assert student.max_pairs == 4
+    assert summary["pair_count"] == pair_count
+    assert summary["query_record_count"] == 2 * pair_count
+    assert len(records) == 2 * pair_count
 
 
 def test_micro_gate_uses_fixed_train_soft_metrics_without_arbitrary_hard_thresholds() -> None:

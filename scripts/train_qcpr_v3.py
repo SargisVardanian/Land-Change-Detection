@@ -403,40 +403,92 @@ def _evaluate_m0_development(student, loader: DataLoader, device: torch.device) 
     student.eval()
     records: list[dict[str, float | int | str]] = []
     for batch in loader:
-        images = batch["images"].to(device, non_blocking=True)
-        mapping = batch["caption_to_pair"].to(device)
-        temporal_mask = batch["temporal_valid_mask"].to(device)
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=True):
-            result = student(images, batch["captions"], mapping, temporal_mask)
-        query_ids = torch.arange(mapping.numel(), device=device)
-        correct = result.scores.decoded_mask_logits[query_ids, mapping].float()
-        targets = foreground_preserving_resize(batch["query_masks"].to(device).float(), correct.shape[-2:])
-        directions = [str(value) for value in batch.get("query_change_types", [])]
-        lookup = {(int(pair), direction): query for query, (pair, direction) in enumerate(zip(mapping.detach().cpu().tolist(), directions, strict=True)) if direction in {"appeared", "disappeared"}}
-        for query, direction in enumerate(directions):
-            if direction not in {"appeared", "disappeared"}:
+        all_mapping = batch["caption_to_pair"].long()
+        all_directions = [str(value) for value in batch.get("query_change_types", [])]
+        pair_count = int(batch["images"].shape[0])
+        # Decoding QxC full-resolution masks is unnecessary for a paired M0
+        # benchmark and overflows convolution index math for larger batches.
+        # Keep both directional queries together, but bound candidates to four
+        # physical pairs per evaluator chunk.
+        for pair_start in range(0, pair_count, 4):
+            pair_end = min(pair_start + 4, pair_count)
+            selected_queries = torch.nonzero(
+                (all_mapping >= pair_start) & (all_mapping < pair_end),
+                as_tuple=False,
+            ).flatten()
+            if not selected_queries.numel():
                 continue
-            pair = int(mapping[query])
-            opposite_query = lookup.get((pair, "disappeared" if direction == "appeared" else "appeared"))
-            if opposite_query is None:
-                continue
-            target = targets[query:query + 1]
-            metric = query_mask_metrics(correct[query:query + 1], target)
-            swapped_metric = query_mask_metrics(result.scores.decoded_mask_logits[opposite_query:opposite_query + 1, pair].float(), target)
-            probability = correct[query].sigmoid()
-            edge = torch.cat((probability[0].flatten(), probability[-1].flatten(), probability[:, 0].flatten(), probability[:, -1].flatten())).mean()
-            center = probability[probability.shape[-2] // 4:3 * probability.shape[-2] // 4, probability.shape[-1] // 4:3 * probability.shape[-1] // 4].mean().clamp_min(1e-6)
-            target_area = float(metric["target_area"])
-            records.append({
-                "pair_id": str(batch["pair_ids"][pair]), "direction": direction,
-                "soft_dice": float(metric["nonempty_soft_dice"]), "soft_iou": float(metric["nonempty_soft_iou"]),
-                "localization_margin": float(metric["localization_margin"]),
-                "predicted_area": float(metric["predicted_area"]), "target_area": target_area,
-                "predicted_target_area_ratio": float(metric["predicted_area"]) / max(target_area, 1e-8),
-                "soft_query_swap_iou_gap": float(metric["nonempty_soft_iou"]) - float(swapped_metric["nonempty_soft_iou"]),
-                "edge_center_ratio": float(edge / center),
-                "all_empty_or_foreground": int(float(metric["predicted_area"]) <= 0.0 or float(metric["predicted_area"]) >= 1.0),
-            })
+            local_mapping_cpu = all_mapping.index_select(0, selected_queries) - pair_start
+            local_mapping = local_mapping_cpu.to(device)
+            captions = [batch["captions"][int(index)] for index in selected_queries]
+            directions = [all_directions[int(index)] for index in selected_queries]
+            images = batch["images"][pair_start:pair_end].to(device, non_blocking=True)
+            temporal_mask = batch["temporal_valid_mask"][pair_start:pair_end].to(device)
+            with torch.autocast(
+                "cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"
+            ):
+                result = student(images, captions, local_mapping, temporal_mask)
+            query_ids = torch.arange(local_mapping.numel(), device=device)
+            correct = result.scores.decoded_mask_logits[query_ids, local_mapping].float()
+            selected_targets = batch["query_masks"].index_select(0, selected_queries)
+            targets = foreground_preserving_resize(
+                selected_targets.to(device).float(), correct.shape[-2:]
+            )
+            lookup = {
+                (int(pair), direction): query
+                for query, (pair, direction) in enumerate(
+                    zip(local_mapping_cpu.tolist(), directions, strict=True)
+                )
+                if direction in {"appeared", "disappeared"}
+            }
+            for query, direction in enumerate(directions):
+                if direction not in {"appeared", "disappeared"}:
+                    continue
+                pair = int(local_mapping_cpu[query])
+                opposite_query = lookup.get(
+                    (pair, "disappeared" if direction == "appeared" else "appeared")
+                )
+                if opposite_query is None:
+                    continue
+                target = targets[query:query + 1]
+                metric = query_mask_metrics(correct[query:query + 1], target)
+                swapped_metric = query_mask_metrics(
+                    result.scores.decoded_mask_logits[
+                        opposite_query:opposite_query + 1, pair
+                    ].float(),
+                    target,
+                )
+                probability = correct[query].sigmoid()
+                edge = torch.cat((
+                    probability[0].flatten(), probability[-1].flatten(),
+                    probability[:, 0].flatten(), probability[:, -1].flatten(),
+                )).mean()
+                center = probability[
+                    probability.shape[-2] // 4:3 * probability.shape[-2] // 4,
+                    probability.shape[-1] // 4:3 * probability.shape[-1] // 4,
+                ].mean().clamp_min(1e-6)
+                target_area = float(metric["target_area"])
+                records.append({
+                    "pair_id": str(batch["pair_ids"][pair_start + pair]),
+                    "direction": direction,
+                    "soft_dice": float(metric["nonempty_soft_dice"]),
+                    "soft_iou": float(metric["nonempty_soft_iou"]),
+                    "localization_margin": float(metric["localization_margin"]),
+                    "predicted_area": float(metric["predicted_area"]),
+                    "target_area": target_area,
+                    "predicted_target_area_ratio": (
+                        float(metric["predicted_area"]) / max(target_area, 1e-8)
+                    ),
+                    "soft_query_swap_iou_gap": (
+                        float(metric["nonempty_soft_iou"])
+                        - float(swapped_metric["nonempty_soft_iou"])
+                    ),
+                    "edge_center_ratio": float(edge / center),
+                    "all_empty_or_foreground": int(
+                        float(metric["predicted_area"]) <= 0.0
+                        or float(metric["predicted_area"]) >= 1.0
+                    ),
+                })
     if was_training:
         student.train()
     if not records:
