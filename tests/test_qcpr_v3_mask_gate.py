@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import torch
 
-from train_qcpr_v3 import _direction_query_separation_loss, _micro_overfit_gate, _validation_direction
+from train_qcpr_v3 import (
+    _direction_query_separation_loss,
+    _frozen_parameter_fingerprint,
+    _micro_overfit_gate,
+    _validation_direction,
+)
 
 
 def _row(*, dice: float, iou: float, margin: float, empty: float, swap: float):
@@ -17,6 +22,16 @@ def _row(*, dice: float, iou: float, margin: float, empty: float, swap: float):
         "disappeared_soft_query_swap_iou_gap": swap,
         "predicted_area": 0.5,
     }
+
+
+def test_frozen_fingerprint_supports_bfloat16_and_is_value_sensitive() -> None:
+    model = torch.nn.Module()
+    model.frozen = torch.nn.Linear(3, 2, bias=False).to(torch.bfloat16)
+    first = _frozen_parameter_fingerprint(model, ("frozen",))
+    assert first == _frozen_parameter_fingerprint(model, ("frozen",))
+    with torch.no_grad():
+        model.frozen.weight[0, 0] += 1
+    assert first != _frozen_parameter_fingerprint(model, ("frozen",))
 
 
 def test_micro_gate_uses_fixed_train_soft_metrics_without_arbitrary_hard_thresholds() -> None:

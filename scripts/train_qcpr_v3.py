@@ -498,7 +498,8 @@ def _frozen_parameter_fingerprint(model: torch.nn.Module, prefixes: tuple[str, .
         digest.update(name.encode())
         tensor = parameter.detach().cpu().contiguous()
         digest.update(str(tuple(tensor.shape)).encode())
-        digest.update(tensor.numpy().tobytes())
+        digest.update(str(tensor.dtype).encode())
+        digest.update(tensor.view(torch.uint8).numpy().tobytes())
     return digest.hexdigest()
 
 def run(args: argparse.Namespace) -> dict:
