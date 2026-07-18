@@ -200,6 +200,12 @@ def main() -> int:
     parser.add_argument("--candidate-chunk", type=int, default=16)
     parser.add_argument("--top-n", type=int, default=50)
     parser.add_argument("--progress-path", type=Path, default=None, help="Atomic JSON heartbeat path; defaults beside --output")
+    parser.add_argument(
+        "--save-score-artifact",
+        type=Path,
+        default=None,
+        help="Save full CPU score matrices and evaluation fingerprints for evaluator-only audits",
+    )
     args = parser.parse_args()
     if not torch.cuda.is_available(): raise RuntimeError("fast evaluation requires CUDA")
     device = torch.device("cuda", torch.cuda.current_device())
@@ -245,6 +251,24 @@ def main() -> int:
     metrics["no_change"] = global_subset_metrics(global_scores, relevance, query_groups["no_change"])
     metrics["candidate_recall_at_100"] = global_subset_metrics(global_scores, relevance, torch.ones(global_scores.shape[0], dtype=torch.bool))["candidate_recall_at_100"]
     margin_reports = margin_family_reports(token_patch, reranked, corpus["mapping"], relevance, corpus["captions"], global_scores, top_n=min(args.top_n, corpus["pairs"].shape[0]), query_groups=query_groups)
+    if args.save_score_artifact is not None:
+        artifact = {
+            "schema_version": "qcpr-v3-a0-score-artifact-v1",
+            "checkpoint": str(args.checkpoint),
+            "manifest": str(args.manifest),
+            "phase": args.phase,
+            "global_scores": global_scores.cpu(),
+            "local_scores": local.cpu(),
+            "token_patch_scores": token_patch.cpu(),
+            "reranked_scores": reranked.cpu(),
+            "relevance": relevance.cpu(),
+            "caption_to_pair": corpus["mapping"].cpu(),
+            "captions": list(corpus["captions"]),
+            "pair_datasets": list(corpus["pair_datasets"]),
+            "query_groups": {name: values.cpu() for name, values in query_groups.items()},
+        }
+        args.save_score_artifact.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(artifact, args.save_score_artifact)
     training = json.loads(args.training_report.read_text())
     metrics["local_gradients_finite_nonzero"] = bool(training["gradient_audit"]["expected_trainable_gradients_finite_nonzero"])
     metrics["faithful_mask"] = True
@@ -298,6 +322,7 @@ def main() -> int:
         "metrics": metrics,
         "margin_reports": margin_reports,
         "gates": gates,
+        "score_artifact": None if args.save_score_artifact is None else str(args.save_score_artifact),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True); args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n")
     progress = json.loads(progress_path.read_text())
