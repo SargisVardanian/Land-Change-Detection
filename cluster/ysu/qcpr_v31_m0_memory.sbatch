@@ -11,7 +11,7 @@
 #SBATCH --error=/mnt/weka/svardanyan/rs_change_project/logs/%x-%j.err
 set -euo pipefail
 
-ROOT=/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-v3-rc1
+ROOT=${ROOT:-/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-v3-aligned}
 PYTHON=/mnt/weka/svardanyan/rs_change_project/envs/rschange/bin/python
 EXPECTED_SHA=${EXPECTED_SHA:?EXPECTED_SHA is required}
 OUTPUT_ROOT=${OUTPUT_ROOT:?OUTPUT_ROOT is required}
@@ -23,17 +23,15 @@ test -z "$(git status --porcelain)"
 test ! -e "$OUTPUT_ROOT"
 export PYTHONPATH="$ROOT/src:$ROOT/scripts"
 
-for batch in 8 16 20 24; do
-  "$PYTHON" scripts/train_qcpr_v3.py \
-    --output-dir "$OUTPUT_ROOT/bs${batch}" \
-    --phase mask_only_diagnostic \
-    --mask-diagnostic-mode multi_pair \
-    --initialization-mode clean_pretrained \
-    --derived-manifest-dir "$DERIVED_MANIFEST_DIR" \
-    --steps 3 \
-    --batch-size "$batch" \
-    --m0-eval-interval 3 \
-    --direction-only-probe-captions \
-    --grounding-backbone universat \
-    --seed 20260718
-done
+"$PYTHON" scripts/train_qcpr_v3.py \
+  --output-dir "$OUTPUT_ROOT" \
+  --phase mask_only_diagnostic \
+  --mask-diagnostic-mode multi_pair \
+  --initialization-mode clean_pretrained \
+  --derived-manifest-dir "$DERIVED_MANIFEST_DIR" \
+  --steps 3 \
+  --batch-size 32 \
+  --skip-development-evaluation \
+  --direction-only-probe-captions \
+  --grounding-backbone universat \
+  --seed 20260718

@@ -340,6 +340,57 @@ def m0_symmetric_query_swap_loss(all_logits: Tensor, mapping: Tensor, query_indi
     return torch.stack(terms).mean(), len(terms)
 
 
+def m0_aligned_symmetric_query_swap_loss(
+    aligned_logits: Tensor,
+    mapping: Tensor,
+    changes: list[str | None],
+    targets: Tensor,
+    *,
+    margin: float = 0.02,
+) -> tuple[Tensor, int]:
+    """Query-swap loss for one independently forwarded mask per query."""
+    if (
+        margin < 0
+        or aligned_logits.ndim != 3
+        or targets.shape != aligned_logits.shape
+        or mapping.ndim != 1
+        or mapping.numel() != aligned_logits.shape[0]
+        or len(changes) != aligned_logits.shape[0]
+    ):
+        raise ValueError("invalid aligned M0 symmetric query-swap contract")
+    lookup = {
+        (int(pair), str(direction)): query
+        for query, (pair, direction) in enumerate(
+            zip(mapping.detach().cpu().tolist(), changes, strict=True)
+        )
+        if direction in {"appeared", "disappeared"}
+    }
+    terms: list[Tensor] = []
+    for query, (pair, direction) in enumerate(
+        zip(mapping.detach().cpu().tolist(), changes, strict=True)
+    ):
+        if direction not in {"appeared", "disappeared"}:
+            continue
+        opposite = "disappeared" if direction == "appeared" else "appeared"
+        other = lookup.get((int(pair), opposite))
+        target = targets[query].float()
+        if other is None or not bool((target >= 0.5).any()):
+            continue
+
+        def soft_iou(probability: Tensor) -> Tensor:
+            intersection = (probability * target).sum()
+            return (intersection + 1e-6) / (
+                probability.sum() + target.sum() - intersection + 1e-6
+            )
+
+        correct = soft_iou(aligned_logits[query].sigmoid())
+        wrong = soft_iou(aligned_logits[other].sigmoid())
+        terms.append(F.relu(float(margin) - correct + wrong))
+    if not terms:
+        return aligned_logits.sum() * 0.0, 0
+    return torch.stack(terms).mean(), len(terms)
+
+
 def query_mask_metrics(logits: Tensor, targets: Tensor, threshold: float = 0.5) -> dict[str, float | int]:
     flat_logits, flat_targets = _flatten_masks(logits, targets)
     predicted = flat_logits.sigmoid() >= threshold

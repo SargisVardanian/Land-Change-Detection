@@ -24,7 +24,14 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import qcpr_v3_data_compat as data_compat
-from land_change_detection.models.qcpr_v3_losses import foreground_preserving_resize, m0_balanced_mask_loss, m0_symmetric_query_swap_loss, query_mask_metrics, separated_query_mask_losses
+from land_change_detection.models.qcpr_v3_losses import (
+    foreground_preserving_resize,
+    m0_aligned_symmetric_query_swap_loss,
+    m0_balanced_mask_loss,
+    m0_symmetric_query_swap_loss,
+    query_mask_metrics,
+    separated_query_mask_losses,
+)
 from land_change_detection.models.qcpr_v3_losses import (
     a0_physical_pair_contrastive_masks,
     a0_symmetric_physical_pair_contrastive_loss,
@@ -403,92 +410,71 @@ def _evaluate_m0_development(student, loader: DataLoader, device: torch.device) 
     student.eval()
     records: list[dict[str, float | int | str]] = []
     for batch in loader:
-        all_mapping = batch["caption_to_pair"].long()
-        all_directions = [str(value) for value in batch.get("query_change_types", [])]
-        pair_count = int(batch["images"].shape[0])
-        # Decoding QxC full-resolution masks is unnecessary for a paired M0
-        # benchmark and overflows convolution index math for larger batches.
-        # Keep both directional queries together, but bound candidates to four
-        # physical pairs per evaluator chunk.
-        for pair_start in range(0, pair_count, 4):
-            pair_end = min(pair_start + 4, pair_count)
-            selected_queries = torch.nonzero(
-                (all_mapping >= pair_start) & (all_mapping < pair_end),
-                as_tuple=False,
-            ).flatten()
-            if not selected_queries.numel():
-                continue
-            local_mapping_cpu = all_mapping.index_select(0, selected_queries) - pair_start
-            local_mapping = local_mapping_cpu.to(device)
-            captions = [batch["captions"][int(index)] for index in selected_queries]
-            directions = [all_directions[int(index)] for index in selected_queries]
-            images = batch["images"][pair_start:pair_end].to(device, non_blocking=True)
-            temporal_mask = batch["temporal_valid_mask"][pair_start:pair_end].to(device)
-            with torch.autocast(
-                "cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"
-            ):
-                result = student(images, captions, local_mapping, temporal_mask)
-            query_ids = torch.arange(local_mapping.numel(), device=device)
-            correct = result.scores.decoded_mask_logits[query_ids, local_mapping].float()
-            selected_targets = batch["query_masks"].index_select(0, selected_queries)
-            targets = foreground_preserving_resize(
-                selected_targets.to(device).float(), correct.shape[-2:]
+        mapping_cpu = batch["caption_to_pair"].long()
+        mapping = mapping_cpu.to(device)
+        directions = [str(value) for value in batch.get("query_change_types", [])]
+        images = batch["images"].to(device, non_blocking=True)
+        temporal_mask = batch["temporal_valid_mask"].to(device)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=device.type == "cuda"):
+            result = student.forward_aligned_masks(
+                images, batch["captions"], mapping, temporal_mask
             )
-            lookup = {
-                (int(pair), direction): query
-                for query, (pair, direction) in enumerate(
-                    zip(local_mapping_cpu.tolist(), directions, strict=True)
-                )
-                if direction in {"appeared", "disappeared"}
-            }
-            for query, direction in enumerate(directions):
-                if direction not in {"appeared", "disappeared"}:
-                    continue
-                pair = int(local_mapping_cpu[query])
-                opposite_query = lookup.get(
-                    (pair, "disappeared" if direction == "appeared" else "appeared")
-                )
-                if opposite_query is None:
-                    continue
-                target = targets[query:query + 1]
-                metric = query_mask_metrics(correct[query:query + 1], target)
-                swapped_metric = query_mask_metrics(
-                    result.scores.decoded_mask_logits[
-                        opposite_query:opposite_query + 1, pair
-                    ].float(),
-                    target,
-                )
-                probability = correct[query].sigmoid()
-                edge = torch.cat((
-                    probability[0].flatten(), probability[-1].flatten(),
-                    probability[:, 0].flatten(), probability[:, -1].flatten(),
-                )).mean()
-                center = probability[
-                    probability.shape[-2] // 4:3 * probability.shape[-2] // 4,
-                    probability.shape[-1] // 4:3 * probability.shape[-1] // 4,
-                ].mean().clamp_min(1e-6)
-                target_area = float(metric["target_area"])
-                records.append({
-                    "pair_id": str(batch["pair_ids"][pair_start + pair]),
-                    "direction": direction,
-                    "soft_dice": float(metric["nonempty_soft_dice"]),
-                    "soft_iou": float(metric["nonempty_soft_iou"]),
-                    "localization_margin": float(metric["localization_margin"]),
-                    "predicted_area": float(metric["predicted_area"]),
-                    "target_area": target_area,
-                    "predicted_target_area_ratio": (
-                        float(metric["predicted_area"]) / max(target_area, 1e-8)
-                    ),
-                    "soft_query_swap_iou_gap": (
-                        float(metric["nonempty_soft_iou"])
-                        - float(swapped_metric["nonempty_soft_iou"])
-                    ),
-                    "edge_center_ratio": float(edge / center),
-                    "all_empty_or_foreground": int(
-                        float(metric["predicted_area"]) <= 0.0
-                        or float(metric["predicted_area"]) >= 1.0
-                    ),
-                })
+        correct = result.masks.decoded_mask_logits.float()
+        targets = foreground_preserving_resize(
+            batch["query_masks"].to(device).float(), correct.shape[-2:]
+        )
+        lookup = {
+            (int(pair), direction): query
+            for query, (pair, direction) in enumerate(
+                zip(mapping_cpu.tolist(), directions, strict=True)
+            )
+            if direction in {"appeared", "disappeared"}
+        }
+        for query, direction in enumerate(directions):
+            if direction not in {"appeared", "disappeared"}:
+                continue
+            pair = int(mapping_cpu[query])
+            opposite_query = lookup.get(
+                (pair, "disappeared" if direction == "appeared" else "appeared")
+            )
+            if opposite_query is None:
+                continue
+            target = targets[query:query + 1]
+            metric = query_mask_metrics(correct[query:query + 1], target)
+            swapped_metric = query_mask_metrics(
+                correct[opposite_query:opposite_query + 1], target
+            )
+            probability = correct[query].sigmoid()
+            edge = torch.cat((
+                probability[0].flatten(), probability[-1].flatten(),
+                probability[:, 0].flatten(), probability[:, -1].flatten(),
+            )).mean()
+            center = probability[
+                probability.shape[-2] // 4:3 * probability.shape[-2] // 4,
+                probability.shape[-1] // 4:3 * probability.shape[-1] // 4,
+            ].mean().clamp_min(1e-6)
+            target_area = float(metric["target_area"])
+            records.append({
+                "pair_id": str(batch["pair_ids"][pair]),
+                "direction": direction,
+                "soft_dice": float(metric["nonempty_soft_dice"]),
+                "soft_iou": float(metric["nonempty_soft_iou"]),
+                "localization_margin": float(metric["localization_margin"]),
+                "predicted_area": float(metric["predicted_area"]),
+                "target_area": target_area,
+                "predicted_target_area_ratio": (
+                    float(metric["predicted_area"]) / max(target_area, 1e-8)
+                ),
+                "soft_query_swap_iou_gap": (
+                    float(metric["nonempty_soft_iou"])
+                    - float(swapped_metric["nonempty_soft_iou"])
+                ),
+                "edge_center_ratio": float(edge / center),
+                "all_empty_or_foreground": int(
+                    float(metric["predicted_area"]) <= 0.0
+                    or float(metric["predicted_area"]) >= 1.0
+                ),
+            })
     if was_training:
         student.train()
     if not records:
@@ -747,7 +733,7 @@ def run(args: argparse.Namespace) -> dict:
     fixed_train_history: list[dict[str, float | int]] = []
     fixed_validation_history: list[dict[str, float | int]] = []
     m0_development_history: list[dict[str, float | int]] = []
-    if m0_mode:
+    if m0_mode and not args.skip_development_evaluation:
         initial_m0, initial_m0_records = _evaluate_m0_development(student, m0_validation_loader, device)
         initial_m0 = {"step": 0, **initial_m0}
         m0_development_history.append(initial_m0)
@@ -794,6 +780,10 @@ def run(args: argparse.Namespace) -> dict:
             result = (
                 student.forward_global(images, batch["captions"], temporal_mask)
                 if global_only
+                else student.forward_aligned_masks(
+                    images, batch["captions"], mapping, temporal_mask
+                )
+                if m0_mode
                 else student(
                     images,
                     batch["captions"],
@@ -803,7 +793,13 @@ def run(args: argparse.Namespace) -> dict:
                 )
             )
             losses: dict[str, torch.Tensor] = {}
-            global_scores = result.global_score if global_only else result.scores.global_score
+            global_scores = (
+                result.global_score
+                if global_only
+                else result.text_embedding @ result.pair_embedding.T
+                if m0_mode
+                else result.scores.global_score
+            )
             selected_scores = lambda scores: scores[selection["selected_queries"]][:, selection["selected_pairs"]]
             selected_mapping = selection["selected_mapping"]
             selected_captions = [batch["captions"][index] for index in selection["selected_queries"].tolist()]
@@ -878,7 +874,11 @@ def run(args: argparse.Namespace) -> dict:
                     supervised_queries = supervised_pairs[mapping]
                 query_indices = torch.nonzero(supervised_queries, as_tuple=False).flatten()
                 if query_indices.numel():
-                    selected = result.scores.decoded_mask_logits[query_indices, mapping[query_indices]]
+                    selected = (
+                        result.masks.decoded_mask_logits.index_select(0, query_indices)
+                        if m0_mode
+                        else result.scores.decoded_mask_logits[query_indices, mapping[query_indices]]
+                    )
                     if "query_masks" in batch:
                         targets = foreground_preserving_resize(
                             batch["query_masks"].to(device).float(), selected.shape[-2:]
@@ -910,8 +910,12 @@ def run(args: argparse.Namespace) -> dict:
                     probabilities = selected.sigmoid()
                     with torch.autocast("cuda", enabled=False):
                         if m0_mode:
-                            separation_loss, separation_count = m0_symmetric_query_swap_loss(
-                                result.scores.decoded_mask_logits.float(), mapping, query_indices, changes, targets.float(), margin=0.02,
+                            separation_loss, separation_count = m0_aligned_symmetric_query_swap_loss(
+                                selected.float(),
+                                mapping.index_select(0, query_indices),
+                                changes,
+                                targets.float(),
+                                margin=0.02,
                             )
                             swap_weight = _m0_swap_weight(step, args.steps)
                             if separation_count and swap_weight > 0:
@@ -957,7 +961,11 @@ def run(args: argparse.Namespace) -> dict:
         norm = torch.nn.utils.clip_grad_norm_(parameters, args.grad_clip_norm)
         if not torch.isfinite(norm): raise FloatingPointError(f"non-finite gradient at step {step}")
         optimizer.step()
-        if m0_mode and (step % args.m0_eval_interval == 0 or step == args.steps):
+        if (
+            m0_mode
+            and not args.skip_development_evaluation
+            and (step % args.m0_eval_interval == 0 or step == args.steps)
+        ):
             m0_summary, m0_records = _evaluate_m0_development(student, m0_validation_loader, device)
             m0_summary = {"step": step, **m0_summary}
             m0_development_history.append(m0_summary)
@@ -982,7 +990,7 @@ def run(args: argparse.Namespace) -> dict:
             append_jsonl(output / "fixed_train_history.jsonl", train_probe)
             append_jsonl(output / "fixed_validation_history.jsonl", validation_probe)
             student.train()
-        if step == 1 and not global_only:
+        if step == 1 and not global_only and not m0_mode:
             first_query = 0
             first_pair = int(mapping[first_query])
             target_panel = F.interpolate(batch["masks"][first_pair:first_pair + 1].float().unsqueeze(1), result.scores.decoded_mask_logits.shape[-2:], mode="nearest")[0, 0]
@@ -1017,17 +1025,35 @@ def run(args: argparse.Namespace) -> dict:
                     student.train(was_training)
         margin = (
             _positive_margin(selected_scores(result.scores.local_score.detach()), selection["selected_mapping"])
-            if not global_only and selection["selected_queries"].numel()
+            if not global_only and not m0_mode and selection["selected_queries"].numel()
             else None
         )
         post_clip_sq = sum(float(parameter.grad.detach().float().square().sum()) for parameter in parameters if parameter.grad is not None)
         row = {"step": step, "loss": float(total.detach()), "grad_norm_before_clip": float(norm), "grad_norm_after_clip": math.sqrt(post_clip_sq), "gradient_was_clipped": bool(norm > args.grad_clip_norm), "local_margin": float(margin) if margin is not None else None}
-        if not global_only:
+        if not global_only and not m0_mode:
             row.update(
                 mask_mass_mean=float(result.scores.mask_mass.detach().mean()),
                 mask_entropy_mean=float(result.scores.mask_entropy.detach().mean()),
                 mask_effective_patch_count_mean=float(result.scores.mask_effective_patch_count.detach().mean()),
                 near_empty_mask_fraction=float((result.scores.mask_validity.detach() <= 0).float().mean()),
+            )
+        elif m0_mode:
+            aligned_probability = result.masks.patch_mask_logits.detach().sigmoid()
+            normalized = aligned_probability / aligned_probability.sum(dim=-1, keepdim=True).clamp_min(1e-6)
+            row.update(
+                mask_mass_mean=float(aligned_probability.mean()),
+                mask_entropy_mean=float(-(
+                    aligned_probability.clamp(1e-6, 1 - 1e-6)
+                    * aligned_probability.clamp(1e-6, 1 - 1e-6).log()
+                    + (1 - aligned_probability).clamp(1e-6, 1 - 1e-6)
+                    * (1 - aligned_probability).clamp(1e-6, 1 - 1e-6).log()
+                ).mean()),
+                mask_effective_patch_count_mean=float(
+                    normalized.square().sum(dim=-1).clamp_min(1e-6).reciprocal().mean()
+                ),
+                near_empty_mask_fraction=float(
+                    (aligned_probability.amax(dim=-1) < 0.10).float().mean()
+                ),
             )
         row.update(local_audit)
         row.update(mask_audit)
@@ -1063,8 +1089,12 @@ def run(args: argparse.Namespace) -> dict:
     validation_signal = _validation_direction(
         fixed_validation_history,
     ) if args.phase == "mask_only_diagnostic" and not m0_mode else None
-    m0_gate = _m0_gate(m0_development_history, gradients_finite=engineering_ok) if m0_mode else None
-    diagnostic_passed = bool(m0_gate["passed"]) if m0_mode else bool(micro_gate and micro_gate["passed"] and validation_signal and validation_signal["positive"])
+    m0_gate = (
+        _m0_gate(m0_development_history, gradients_finite=engineering_ok)
+        if m0_mode and not args.skip_development_evaluation
+        else None
+    )
+    diagnostic_passed = bool(m0_gate and m0_gate["passed"]) if m0_mode else bool(micro_gate and micro_gate["passed"] and validation_signal and validation_signal["positive"])
     report = {
         "runtime_status": "PASS" if all_finite else "FAIL",
         "gradient_status": "PASS" if gradients_ok else "FAIL",
@@ -1087,6 +1117,29 @@ def run(args: argparse.Namespace) -> dict:
         "validation_direction": validation_signal,
         "m0_development_history": m0_development_history,
         "m0_gate": m0_gate,
+        "batch_accounting": {
+            "physical_pair_batch_size": int(args.batch_size),
+            "directional_query_batch_size": (
+                int(args.batch_size * 2) if m0_mode else int(args.batch_size)
+            ),
+            "physical_pair_microbatch_size": int(args.batch_size),
+            "directional_query_microbatch_size": (
+                int(args.batch_size * 2) if m0_mode else int(args.batch_size)
+            ),
+            "gradient_accumulation_steps": 1,
+            "effective_optimizer_physical_pair_batch_size": int(args.batch_size),
+            "effective_optimizer_directional_query_batch_size": (
+                int(args.batch_size * 2) if m0_mode else int(args.batch_size)
+            ),
+        },
+        "aligned_mask_execution": (
+            {
+                "enabled": True,
+                "decoded_mask_count": int(result.masks.decoded_mask_logits.shape[0]),
+                **result.masks.memory_diagnostics,
+            }
+            if m0_mode else {"enabled": False}
+        ),
         "m0_contract": {"chronology": "Image2(before)->Image1(after); Label1=appeared; Label2=disappeared", "pre_a936f116_mask_local_artifacts": "INVALID", "development_target_centered_crops": False} if m0_mode else None,
         "observed_datasets": sorted(observed_datasets),
         "runtime_device_contract": {
@@ -1160,6 +1213,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mask-objective", choices=("A",), default="A")
     parser.add_argument("--mask-diagnostic-mode", choices=("single_pair", "multi_pair"), default="single_pair")
     parser.add_argument("--m0-eval-interval", type=int, default=10)
+    parser.add_argument("--skip-development-evaluation", action="store_true")
     parser.add_argument("--micro-train-samples", type=int, default=8)
     parser.add_argument("--validation-probe-samples", type=int, default=16)
     parser.add_argument("--probe-interval", type=int, default=5)

@@ -62,6 +62,22 @@ class QCPRV3ScoreOutput:
     memory_diagnostics: dict[str, int]
 
 
+@dataclass(frozen=True)
+class QCPRV3AlignedMaskOutput:
+    """One decoded mask per query for its known supervised physical pair."""
+
+    patch_mask_logits: Tensor
+    decoded_mask_logits: Tensor
+    local_embedding: Tensor
+    temporal_descriptors: Tensor
+    matched_temporal_descriptors: Tensor
+    grounded_patches: Tensor
+    projected_tokens: Tensor
+    coordinates: Tensor
+    scale_ids: Tensor
+    memory_diagnostics: dict[str, int]
+
+
 def _grid_coordinates(side: int, *, device: torch.device, dtype: torch.dtype) -> Tensor:
     y, x = torch.meshgrid(
         torch.linspace(0.0, 1.0, side, device=device, dtype=dtype),
@@ -200,6 +216,40 @@ class GenericCrossModalDecoder(nn.Module):
             grounded = grounded + attended
             grounded = grounded + ffn(grounded)
         grounded = grounded.reshape(queries, candidates, patch_count, hidden)
+        patch_logits = self.mask_head(grounded).squeeze(-1)
+        return grounded, patch_logits, tokens
+
+    def forward_aligned(
+        self,
+        patches: Tensor,
+        text_tokens: Tensor,
+        text_attention_mask: Tensor,
+        global_query_embedding: Tensor | None = None,
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """Ground Q queries against Q already-matched patch fields."""
+        if patches.ndim != 3 or text_tokens.ndim != 3 or text_attention_mask.ndim != 2:
+            raise ValueError("aligned patches [Q,N,D], text_tokens [Q,L,D], mask [Q,L] required")
+        queries, _, hidden = patches.shape
+        if text_tokens.shape[0] != queries or text_attention_mask.shape[0] != queries:
+            raise ValueError("aligned query and patch batch dimensions must match")
+        if hidden != self.config.hidden_dim:
+            raise ValueError("aligned patch hidden dimension does not match decoder")
+        tokens = F.normalize(self.token_projection(text_tokens), dim=-1)
+        valid = text_attention_mask.to(tokens.dtype).unsqueeze(-1)
+        query_context = (tokens * valid).sum(dim=1) / valid.sum(dim=1).clamp_min(1.0)
+        if global_query_embedding is not None:
+            if global_query_embedding.shape != query_context.shape:
+                raise ValueError("global query embedding must align with projected token context")
+            query_context = F.normalize(query_context, dim=-1) + F.normalize(global_query_embedding, dim=-1)
+        scale, shift = self.query_modulation(query_context).chunk(2, dim=-1)
+        grounded = patches * (1.0 + 0.5 * torch.tanh(scale)[:, None, :]) + shift[:, None, :]
+        for norm, attention, ffn in zip(self.cross_norms, self.cross_attentions, self.patch_ffns, strict=True):
+            attended, _ = attention(
+                norm(grounded), tokens, tokens,
+                key_padding_mask=~text_attention_mask.bool(), need_weights=False,
+            )
+            grounded = grounded + attended
+            grounded = grounded + ffn(grounded)
         patch_logits = self.mask_head(grounded).squeeze(-1)
         return grounded, patch_logits, tokens
 
@@ -471,6 +521,61 @@ class QCPRV3GenericGrounding(nn.Module):
             slot_activations=None,
             slot_embeddings=None,
             slot_mask_logits=None,
+            memory_diagnostics=diagnostics,
+        )
+
+    def score_aligned_query_pairs(
+        self,
+        global_query_embeddings: Tensor,
+        text_token_embeddings: Tensor,
+        text_attention_mask: Tensor,
+        per_time_tokens: Tensor,
+        query_to_pair: Tensor,
+    ) -> QCPRV3AlignedMaskOutput:
+        """Decode exactly Q supervised masks for Q directional queries."""
+        field = self.temporal_field(per_time_tokens)
+        if query_to_pair.ndim != 1 or query_to_pair.numel() != global_query_embeddings.shape[0]:
+            raise ValueError("query_to_pair must be rank one with one entry per query")
+        query_to_pair = query_to_pair.to(device=field.descriptors.device, dtype=torch.long)
+        if query_to_pair.numel() and (
+            int(query_to_pair.min()) < 0 or int(query_to_pair.max()) >= field.descriptors.shape[0]
+        ):
+            raise ValueError("query_to_pair contains an out-of-range physical pair")
+        matched = field.descriptors.index_select(0, query_to_pair)
+        query_condition = self.global_query_projection(global_query_embeddings)
+        grounded, raw_patch_logits, projected_tokens = self.grounding_decoder.forward_aligned(
+            matched,
+            text_token_embeddings,
+            text_attention_mask,
+            query_condition,
+        )
+        decoded = self.mask_decoder(
+            raw_patch_logits[:, None], grounded[:, None], field.scale_slices
+        )[:, 0]
+        patch_logits = self.mask_decoder.sample_patch_logits(
+            decoded[:, None], field.scale_slices
+        )[:, 0]
+        local_embedding = self.masked_local_embedding(
+            matched, patch_logits[:, None]
+        )[:, 0]
+        diagnostics = {
+            "physical_pair_count": int(field.descriptors.shape[0]),
+            "directional_query_count": int(query_to_pair.numel()),
+            "decoded_mask_count": int(decoded.shape[0]),
+            "cartesian_mask_count": 0,
+            "patch_count": int(field.descriptors.shape[1]),
+            "estimated_grounded_bytes": int(grounded.numel() * grounded.element_size()),
+        }
+        return QCPRV3AlignedMaskOutput(
+            patch_mask_logits=patch_logits,
+            decoded_mask_logits=decoded,
+            local_embedding=local_embedding,
+            temporal_descriptors=field.descriptors,
+            matched_temporal_descriptors=matched,
+            grounded_patches=grounded,
+            projected_tokens=projected_tokens,
+            coordinates=field.coordinates,
+            scale_ids=field.scale_ids,
             memory_diagnostics=diagnostics,
         )
 

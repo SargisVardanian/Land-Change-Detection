@@ -36,11 +36,12 @@ def test_frozen_fingerprint_supports_bfloat16_and_is_value_sensitive() -> None:
     assert first != _frozen_parameter_fingerprint(model, ("frozen",))
 
 
-def test_m0_development_decodes_bounded_pair_chunks_not_full_cartesian_batch() -> None:
+def test_m0_development_decodes_only_aligned_query_masks() -> None:
     class Student:
         def __init__(self):
             self.training = True
-            self.max_pairs = 0
+            self.calls = 0
+            self.decoded_masks = 0
 
         def eval(self):
             self.training = False
@@ -50,10 +51,13 @@ def test_m0_development_decodes_bounded_pair_chunks_not_full_cartesian_batch() -
             self.training = True
             return self
 
-        def __call__(self, images, captions, mapping, temporal_mask):
-            self.max_pairs = max(self.max_pairs, int(images.shape[0]))
-            logits = torch.zeros(len(captions), images.shape[0], 8, 8)
-            return SimpleNamespace(scores=SimpleNamespace(decoded_mask_logits=logits))
+        def forward_aligned_masks(self, images, captions, mapping, temporal_mask):
+            self.calls += 1
+            self.decoded_masks += len(captions)
+            logits = torch.zeros(len(captions), 8, 8)
+            return SimpleNamespace(
+                masks=SimpleNamespace(decoded_mask_logits=logits)
+            )
 
     pair_count = 10
     mapping = torch.arange(pair_count).repeat_interleave(2)
@@ -73,7 +77,8 @@ def test_m0_development_decodes_bounded_pair_chunks_not_full_cartesian_batch() -
     summary, records = _evaluate_m0_development(
         student, [batch], torch.device("cpu")
     )
-    assert student.max_pairs == 4
+    assert student.calls == 1
+    assert student.decoded_masks == 2 * pair_count
     assert summary["pair_count"] == pair_count
     assert summary["query_record_count"] == 2 * pair_count
     assert len(records) == 2 * pair_count

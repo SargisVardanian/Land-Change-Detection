@@ -8,7 +8,11 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from land_change_detection.backbones.jina_v5_text import TextFeatures
-from land_change_detection.models.qcpr_v3 import QCPRV3GenericGrounding, QCPRV3ScoreOutput
+from land_change_detection.models.qcpr_v3 import (
+    QCPRV3AlignedMaskOutput,
+    QCPRV3GenericGrounding,
+    QCPRV3ScoreOutput,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,19 @@ class UniChangeV3GlobalOutput:
     text_content_mask: Tensor
     per_time_tokens: Tensor
     global_score: Tensor
+    visual_metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class UniChangeV3AlignedMaskOutput:
+    pair_embedding: Tensor
+    base_text_embedding: Tensor
+    text_embedding: Tensor
+    text_token_embeddings: Tensor
+    text_attention_mask: Tensor
+    text_content_mask: Tensor
+    per_time_tokens: Tensor
+    masks: QCPRV3AlignedMaskOutput
     visual_metadata: dict[str, Any]
 
 
@@ -166,6 +183,41 @@ class UniChangeV3RetrievalModel(nn.Module):
             content,
             per_time,
             text @ pair.T,
+            metadata,
+        )
+
+    def forward_aligned_masks(
+        self,
+        images: Tensor,
+        captions: list[str],
+        query_to_pair: Tensor,
+        temporal_valid_mask: Tensor | None = None,
+    ) -> UniChangeV3AlignedMaskOutput:
+        """Supervised M0 forward with one decoded mask per directional query."""
+        pair, per_time, metadata = self.encode_pairs(images, temporal_valid_mask)
+        base_text, text, tokens, attention, content = self.encode_texts(captions)
+        base_text = base_text.to(pair.device)
+        text = text.to(pair.device)
+        tokens = tokens.to(pair.device)
+        attention = attention.to(pair.device)
+        content = content.to(pair.device)
+        query_to_pair = query_to_pair.to(pair.device)
+        masks = self.grounder.score_aligned_query_pairs(
+            text,
+            tokens,
+            attention,
+            per_time,
+            query_to_pair,
+        )
+        return UniChangeV3AlignedMaskOutput(
+            pair,
+            base_text,
+            text,
+            tokens,
+            attention,
+            content,
+            per_time,
+            masks,
             metadata,
         )
 
