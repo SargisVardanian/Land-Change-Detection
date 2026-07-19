@@ -623,7 +623,7 @@ def run(args: argparse.Namespace) -> dict:
             collate_fn=data_compat.make_collator(val, config, epoch=0, training=False),
             pin_memory=True, persistent_workers=False,
         )
-    elif args.phase == "mask_only_diagnostic":
+    elif args.phase == "mask_only_diagnostic" and not m0_mode:
         fixed_train_loader = DataLoader(
             train, batch_size=len(train), shuffle=False, num_workers=0,
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
