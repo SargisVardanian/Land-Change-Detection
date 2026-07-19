@@ -740,7 +740,7 @@ def run(args: argparse.Namespace) -> dict:
         append_jsonl(output / "m0_development_history.jsonl", initial_m0)
         (output / "m0_development_step0000.json").write_text(json.dumps({"summary": initial_m0, "records": initial_m0_records}, indent=2, sort_keys=True))
         student.train()
-    elif args.phase == "mask_only_diagnostic":
+    elif args.phase == "mask_only_diagnostic" and not m0_mode:
         assert fixed_train_batch is not None and fixed_validation_batch is not None
         initial_train = {"step": 0, **_evaluate_fixed_mask_probe(
             student, fixed_train_batch, device,
