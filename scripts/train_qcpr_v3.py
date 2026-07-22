@@ -789,6 +789,7 @@ def run(args: argparse.Namespace) -> dict:
         "a0_frozen_fingerprint_before": a0_frozen_fingerprint_before,
         "mask_objective": None if args.phase != "mask_only_diagnostic" else asdict(resolve_mask_objective(args.mask_objective)),
         "sampler_epoch": args.sampler_epoch,
+        "epoch": args.sampler_epoch + 1,
         "loss_weights": {name: 1.0 for name in profile.active_losses},
         "physical_batch": args.batch_size,
         "effective_batch": args.batch_size,

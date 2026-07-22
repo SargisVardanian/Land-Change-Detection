@@ -72,6 +72,21 @@ def main() -> int:
     if not torch.cuda.is_available():
         raise RuntimeError("C0 evaluator requires CUDA")
     device = torch.device("cuda", torch.cuda.current_device())
+    selected_report = args.checkpoint.parent / "best_feasible_development.json"
+    if not selected_report.exists():
+        raise RuntimeError(f"accepted B selection report is missing: {selected_report}")
+    selected_payload = json.loads(selected_report.read_text())
+    selected_sha = sha256(args.checkpoint)
+    if not bool(selected_payload.get("feasible")):
+        raise RuntimeError("B selection report is not feasible")
+    if selected_payload.get("checkpoint_sha256") != selected_sha:
+        raise RuntimeError(
+            "B checkpoint SHA does not match accepted selection report: "
+            f"{selected_sha} != {selected_payload.get('checkpoint_sha256')}"
+        )
+    summary_path = args.checkpoint.parent / "summary.json"
+    if not summary_path.exists() or json.loads(summary_path.read_text()).get("status") != "PASS":
+        raise RuntimeError("B long run is not marked PASS")
     payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     config_values = dict(payload["data_config"])
     config_values.update(
@@ -144,6 +159,7 @@ def main() -> int:
     summary.update(
         status="POST_TRAINING_DEVELOPMENT_ONLY", checkpoint=str(args.checkpoint),
         checkpoint_sha256=sha256(args.checkpoint), manifest=str(args.manifest), manifest_sha256=sha256(args.manifest),
+        accepted_selection_report=str(selected_report), accepted_selection_sha256=selected_sha,
         mask_pixels_used_for_training=False, supervised_mask_decoder_used=False,
         scientific_claim="weakly supervised emergent soft localization",
     )
