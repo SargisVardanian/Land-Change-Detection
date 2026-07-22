@@ -64,6 +64,24 @@ def _seed(value: int) -> None:
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
 
+def _capture_rng_state() -> dict[str, object]:
+    state = {"python": random.getstate(), "numpy": np.random.get_state(), "torch_cpu": torch.get_rng_state()}
+    if torch.cuda.is_available():
+        state["torch_cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+def _restore_rng_state(state: dict[str, object] | None) -> None:
+    if not state:
+        return
+    if "python" in state: random.setstate(state["python"])
+    if "numpy" in state: np.random.set_state(state["numpy"])
+    if "torch_cpu" in state: torch.set_rng_state(state["torch_cpu"])
+    if torch.cuda.is_available() and "torch_cuda" in state:
+        torch.cuda.set_rng_state_all(state["torch_cuda"])
+
+def _save_training_checkpoint(path, student, optimizer, step, metadata):
+    torch.save({"model": student.state_dict(), "optimizer": optimizer.state_dict(), "step": step,
+                "rng_state": _capture_rng_state(), **metadata}, path)
 
 def _retrieval_loss(scores: torch.Tensor, mapping: torch.Tensor) -> torch.Tensor:
     return F.cross_entropy(scores, mapping)
@@ -623,7 +641,7 @@ def run(args: argparse.Namespace) -> dict:
             collate_fn=data_compat.make_collator(val, config, epoch=0, training=False),
             pin_memory=True, persistent_workers=False,
         )
-    elif args.phase == "mask_only_diagnostic" and not m0_mode:
+    elif start_step == 0 and args.phase == "mask_only_diagnostic" and not m0_mode:
         fixed_train_loader = DataLoader(
             train, batch_size=len(train), shuffle=False, num_workers=0,
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
@@ -723,17 +741,31 @@ def run(args: argparse.Namespace) -> dict:
         "a0_frozen_fingerprint_before": a0_frozen_fingerprint_before,
         "mask_objective": None if args.phase != "mask_only_diagnostic" else asdict(resolve_mask_objective(args.mask_objective)),
     }
-    torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
+    resume_payload = None
+    start_step = 0
+    if args.resume_checkpoint is not None:
+        resume_payload = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
+        student.load_state_dict(resume_payload["model"], strict=True)
+        if "optimizer" in resume_payload:
+            optimizer.load_state_dict(resume_payload["optimizer"])
+        _restore_rng_state(resume_payload.get("rng_state"))
+        start_step = int(resume_payload.get("step", 0))
+        checkpoint_metadata["resume_checkpoint"] = str(args.resume_checkpoint)
+        checkpoint_metadata["resume_checkpoint_step"] = start_step
+        checkpoint_metadata["resume_optimizer_state_restored"] = "optimizer" in resume_payload
+        checkpoint_metadata["resume_rng_state_restored"] = "rng_state" in resume_payload
+    else:
+        torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
     student.train()
     iterator = iter(loader)
     observed_datasets: set[str] = set()
     started = time.perf_counter()
     progress_path = output / "progress.json"
-    write_progress(progress_path, stage="training", completed=0, total=args.steps, started=started)
+    write_progress(progress_path, stage="training", completed=start_step, total=args.steps, started=started)
     fixed_train_history: list[dict[str, float | int]] = []
     fixed_validation_history: list[dict[str, float | int]] = []
     m0_development_history: list[dict[str, float | int]] = []
-    if m0_mode and not args.skip_development_evaluation:
+    if start_step == 0 and m0_mode and not args.skip_development_evaluation:
         initial_m0, initial_m0_records = _evaluate_m0_development(student, m0_validation_loader, device)
         initial_m0 = {"step": 0, **initial_m0}
         m0_development_history.append(initial_m0)
@@ -755,7 +787,7 @@ def run(args: argparse.Namespace) -> dict:
         append_jsonl(output / "fixed_train_history.jsonl", initial_train)
         append_jsonl(output / "fixed_validation_history.jsonl", initial_validation)
         student.train()
-    for step in range(1, args.steps + 1):
+    for step in range(start_step + 1, args.steps + 1):
         attempts = 0
         while True:
             try: batch = next(iterator)
@@ -1067,12 +1099,11 @@ def run(args: argparse.Namespace) -> dict:
             started=started,
             metrics=row,
         )
+        if step % args.checkpoint_interval == 0 or step == args.steps:
+            _save_training_checkpoint(output / f"step{step:04d}.pt", student, optimizer, step, checkpoint_metadata)
 
     checkpoint = output / "last.pt"
-    torch.save({
-        "model": student.state_dict(), "optimizer": optimizer.state_dict(),
-        "step": args.steps, **checkpoint_metadata,
-    }, checkpoint)
+    _save_training_checkpoint(checkpoint, student, optimizer, args.steps, checkpoint_metadata)
     restored = {key: value.cpu() for key, value in student.state_dict().items()}
     round_trip = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
     if restored.keys() != round_trip.keys() or any(not torch.equal(restored[key], round_trip[key]) for key in restored):
@@ -1221,6 +1252,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--direction-only-probe-captions", action="store_true")
     parser.add_argument("--train-probe-pair-id", action="append", default=[])
     parser.add_argument("--validation-probe-pair-id", action="append", default=[])
+    parser.add_argument("--resume-checkpoint", type=Path, default=None)
+    parser.add_argument("--checkpoint-interval", type=int, default=10)
     return parser.parse_args()
 
 
