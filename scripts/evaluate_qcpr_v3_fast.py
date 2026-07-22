@@ -243,6 +243,12 @@ def main() -> int:
     }
     metrics["changed_only"] = global_subset_metrics(global_scores, relevance, query_groups["changed_only"])
     metrics["no_change"] = global_subset_metrics(global_scores, relevance, query_groups["no_change"])
+    metrics["changed_only_reranked"] = global_subset_metrics(
+        reranked, relevance, query_groups["changed_only"]
+    )
+    metrics["no_change_reranked"] = global_subset_metrics(
+        reranked, relevance, query_groups["no_change"]
+    )
     metrics["candidate_recall_at_100"] = global_subset_metrics(global_scores, relevance, torch.ones(global_scores.shape[0], dtype=torch.bool))["candidate_recall_at_100"]
     margin_reports = margin_family_reports(token_patch, reranked, corpus["mapping"], relevance, corpus["captions"], global_scores, top_n=min(args.top_n, corpus["pairs"].shape[0]), query_groups=query_groups)
     training = json.loads(args.training_report.read_text())

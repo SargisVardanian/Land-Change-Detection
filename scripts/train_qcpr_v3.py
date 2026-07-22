@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -79,8 +80,10 @@ def _restore_rng_state(state: dict[str, object] | None) -> None:
     if torch.cuda.is_available() and "torch_cuda" in state:
         torch.cuda.set_rng_state_all(state["torch_cuda"])
 
-def _save_training_checkpoint(path, student, optimizer, step, metadata):
+def _save_training_checkpoint(path, student, optimizer, scaler, step, metadata):
     torch.save({"model": student.state_dict(), "optimizer": optimizer.state_dict(), "step": step,
+                "scheduler": None, "scaler": scaler.state_dict(),
+                "learning_rates": [group["lr"] for group in optimizer.param_groups],
                 "rng_state": _capture_rng_state(), **metadata}, path)
 
 def _retrieval_loss(scores: torch.Tensor, mapping: torch.Tensor) -> torch.Tensor:
@@ -609,6 +612,7 @@ def run(args: argparse.Namespace) -> dict:
         validation_target_aware_mask_crop=False if m0_mode else args.phase in {"mask_only_diagnostic", "mask_grounding"},
         target_crop_context=args.target_crop_context,
         direction_only_captions=args.direction_only_probe_captions,
+        load_segmentation_targets=not retrieval_phase,
     )
     config = data_compat.Stage1NextConfig(**{key: value for key, value in config_dict.items() if key in data_compat.Stage1NextConfig.__dataclass_fields__})
     train, val = data_compat.build_datasets(config)
@@ -637,12 +641,15 @@ def run(args: argparse.Namespace) -> dict:
         # One pair per batch entry: caption paraphrases are selected by the
         # collator, never emitted as five independent no-change examples.
         sampler = CappedCompositionalBatchSampler(
-            list(getattr(train, "samples", [])), config.batch_size, seed=config.seed,
+            list(getattr(train, "samples", [])), config.batch_size,
+            seed=config.seed + args.sampler_epoch,
             no_change_fraction_cap=args.no_change_batch_fraction_cap,
         )
         loader = DataLoader(
             train, batch_sampler=sampler, num_workers=config.num_workers,
-            collate_fn=data_compat.make_collator(train, config, epoch=0, training=True, frequencies=frequencies),
+            collate_fn=data_compat.make_collator(
+                train, config, epoch=args.sampler_epoch, training=True, frequencies=frequencies
+            ),
             pin_memory=True, persistent_workers=False,
         )
     elif m0_mode:
@@ -721,25 +728,44 @@ def run(args: argparse.Namespace) -> dict:
         )
     profile = resolve_training_phase(args.phase)
     optimizer_audit = apply_phase_to_model(student, profile)
+    if args.phase == "late_interaction" and args.b_stage == "B2":
+        for module in (student.text_adapter, student.temporal_encoder):
+            if module is not None:
+                for parameter in module.parameters():
+                    parameter.requires_grad_(True)
+        optimizer_audit["b_stage"] = "B2_LOW_LR_GLOBAL_ADAPTATION"
+        optimizer_audit["trainable_parameters"] = sorted(
+            name for name, parameter in student.named_parameters() if parameter.requires_grad
+        )
     parameters = [parameter for parameter in student.parameters() if parameter.requires_grad]
     a0_frozen_fingerprint_before = _frozen_parameter_fingerprint(student, ("visual_encoder", "text_encoder")) if args.phase == "global_bootstrap" else None
-    text_adapter_ids = {
-        id(parameter) for parameter in student.text_adapter.parameters()
-    } if student.text_adapter is not None else set()
-    text_adapter_parameters = [parameter for parameter in parameters if id(parameter) in text_adapter_ids]
-    primary_parameters = [parameter for parameter in parameters if id(parameter) not in text_adapter_ids]
+    low_lr_ids = set()
+    if student.text_adapter is not None:
+        low_lr_ids.update(id(parameter) for parameter in student.text_adapter.parameters())
+    if args.phase == "late_interaction" and args.b_stage == "B2":
+        low_lr_ids.update(id(parameter) for parameter in student.temporal_encoder.parameters())
+    low_lr_parameters = [parameter for parameter in parameters if id(parameter) in low_lr_ids]
+    primary_parameters = [parameter for parameter in parameters if id(parameter) not in low_lr_ids]
     optimizer_groups = []
     if primary_parameters:
         optimizer_groups.append({"params": primary_parameters, "lr": args.learning_rate, "name": "v3_primary"})
-    if text_adapter_parameters:
-        optimizer_groups.append({"params": text_adapter_parameters, "lr": args.text_adapter_learning_rate, "name": "text_adapter_low_lr"})
+    deferred_low_lr_group = None
+    saved_optimizer_group_count = len(
+        (resume_payload_hint or {}).get("optimizer", {}).get("param_groups", [])
+    )
+    if (
+        low_lr_parameters
+        and args.phase == "late_interaction"
+        and args.b_stage == "B2"
+        and saved_optimizer_group_count == 1
+    ):
+        # B1 checkpoints have one optimizer group. Load that state first, then
+        # append newly unfrozen B2 parameters with fresh low-LR state.
+        deferred_low_lr_group = {"params": low_lr_parameters, "lr": args.text_adapter_learning_rate, "name": "global_adaptation_10x_lower_lr"}
+    elif low_lr_parameters:
+        optimizer_groups.append({"params": low_lr_parameters, "lr": args.text_adapter_learning_rate, "name": "global_adaptation_10x_lower_lr"})
     optimizer = torch.optim.AdamW(optimizer_groups, weight_decay=args.weight_decay)
     named_parameter_by_id = {id(parameter): name for name, parameter in student.named_parameters()}
-    optimizer_audit["optimizer_parameter_names"] = sorted(
-        named_parameter_by_id[id(parameter)] for group in optimizer.param_groups for parameter in group["params"]
-    )
-    if teacher is not None:
-        assert_teacher_not_in_optimizer(teacher, optimizer)
     scaler = torch.amp.GradScaler("cuda", enabled=False)
     history = []
     gradient_presence = {name: False for name, parameter in student.named_parameters() if parameter.requires_grad}
@@ -751,6 +777,7 @@ def run(args: argparse.Namespace) -> dict:
         "data_config": asdict(config),
         "grounding_config": asdict(student.grounder.config),
         "parent_checkpoint": None if args.v3_checkpoint is None else str(args.v3_checkpoint),
+        "parent_checkpoint_sha256": None if args.v3_checkpoint is None else _sha256_file(args.v3_checkpoint),
         "parent_phase": None if args.v3_checkpoint is None else prior.get("phase"),
         "grounding_backbone_provenance": (
             None
@@ -761,6 +788,10 @@ def run(args: argparse.Namespace) -> dict:
         "fixed_probe_contract": probe_contract,
         "a0_frozen_fingerprint_before": a0_frozen_fingerprint_before,
         "mask_objective": None if args.phase != "mask_only_diagnostic" else asdict(resolve_mask_objective(args.mask_objective)),
+        "sampler_epoch": args.sampler_epoch,
+        "loss_weights": {name: 1.0 for name in profile.active_losses},
+        "physical_batch": args.batch_size,
+        "effective_batch": args.batch_size,
     }
     resume_payload = resume_payload_hint
     start_step = resume_step_hint
@@ -768,6 +799,8 @@ def run(args: argparse.Namespace) -> dict:
         student.load_state_dict(resume_payload["model"], strict=True)
         if "optimizer" in resume_payload:
             optimizer.load_state_dict(resume_payload["optimizer"])
+        if deferred_low_lr_group is not None:
+            optimizer.add_param_group(deferred_low_lr_group)
         _restore_rng_state(resume_payload.get("rng_state"))
         previous_schedule_steps = int(
             resume_payload.get("data_config", {}).get("max_steps", args.steps)
@@ -826,6 +859,20 @@ def run(args: argparse.Namespace) -> dict:
             }
         )
         torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
+    optimizer_audit["optimizer_parameter_names"] = sorted(
+        named_parameter_by_id[id(parameter)] for group in optimizer.param_groups for parameter in group["params"]
+    )
+    if teacher is not None:
+        assert_teacher_not_in_optimizer(teacher, optimizer)
+    frozen_a0_reference = None
+    if args.phase == "late_interaction" and args.b_stage == "B2":
+        reference_temporal = copy.deepcopy(student.temporal_encoder).eval()
+        reference_text_adapter = copy.deepcopy(student.text_adapter).eval() if student.text_adapter is not None else None
+        for module in (reference_temporal, reference_text_adapter):
+            if module is not None:
+                for parameter in module.parameters():
+                    parameter.requires_grad_(False)
+        frozen_a0_reference = (reference_temporal, reference_text_adapter)
     student.train()
     iterator = iter(loader)
     observed_datasets: set[str] = set()
@@ -936,6 +983,25 @@ def run(args: argparse.Namespace) -> dict:
                         temperature=args.contrastive_temperature,
                     )
                 )
+            if frozen_a0_reference is not None:
+                reference_temporal, reference_text_adapter = frozen_a0_reference
+                with torch.no_grad():
+                    reference_temporal_output = reference_temporal(
+                        result.per_time_tokens, temporal_valid_mask=temporal_mask
+                    )
+                    reference_pair = F.normalize(
+                        student.retrieval_head(reference_temporal_output.pair_embedding).pair_embedding,
+                        dim=-1,
+                    )
+                    reference_text = result.base_text_embedding
+                    if reference_text_adapter is not None:
+                        reference_text = reference_text_adapter(reference_text)
+                    reference_scores = F.normalize(reference_text, dim=-1) @ reference_pair.T
+                current_log_probability = F.log_softmax(global_scores / args.contrastive_temperature, dim=-1)
+                reference_probability = F.softmax(reference_scores / args.contrastive_temperature, dim=-1)
+                losses["a0_global_geometry_preservation"] = 0.1 * F.kl_div(
+                    current_log_probability, reference_probability, reduction="batchmean"
+                )
             if "base_text_preservation" in profile.active_losses and selected_mapping.numel():
                 selected_queries = selection["selected_queries"]
                 losses["base_text_preservation"] = args.base_text_preservation_weight * (1.0 - F.cosine_similarity(
@@ -962,6 +1028,14 @@ def run(args: argparse.Namespace) -> dict:
                     local_scores, positive_mask, exclusion_mask=broad & ~positive_mask,
                     temperature=args.contrastive_temperature,
                 ) + structured_loss
+                # Mask-free anti-collapse prior: retain spatial variation in C0
+                # evidence without prescribing target area or target pixels.
+                emergent_spatial_std = result.scores.emergent_patch_probability.std(
+                    dim=-1, unbiased=False
+                )
+                losses["emergent_noncollapse"] = 0.01 * F.relu(
+                    0.05 - emergent_spatial_std
+                ).mean()
                 if "rerank_contrastive" in profile.active_losses:
                     losses["rerank_contrastive"] = multi_positive_contrastive_loss(
                         selected_scores(result.scores.reranked_score), positive_mask,
@@ -1097,7 +1171,7 @@ def run(args: argparse.Namespace) -> dict:
             append_jsonl(output / "fixed_train_history.jsonl", train_probe)
             append_jsonl(output / "fixed_validation_history.jsonl", validation_probe)
             student.train()
-        if step == 1 and not global_only and not m0_mode:
+        if step == 1 and not global_only and not m0_mode and args.phase != "late_interaction":
             first_query = 0
             first_pair = int(mapping[first_query])
             target_panel = F.interpolate(batch["masks"][first_pair:first_pair + 1].float().unsqueeze(1), result.scores.decoded_mask_logits.shape[-2:], mode="nearest")[0, 0]
@@ -1137,7 +1211,18 @@ def run(args: argparse.Namespace) -> dict:
         )
         post_clip_sq = sum(float(parameter.grad.detach().float().square().sum()) for parameter in parameters if parameter.grad is not None)
         row = {"step": step, "loss": float(total.detach()), "grad_norm_before_clip": float(norm), "grad_norm_after_clip": math.sqrt(post_clip_sq), "gradient_was_clipped": bool(norm > args.grad_clip_norm), "local_margin": float(margin) if margin is not None else None}
-        if not global_only and not m0_mode:
+        if args.phase == "late_interaction":
+            emergent_probability = result.scores.emergent_patch_probability.detach()
+            row.update(
+                emergent_probability_mean=float(emergent_probability.mean()),
+                emergent_probability_std=float(emergent_probability.std(unbiased=False)),
+                emergent_near_uniform_fraction=float(
+                    (emergent_probability.std(dim=-1, unbiased=False) < 1e-3).float().mean()
+                ),
+                c0_mask_pixels_loaded=False,
+                c0_trainable_mask_decoder=False,
+            )
+        elif not global_only and not m0_mode:
             row.update(
                 mask_mass_mean=float(result.scores.mask_mass.detach().mean()),
                 mask_entropy_mean=float(result.scores.mask_entropy.detach().mean()),
@@ -1175,10 +1260,10 @@ def run(args: argparse.Namespace) -> dict:
             metrics=row,
         )
         if step % args.checkpoint_interval == 0 or step == args.steps:
-            _save_training_checkpoint(output / f"step{step:04d}.pt", student, optimizer, step, checkpoint_metadata)
+            _save_training_checkpoint(output / f"step{step:04d}.pt", student, optimizer, scaler, step, checkpoint_metadata)
 
     checkpoint = output / "last.pt"
-    _save_training_checkpoint(checkpoint, student, optimizer, args.steps, checkpoint_metadata)
+    _save_training_checkpoint(checkpoint, student, optimizer, scaler, args.steps, checkpoint_metadata)
     restored = {key: value.cpu() for key, value in student.state_dict().items()}
     round_trip = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
     if restored.keys() != round_trip.keys() or any(not torch.equal(restored[key], round_trip[key]) for key in restored):
@@ -1329,6 +1414,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--validation-probe-pair-id", action="append", default=[])
     parser.add_argument("--resume-checkpoint", type=Path, default=None)
     parser.add_argument("--checkpoint-interval", type=int, default=10)
+    parser.add_argument("--b-stage", choices=("B1", "B2"), default="B1")
+    parser.add_argument("--sampler-epoch", type=int, default=0)
     return parser.parse_args()
 
 

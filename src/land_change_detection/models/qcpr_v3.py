@@ -44,6 +44,10 @@ class QCPRV3ScoreOutput:
     local_score: Tensor
     token_patch_score: Tensor
     reranked_score: Tensor
+    token_patch_similarity: Tensor
+    emergent_patch_logits: Tensor
+    emergent_patch_probability: Tensor
+    emergent_soft_map: Tensor
     patch_mask_logits: Tensor
     decoded_mask_logits: Tensor
     local_embedding: Tensor
@@ -412,9 +416,17 @@ class QCPRV3GenericGrounding(nn.Module):
         pooled = pooled / weights.sum(dim=-1, keepdim=True).clamp_min(1e-6)
         return F.normalize(pooled, dim=-1)
 
-    def _token_patch_score(
+    def _token_patch_outputs(
         self, grounded: Tensor, projected_tokens: Tensor, attention_mask: Tensor
-    ) -> Tensor:
+    ) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+        """Return FILIP-style retrieval score and mask-free C0 patch evidence.
+
+        Similarities have shape [query, candidate, patch, token].  The retrieval
+        score is the mean, over valid content tokens, of each token's Top-K patch
+        matches.  C0 uses the complementary deterministic aggregation: the mean
+        similarity of valid content tokens at every patch.  Per query/candidate
+        standardization supplies logits without a trainable segmentation decoder.
+        """
         grounded = F.normalize(grounded, dim=-1)
         projected_tokens = F.normalize(projected_tokens, dim=-1)
         valid_rows = attention_mask.bool().any(dim=1)
@@ -427,7 +439,16 @@ class QCPRV3GenericGrounding(nn.Module):
         per_token = similarities.topk(patch_k, dim=2).values.mean(dim=2)
         valid = safe_mask[:, None].to(per_token.dtype)
         score = (per_token * valid).sum(dim=-1) / valid.sum(dim=-1).clamp_min(1.0)
-        return torch.where(valid_rows[:, None], score, torch.zeros_like(score))
+        score = torch.where(valid_rows[:, None], score, torch.zeros_like(score))
+        patch_valid = safe_mask[:, None, None].to(similarities.dtype)
+        patch_evidence = (similarities * patch_valid).sum(dim=-1) / patch_valid.sum(dim=-1).clamp_min(1.0)
+        patch_mean = patch_evidence.mean(dim=-1, keepdim=True)
+        patch_scale = patch_evidence.std(dim=-1, keepdim=True, unbiased=False).clamp_min(1e-6)
+        emergent_logits = (patch_evidence - patch_mean) / patch_scale
+        emergent_logits = torch.where(
+            valid_rows[:, None, None], emergent_logits, torch.zeros_like(emergent_logits)
+        )
+        return score, similarities, emergent_logits, emergent_logits.sigmoid()
 
     def score_query_pair_chunks(
         self,
@@ -460,9 +481,26 @@ class QCPRV3GenericGrounding(nn.Module):
         direct_patches = field.descriptors[None].expand(
             global_query_embeddings.shape[0], -1, -1, -1
         )
-        token_patch_score = self._token_patch_score(
+        (
+            token_patch_score,
+            token_patch_similarity,
+            emergent_patch_logits,
+            emergent_patch_probability,
+        ) = self._token_patch_outputs(
             direct_patches, direct_tokens, content_mask
         )
+        if not field.scale_slices:
+            raise RuntimeError("temporal patch field has no spatial scale")
+        map_start, map_end, map_side = field.scale_slices[0]
+        native_map = emergent_patch_logits[..., map_start:map_end].reshape(
+            *emergent_patch_logits.shape[:2], map_side, map_side
+        )
+        emergent_soft_map = F.interpolate(
+            native_map.flatten(0, 1)[:, None],
+            size=self.config.output_size,
+            mode="bilinear",
+            align_corners=False,
+        )[:, 0].reshape(*native_map.shape[:2], *self.config.output_size).sigmoid()
         reranked = global_score + 0.1 * token_patch_score
         if decode_mask:
             grounded, raw_patch_logits, _ = self.grounding_decoder(
@@ -506,6 +544,10 @@ class QCPRV3GenericGrounding(nn.Module):
             local_score=local_score,
             token_patch_score=token_patch_score,
             reranked_score=reranked,
+            token_patch_similarity=token_patch_similarity,
+            emergent_patch_logits=emergent_patch_logits,
+            emergent_patch_probability=emergent_patch_probability,
+            emergent_soft_map=emergent_soft_map,
             patch_mask_logits=patch_logits,
             decoded_mask_logits=decoded_logits,
             local_embedding=local_embedding,

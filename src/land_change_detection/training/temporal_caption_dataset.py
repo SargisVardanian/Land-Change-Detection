@@ -123,6 +123,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         target_aware_mask_crop: bool = False,
         target_crop_context: float = 2.0,
         direction_only_captions: bool = False,
+        load_segmentation_targets: bool = True,
     ):
         manifest_paths = [manifests] if isinstance(manifests, (str, Path)) else list(manifests)
         rows: list[dict[str, Any]] = []
@@ -159,6 +160,7 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         self.target_aware_mask_crop = bool(target_aware_mask_crop)
         self.target_crop_context = float(target_crop_context)
         self.direction_only_captions = bool(direction_only_captions)
+        self.load_segmentation_targets = bool(load_segmentation_targets)
         self.indices_by_dataset: dict[str, list[int]] = defaultdict(list)
         for index, row in enumerate(rows):
             self.indices_by_dataset[str(row["dataset_name"])].append(index)
@@ -182,9 +184,16 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
         if crop_mode not in {"positive", "hard_background", "hard_directional", "temporal_reversal"}:
             raise ValueError(f"unsupported directional crop mode {crop_mode!r}")
         row = self.samples[index]
-        directional_targets = list(row.get("directional_targets", []))
-        mask_path = row.get("mask_path")
-        has_semantics = bool(row.get("semantic_t1_path") and row.get("semantic_t2_path"))
+        directional_targets = (
+            list(row.get("directional_targets", []))
+            if self.load_segmentation_targets else []
+        )
+        mask_path = row.get("mask_path") if self.load_segmentation_targets else None
+        has_semantics = bool(
+            self.load_segmentation_targets
+            and row.get("semantic_t1_path")
+            and row.get("semantic_t2_path")
+        )
         target_kind, supervision_weight = _segmentation_target_contract(
             row,
             has_mask=bool(mask_path),
@@ -269,7 +278,10 @@ class TemporalCaptionManifestDataset(Dataset[TemporalCaptionItem]):
             [row.get("change_type", row.get("source_metadata", {}).get("change_type")) for _ in captions]
         )
         changed_mask = mask
-        changed_paths = row.get("source_metadata", {}).get("changed_mask_paths", [])
+        changed_paths = (
+            row.get("source_metadata", {}).get("changed_mask_paths", [])
+            if self.load_segmentation_targets else []
+        )
         if changed_paths and not directional_targets and crop_box is None:
             changed_masks = [_load_mask(path, self.image_size) for path in changed_paths]
             changed_mask = torch.stack(changed_masks).amax(dim=0)

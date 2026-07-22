@@ -59,6 +59,27 @@ def _write_manifest_rows(tmp_path: Path, split: str, counts: dict[str, int]) -> 
     return manifest
 
 
+def test_retrieval_only_dataset_never_opens_mask_or_semantic_targets(tmp_path: Path) -> None:
+    t1, t2 = tmp_path / "before.png", tmp_path / "after.png"
+    _image(t1, (10, 20, 30))
+    _image(t2, (30, 20, 10))
+    row = make_manifest_row(
+        dataset_name="levir_mci", split="train", original_id="retrieval-only",
+        t1_path=t1, t2_path=t2, captions=["a building appeared"],
+        mask_path=tmp_path / "must_not_be_opened.png",
+    )
+    row["semantic_t1_path"] = str(tmp_path / "semantic_t1_must_not_be_opened.png")
+    row["semantic_t2_path"] = str(tmp_path / "semantic_t2_must_not_be_opened.png")
+    manifest = tmp_path / "retrieval.jsonl"
+    write_jsonl(manifest, [row])
+    dataset = TemporalCaptionManifestDataset(
+        manifest, split="train", image_size=4, load_segmentation_targets=False
+    )
+    item = dataset[0]
+    assert item.mask.sum().item() == 0
+    assert item.metadata["segmentation_supervision"] is False
+
+
 def test_levir_mci_manifest_preserves_splits_and_namespaces(tmp_path: Path) -> None:
     root = tmp_path / "levir"
     _image(root / "images/train/A/a.png", (1, 2, 3))

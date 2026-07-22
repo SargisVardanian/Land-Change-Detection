@@ -84,6 +84,7 @@ class Stage1NextConfig:
     validation_target_aware_mask_crop: bool | None = None
     target_crop_context: float = 2.0
     direction_only_captions: bool = False
+    load_segmentation_targets: bool = True
 
     temporal_depth: int = 4
     use_direction_embeddings: bool = True
@@ -657,6 +658,7 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
             target_aware_mask_crop=config.target_aware_mask_crop,
             target_crop_context=config.target_crop_context,
             direction_only_captions=config.direction_only_captions,
+            load_segmentation_targets=config.load_segmentation_targets,
         )
         val = TemporalCaptionManifestDataset(
             val_manifests,
@@ -668,6 +670,7 @@ def _build_stage1_datasets(config: Stage1NextConfig) -> tuple[Dataset, Dataset]:
             target_aware_mask_crop=(config.target_aware_mask_crop if config.validation_target_aware_mask_crop is None else config.validation_target_aware_mask_crop),
             target_crop_context=config.target_crop_context,
             direction_only_captions=config.direction_only_captions,
+            load_segmentation_targets=config.load_segmentation_targets,
         )
         return train, val
     return base._build_datasets(config)

@@ -160,10 +160,41 @@ def test_b_direct_late_interaction_skips_cross_attention_and_mask_decoder() -> N
     output = model.score_query_pair_chunks(**inputs.as_kwargs(), decode_mask=False)
     assert output.decoded_mask_logits.shape == (3, 4, 0, 0)
     assert output.patch_mask_logits.shape == (3, 4, 0)
+    assert output.token_patch_similarity.shape == (3, 4, 16, 6)
+    assert output.emergent_patch_logits.shape == (3, 4, 16)
+    assert output.emergent_patch_probability.shape == (3, 4, 16)
+    assert output.emergent_soft_map.shape == (3, 4, 32, 32)
     torch.testing.assert_close(
         output.reranked_score,
         output.global_score + 0.1 * output.token_patch_score,
     )
+
+
+def test_c0_is_deterministic_mask_free_content_token_aggregation() -> None:
+    model, inputs = _inputs()
+    content = inputs.text_attention_mask.clone()
+    content[:, 1] = False
+    kwargs = inputs.as_kwargs()
+    kwargs["text_content_mask"] = content
+    output = model.score_query_pair_chunks(**kwargs, decode_mask=False)
+    valid = content[:, None, None].to(output.token_patch_similarity.dtype)
+    raw = (output.token_patch_similarity * valid).sum(-1) / valid.sum(-1).clamp_min(1)
+    expected = (raw - raw.mean(-1, keepdim=True)) / raw.std(
+        -1, keepdim=True, unbiased=False
+    ).clamp_min(1e-6)
+    torch.testing.assert_close(output.emergent_patch_logits, expected)
+    torch.testing.assert_close(
+        output.emergent_patch_probability, output.emergent_patch_logits.sigmoid()
+    )
+
+
+def test_c0_query_changes_map_and_never_trains_supervised_mask_decoder() -> None:
+    model, inputs = _inputs()
+    output = model.score_query_pair_chunks(**inputs.as_kwargs(), decode_mask=False)
+    assert not torch.equal(output.emergent_soft_map[0], output.emergent_soft_map[1])
+    output.token_patch_score.sum().backward()
+    assert model.direct_token_projection.weight.grad is not None
+    assert all(parameter.grad is None for parameter in model.mask_decoder.parameters())
 
 
 def test_multiscale_decoder_keeps_small_local_peak() -> None:
