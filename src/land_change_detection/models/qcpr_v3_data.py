@@ -240,7 +240,7 @@ class DirectionalCurriculumBatchSampler(Sampler[list[tuple[int, str]]]):
 class DirectionalM0BatchSampler(Sampler[list[tuple[int, str, int]]]):
     """Deterministic 70/30 M0 crop sampler over immutable pair-level records."""
 
-    def __init__(self, rows: list[dict[str, Any]], batch_size: int, *, seed: int = 0):
+    def __init__(self, rows: list[dict[str, Any]], batch_size: int, *, seed: int = 0, start_step: int = 0):
         if batch_size < 2:
             raise ValueError("M0 directional sampler requires batch_size >= 2")
         eligible = [
@@ -252,7 +252,7 @@ class DirectionalM0BatchSampler(Sampler[list[tuple[int, str, int]]]):
         if len(eligible) < batch_size:
             raise ValueError("M0 sampler has insufficient non-stress pair-level rows")
         self.rows, self.eligible = rows, eligible
-        self.batch_size, self.seed = int(batch_size), int(seed)
+        self.batch_size, self.seed, self.start_step = int(batch_size), int(seed), int(start_step)
         self.positive_count = max(1, int(round(self.batch_size * 0.70)))
         self.background_count = self.batch_size - self.positive_count
         if self.background_count <= 0:
@@ -262,19 +262,14 @@ class DirectionalM0BatchSampler(Sampler[list[tuple[int, str, int]]]):
         return math.ceil(len(self.eligible) / self.batch_size)
 
     def __iter__(self):
-        generator = torch.Generator().manual_seed(self.seed)
-        order = [self.eligible[index] for index in torch.randperm(len(self.eligible), generator=generator).tolist()]
-        cursor = 0
-        for batch_index in range(len(self)):
-            selected: list[int] = []
-            while len(selected) < self.batch_size:
-                candidate = order[cursor % len(order)]
-                cursor += 1
-                if candidate not in selected:
-                    selected.append(candidate)
+        for local_batch_index in range(len(self)):
+            absolute_step = self.start_step + local_batch_index
+            generator = torch.Generator().manual_seed(self.seed + absolute_step)
+            order = [self.eligible[index] for index in torch.randperm(len(self.eligible), generator=generator).tolist()]
+            selected = order[:self.batch_size]
             modes = ["positive"] * self.positive_count + ["hard_background"] * self.background_count
             yield [
-                (index, mode, self.seed + batch_index * self.batch_size + offset)
+                (index, mode, self.seed + absolute_step * self.batch_size + offset)
                 for offset, (index, mode) in enumerate(zip(selected, modes, strict=True))
             ]
 

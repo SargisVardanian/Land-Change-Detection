@@ -541,6 +541,14 @@ def _m0_swap_weight(step: int, total_steps: int) -> float:
     return 0.0 if step <= warmup else 0.1 * min(1.0, (step - warmup) / max(total_steps - warmup, 1))
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _frozen_parameter_fingerprint(model: torch.nn.Module, prefixes: tuple[str, ...]) -> str:
     """SHA256 of exact frozen backbone parameters for A0 drift detection."""
     digest = hashlib.sha256()
@@ -605,6 +613,14 @@ def run(args: argparse.Namespace) -> dict:
     config = data_compat.Stage1NextConfig(**{key: value for key, value in config_dict.items() if key in data_compat.Stage1NextConfig.__dataclass_fields__})
     train, val = data_compat.build_datasets(config)
     data_compat.assert_disjoint(train, val)
+    # Metadata is needed before choosing samplers; model/optimizer restoration
+    # remains below, after model construction.
+    resume_payload_hint = (
+        torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
+        if args.resume_checkpoint is not None
+        else None
+    )
+    resume_step_hint = int(resume_payload_hint.get("step", 0)) if resume_payload_hint else 0
     fixed_train_batch = None
     fixed_validation_batch = None
     probe_contract = None
@@ -630,7 +646,12 @@ def run(args: argparse.Namespace) -> dict:
             pin_memory=True, persistent_workers=False,
         )
     elif m0_mode:
-        m0_sampler = DirectionalM0BatchSampler(list(getattr(train, "samples", [])), config.batch_size, seed=config.seed)
+        m0_sampler = DirectionalM0BatchSampler(
+            list(getattr(train, "samples", [])),
+            config.batch_size,
+            seed=config.seed,
+            start_step=resume_step_hint,
+        )
         loader = DataLoader(
             train, batch_sampler=m0_sampler, num_workers=config.num_workers,
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=True, frequencies=frequencies),
@@ -641,7 +662,7 @@ def run(args: argparse.Namespace) -> dict:
             collate_fn=data_compat.make_collator(val, config, epoch=0, training=False),
             pin_memory=True, persistent_workers=False,
         )
-    elif start_step == 0 and args.phase == "mask_only_diagnostic" and not m0_mode:
+    elif resume_step_hint == 0 and args.phase == "mask_only_diagnostic" and not m0_mode:
         fixed_train_loader = DataLoader(
             train, batch_size=len(train), shuffle=False, num_workers=0,
             collate_fn=data_compat.make_collator(train, config, epoch=0, training=False),
@@ -741,20 +762,69 @@ def run(args: argparse.Namespace) -> dict:
         "a0_frozen_fingerprint_before": a0_frozen_fingerprint_before,
         "mask_objective": None if args.phase != "mask_only_diagnostic" else asdict(resolve_mask_objective(args.mask_objective)),
     }
-    resume_payload = None
-    start_step = 0
-    if args.resume_checkpoint is not None:
-        resume_payload = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
+    resume_payload = resume_payload_hint
+    start_step = resume_step_hint
+    if resume_payload is not None:
         student.load_state_dict(resume_payload["model"], strict=True)
         if "optimizer" in resume_payload:
             optimizer.load_state_dict(resume_payload["optimizer"])
         _restore_rng_state(resume_payload.get("rng_state"))
-        start_step = int(resume_payload.get("step", 0))
-        checkpoint_metadata["resume_checkpoint"] = str(args.resume_checkpoint)
-        checkpoint_metadata["resume_checkpoint_step"] = start_step
-        checkpoint_metadata["resume_optimizer_state_restored"] = "optimizer" in resume_payload
-        checkpoint_metadata["resume_rng_state_restored"] = "rng_state" in resume_payload
+        previous_schedule_steps = int(
+            resume_payload.get("data_config", {}).get("max_steps", args.steps)
+        )
+        m0_swap_schedule_total_steps = previous_schedule_steps if m0_mode else args.steps
+        checkpoint_metadata.update(
+            {
+                "git_sha": os.popen("git rev-parse HEAD").read().strip(),
+                "manifest_sha256": _sha256_file(derived / train_manifest),
+                "resume_checkpoint": str(args.resume_checkpoint),
+                "resume_checkpoint_sha256": _sha256_file(args.resume_checkpoint),
+                "resume_checkpoint_step": start_step,
+                "resume_mode": (
+                    "optimizer_preserving_warm_start"
+                    if "rng_state" not in resume_payload
+                    else "exact_rng_resume"
+                ),
+                "resume_optimizer_state_restored": "optimizer" in resume_payload,
+                "resume_rng_state_restored": "rng_state" in resume_payload,
+                "resume_scheduler_state_available": "scheduler" in resume_payload,
+                "resume_scaler_state_available": "scaler" in resume_payload,
+                "m0_swap_schedule_total_steps": m0_swap_schedule_total_steps,
+                "m0_sampler_start_step": start_step,
+            }
+        )
+        (output / "resume_audit.json").write_text(
+            json.dumps(
+                {
+                    "checkpoint_step": start_step,
+                    "start_step": start_step + 1,
+                    "model_state_loaded": True,
+                    "optimizer_state_loaded": "optimizer" in resume_payload,
+                    "scheduler_state_available": "scheduler" in resume_payload,
+                    "rng_state_available": "rng_state" in resume_payload,
+                    "scaler_state_available": "scaler" in resume_payload,
+                    "effective_lr_at_resume": [group["lr"] for group in optimizer.param_groups],
+                    "m0_swap_weight_at_resume": _m0_swap_weight(
+                        start_step + 1, m0_swap_schedule_total_steps
+                    ),
+                    "sampler_offset": start_step,
+                    "resume_checkpoint_sha256": checkpoint_metadata[
+                        "resume_checkpoint_sha256"
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
     else:
+        m0_swap_schedule_total_steps = args.steps
+        checkpoint_metadata.update(
+            {
+                "git_sha": os.popen("git rev-parse HEAD").read().strip(),
+                "manifest_sha256": _sha256_file(derived / train_manifest),
+                "m0_swap_schedule_total_steps": m0_swap_schedule_total_steps,
+            }
+        )
         torch.save({"model": student.state_dict(), "step": 0, **checkpoint_metadata}, output / "initial.pt")
     student.train()
     iterator = iter(loader)
@@ -765,12 +835,15 @@ def run(args: argparse.Namespace) -> dict:
     fixed_train_history: list[dict[str, float | int]] = []
     fixed_validation_history: list[dict[str, float | int]] = []
     m0_development_history: list[dict[str, float | int]] = []
-    if start_step == 0 and m0_mode and not args.skip_development_evaluation:
+    if m0_mode and not args.skip_development_evaluation:
+        # Reproduce the loaded state before the first resumed optimizer update.
         initial_m0, initial_m0_records = _evaluate_m0_development(student, m0_validation_loader, device)
-        initial_m0 = {"step": 0, **initial_m0}
+        initial_m0 = {"step": start_step, **initial_m0}
         m0_development_history.append(initial_m0)
         append_jsonl(output / "m0_development_history.jsonl", initial_m0)
-        (output / "m0_development_step0000.json").write_text(json.dumps({"summary": initial_m0, "records": initial_m0_records}, indent=2, sort_keys=True))
+        (output / f"m0_development_step{start_step:04d}.json").write_text(
+            json.dumps({"summary": initial_m0, "records": initial_m0_records}, indent=2, sort_keys=True)
+        )
         student.train()
     elif args.phase == "mask_only_diagnostic" and not m0_mode:
         assert fixed_train_batch is not None and fixed_validation_batch is not None
@@ -792,6 +865,8 @@ def run(args: argparse.Namespace) -> dict:
         while True:
             try: batch = next(iterator)
             except StopIteration:
+                if m0_mode:
+                    m0_sampler.start_step = step - 1
                 iterator = iter(loader); batch = next(iterator)
             attempts += 1
             names = {str(name) for name in batch.get("dataset_names", [])}
@@ -949,7 +1024,7 @@ def run(args: argparse.Namespace) -> dict:
                                 targets.float(),
                                 margin=0.02,
                             )
-                            swap_weight = _m0_swap_weight(step, args.steps)
+                            swap_weight = _m0_swap_weight(step, m0_swap_schedule_total_steps)
                             if separation_count and swap_weight > 0:
                                 losses["m0_symmetric_query_swap"] = swap_weight * separation_loss
                         else:
