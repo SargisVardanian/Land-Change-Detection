@@ -798,8 +798,18 @@ def run(args: argparse.Namespace) -> dict:
     start_step = resume_step_hint
     if resume_payload is not None:
         student.load_state_dict(resume_payload["model"], strict=True)
+        resume_learning_rates_reapplied = False
         if "optimizer" in resume_payload:
             optimizer.load_state_dict(resume_payload["optimizer"])
+            # optimizer.load_state_dict restores the checkpoint LR values.  A
+            # resumed phase explicitly owns its CLI learning-rate contract.
+            for group in optimizer.param_groups:
+                if group.get("name") == "global_adaptation_10x_lower_lr":
+                    if args.text_adapter_learning_rate is not None:
+                        group["lr"] = args.text_adapter_learning_rate
+                elif args.learning_rate is not None:
+                    group["lr"] = args.learning_rate
+            resume_learning_rates_reapplied = True
         if deferred_low_lr_group is not None:
             optimizer.add_param_group(deferred_low_lr_group)
         _restore_rng_state(resume_payload.get("rng_state"))
@@ -823,6 +833,14 @@ def run(args: argparse.Namespace) -> dict:
                 "resume_rng_state_restored": "rng_state" in resume_payload,
                 "resume_scheduler_state_available": "scheduler" in resume_payload,
                 "resume_scaler_state_available": "scaler" in resume_payload,
+                "resume_learning_rates_reapplied": resume_learning_rates_reapplied,
+                "resume_requested_learning_rates": [
+                    args.learning_rate,
+                    args.text_adapter_learning_rate,
+                ],
+                "resume_effective_learning_rates": [
+                    group["lr"] for group in optimizer.param_groups
+                ],
                 "m0_swap_schedule_total_steps": m0_swap_schedule_total_steps,
                 "m0_sampler_start_step": start_step,
             }
@@ -838,6 +856,11 @@ def run(args: argparse.Namespace) -> dict:
                     "rng_state_available": "rng_state" in resume_payload,
                     "scaler_state_available": "scaler" in resume_payload,
                     "effective_lr_at_resume": [group["lr"] for group in optimizer.param_groups],
+                    "requested_lr_at_resume": [
+                        args.learning_rate,
+                        args.text_adapter_learning_rate,
+                    ],
+                    "learning_rates_reapplied_after_optimizer_load": resume_learning_rates_reapplied,
                     "m0_swap_weight_at_resume": _m0_swap_weight(
                         start_step + 1, m0_swap_schedule_total_steps
                     ),
