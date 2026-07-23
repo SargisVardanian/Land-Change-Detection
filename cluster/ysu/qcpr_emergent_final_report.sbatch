@@ -9,8 +9,11 @@
 #SBATCH --output=/mnt/weka/svardanyan/rs_change_project/logs/%x-%j.out
 #SBATCH --error=/mnt/weka/svardanyan/rs_change_project/logs/%x-%j.err
 set -euo pipefail
-: "${CODE_ROOT:?}" "${EXPECTED_SHA:?}" "${CHAIN_ROOT:?}"
 source "$HOME/rschange_env.sh"
-cd "$CODE_ROOT"; test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"; test -z "$(git status --porcelain)"
-export PYTHONPATH="$CODE_ROOT/src:$CODE_ROOT/scripts"
+QCPR_WORKTREE=${QCPR_WORKTREE:?QCPR_WORKTREE is required}
+EXPECTED_SHA=${EXPECTED_SHA:?EXPECTED_SHA is required}
+CHAIN_ROOT=${CHAIN_ROOT:?CHAIN_ROOT is required}
+export CODE_ROOT="$QCPR_WORKTREE"
+cd "$QCPR_WORKTREE"; test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"; test -z "$(git status --porcelain)"
+export PYTHONPATH="$QCPR_WORKTREE/src:$CODE_ROOT/scripts"
 exec "$RSCHANGE_PYTHON" scripts/build_qcpr_emergent_report.py --chain-root "$CHAIN_ROOT"
