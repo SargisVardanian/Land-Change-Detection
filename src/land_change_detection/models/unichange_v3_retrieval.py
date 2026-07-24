@@ -73,7 +73,7 @@ class UniChangeV3RetrievalModel(nn.Module):
         self.temporal_encoder = temporal_encoder
         self.text_encoder = text_encoder
         self.retrieval_head = retrieval_head
-        self.text_adapter = text_adapter or SharedTextAttentionAdapter()
+        self.text_adapter = text_adapter
         self.grounding_backbone = grounding_backbone
         self.grounder = grounder
         self.freeze_backbones()
@@ -122,10 +122,12 @@ class UniChangeV3RetrievalModel(nn.Module):
         token_embeddings = features.token_embeddings
         attention_mask = features.attention_mask.bool()
         content_mask = features.content_token_mask.bool()
+        global_embedding = base_embedding
         if isinstance(self.text_adapter, SharedTextAttentionAdapter):
-            global_embedding, token_embeddings = self.text_adapter(
+            global_embedding, token_embeddings, attention_mask = self.text_adapter(
                 base_embedding, token_embeddings, attention_mask, content_mask
             )
+            content_mask = self.text_adapter.safe_content_mask(content_mask, attention_mask)
         elif self.text_adapter is not None:
             global_embedding = self.text_adapter(base_embedding)
         if self.grounding_backbone is not None:

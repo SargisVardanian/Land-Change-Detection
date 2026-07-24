@@ -64,6 +64,8 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--batch-size", type=int, default=8)
+    parser.add_argument("--allow-unselected-checkpoint", action="store_true")
+    parser.add_argument("--max-queries", type=int, default=0)
     args = parser.parse_args()
     if args.output_dir.exists():
         raise FileExistsError(f"immutable output exists: {args.output_dir}")
@@ -73,20 +75,18 @@ def main() -> int:
         raise RuntimeError("C0 evaluator requires CUDA")
     device = torch.device("cuda", torch.cuda.current_device())
     selected_report = args.checkpoint.parent / "best_feasible_development.json"
-    if not selected_report.exists():
-        raise RuntimeError(f"accepted B selection report is missing: {selected_report}")
-    selected_payload = json.loads(selected_report.read_text())
+    selected_payload = json.loads(selected_report.read_text()) if selected_report.exists() else {}
     selected_sha = sha256(args.checkpoint)
-    if not bool(selected_payload.get("feasible")):
-        raise RuntimeError("B selection report is not feasible")
-    if selected_payload.get("checkpoint_sha256") != selected_sha:
-        raise RuntimeError(
-            "B checkpoint SHA does not match accepted selection report: "
-            f"{selected_sha} != {selected_payload.get('checkpoint_sha256')}"
-        )
-    summary_path = args.checkpoint.parent / "summary.json"
-    if not summary_path.exists() or json.loads(summary_path.read_text()).get("status") != "PASS":
-        raise RuntimeError("B long run is not marked PASS")
+    if not args.allow_unselected_checkpoint:
+        if not selected_report.exists():
+            raise RuntimeError(f"accepted B selection report is missing: {selected_report}")
+        if not bool(selected_payload.get("feasible")):
+            raise RuntimeError("B selection report is not feasible")
+        if selected_payload.get("checkpoint_sha256") != selected_sha:
+            raise RuntimeError("B checkpoint SHA does not match accepted selection report")
+        summary_path = args.checkpoint.parent / "summary.json"
+        if not summary_path.exists() or json.loads(summary_path.read_text()).get("status") != "PASS":
+            raise RuntimeError("B long run is not marked PASS")
     payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     config_values = dict(payload["data_config"])
     config_values.update(
@@ -116,10 +116,11 @@ def main() -> int:
             _, text, tokens, attention, content = model.encode_texts(batch["captions"])
             output = model.score_encoded(
                 pair, patches, text.to(device), tokens.to(device), attention.to(device),
-                content.to(device), decode_mask=False,
+                content.to(device), decode_mask=True,
             )
             rows = torch.arange(mapping.numel(), device=device)
-            probability = output.emergent_soft_map[rows, mapping]
+            probability = output.decoded_mask_logits[rows, mapping].sigmoid()
+            native_evidence = output.token_patch_similarity[rows, mapping].mean(dim=(1, 2))
             targets = batch["query_masks"].to(device).float()
             targets = F.interpolate(targets[:, None], probability.shape[-2:], mode="nearest")[:, 0]
             logits = torch.logit(probability.clamp(1e-6, 1 - 1e-6))
@@ -140,7 +141,7 @@ def main() -> int:
                 record = {
                     "pair_id": str(batch["pair_ids"][int(mapping[index])]),
                     "query": str(caption), "direction": "disappeared" if "disappear" in caption.lower() or "demol" in caption.lower() else "appeared",
-                    "correct_soft_iou": float(correct_iou[index]), "opposite_soft_iou": float(opposite_iou[index]),
+                    "correct_soft_iou": float(correct_iou[index]), "native_token_patch_evidence": float(native_evidence[index]), "opposite_soft_iou": float(opposite_iou[index]),
                     "soft_query_swap_gap": float(correct_iou[index] - opposite_iou[index]), **item_metrics,
                 }
                 records.append(record)
@@ -150,6 +151,8 @@ def main() -> int:
                         images[int(mapping[index]), 0], images[int(mapping[index]), 1], targets[index],
                         probability[index], opposite[index], f"{record['pair_id']} | {caption}",
                     )
+            if args.max_queries and len(records) >= args.max_queries:
+                break
     logits = torch.cat(all_logits)
     targets = torch.cat(all_targets)
     summary = query_mask_metrics(logits, targets)
@@ -161,7 +164,7 @@ def main() -> int:
         checkpoint_sha256=sha256(args.checkpoint), manifest=str(args.manifest), manifest_sha256=sha256(args.manifest),
         accepted_selection_report=str(selected_report), accepted_selection_sha256=selected_sha,
         mask_pixels_used_for_training=False, supervised_mask_decoder_used=False,
-        scientific_claim="weakly supervised emergent soft localization",
+        scientific_claim="query-conditioned decoded soft segmentation from adapted text tokens and B token-patch evidence",
     )
     (args.output_dir / "c0_emergent_metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
     (args.output_dir / "qualitative_examples.json").write_text(json.dumps(records, indent=2) + "\n")

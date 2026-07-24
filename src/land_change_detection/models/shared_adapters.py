@@ -28,11 +28,18 @@ class SharedTextAttentionAdapter(nn.Module):
         nn.init.zeros_(self.adapted_projection.weight)
         nn.init.zeros_(self.adapted_projection.bias)
     @staticmethod
-    def safe_content_mask(content_mask:Tensor,attention_mask:Tensor)->Tensor:
-        content=content_mask.bool(); attention=attention_mask.bool()
+    def safe_attention_mask(attention_mask:Tensor)->Tensor:
+        attention=attention_mask.bool().clone()
+        attention[:, 0] |= ~attention.any(dim=1)
+        return attention
+    @classmethod
+    def safe_content_mask(cls,content_mask:Tensor,attention_mask:Tensor)->Tensor:
+        attention=cls.safe_attention_mask(attention_mask)
+        content=content_mask.bool() & attention
         return torch.where(~content.any(dim=1,keepdim=True), attention, content)
-    def forward(self,base_global:Tensor,tokens:Tensor,attention_mask:Tensor,content_mask:Tensor)->tuple[Tensor,Tensor]:
-        key_padding_mask=~attention_mask.bool()
+    def forward(self,base_global:Tensor,tokens:Tensor,attention_mask:Tensor,content_mask:Tensor)->tuple[Tensor,Tensor,Tensor]:
+        attention=self.safe_attention_mask(attention_mask)
+        key_padding_mask=~attention
         adapted=tokens
         for block in self.blocks:
             adapted=block(adapted,key_padding_mask)
@@ -41,8 +48,8 @@ class SharedTextAttentionAdapter(nn.Module):
         mean=(adapted*weights).sum(dim=1)/weights.sum(dim=1).clamp_min(1.0)
         scores=torch.einsum("bld,d->bl",F.normalize(adapted,dim=-1),F.normalize(self.attention_query,dim=0))
         scores=scores.masked_fill(~valid,float("-inf"))
-        attention=torch.softmax(scores,dim=1)
-        attended=torch.einsum("bl,bld->bd",attention,adapted)
+        attention_weights=torch.softmax(scores,dim=1)
+        attended=torch.einsum("bl,bld->bd",attention_weights,adapted)
         pooled=0.5*(mean+attended)
         global_embedding=F.normalize(self.base_projection(base_global)+self.beta_text*self.adapted_projection(pooled),dim=-1)
-        return global_embedding,adapted
+        return global_embedding,adapted,self.safe_attention_mask(attention_mask)

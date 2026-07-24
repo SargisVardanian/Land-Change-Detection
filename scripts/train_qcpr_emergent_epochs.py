@@ -144,6 +144,8 @@ def main() -> int:
     parser.add_argument("--learning-rate", type=float)
     parser.add_argument("--text-adapter-learning-rate", type=float)
     parser.add_argument("--engineering-smoke", action="store_true")
+    parser.add_argument("--soft-map-manifest", type=Path)
+    parser.add_argument("--soft-map-queries", type=int, default=16)
     args = parser.parse_args()
 
     if args.output_dir.exists():
@@ -231,6 +233,13 @@ def main() -> int:
         if args.track == "A0" and baseline_report is not None:
             evaluate += ["--baseline-output", str(baseline_report)]
         run(evaluate, allow_gate_failure=True)
+        if args.soft_map_manifest is not None:
+            run([
+                sys.executable, "scripts/evaluate_qcpr_c0_emergent.py",
+                "--checkpoint", str(checkpoint), "--manifest", str(args.soft_map_manifest),
+                "--output-dir", str(args.output_dir / "soft_maps" / f"epoch_{epoch:03d}"),
+                "--max-queries", str(args.soft_map_queries), "--allow-unselected-checkpoint",
+            ], allow_gate_failure=True)
         report = json.loads(report_path.read_text())
         training = json.loads((epoch_dir / "smoke_report.json").read_text())
         losses = [float(row["loss"]) for row in training.get("history", [])]
