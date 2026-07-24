@@ -25,7 +25,7 @@ class SharedTextAttentionAdapter(nn.Module):
         self.adapted_projection=nn.Linear(dim,dim)
         self.attention_query=nn.Parameter(torch.randn(dim)*0.02)
         self.beta_text=nn.Parameter(torch.zeros(()))
-        nn.init.zeros_(self.adapted_projection.weight)
+        nn.init.eye_(self.adapted_projection.weight)
         nn.init.zeros_(self.adapted_projection.bias)
     @staticmethod
     def safe_attention_mask(attention_mask:Tensor)->Tensor:

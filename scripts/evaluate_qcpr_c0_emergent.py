@@ -116,11 +116,11 @@ def main() -> int:
             _, text, tokens, attention, content = model.encode_texts(batch["captions"])
             output = model.score_encoded(
                 pair, patches, text.to(device), tokens.to(device), attention.to(device),
-                content.to(device), decode_mask=True,
+                content.to(device), decode_mask=False,
             )
             rows = torch.arange(mapping.numel(), device=device)
-            probability = output.decoded_mask_logits[rows, mapping].sigmoid()
-            native_evidence = output.token_patch_similarity[rows, mapping].mean(dim=(1, 2))
+            probability = output.emergent_soft_map[rows, mapping]
+            native_evidence = output.emergent_patch_probability[rows, mapping]
             targets = batch["query_masks"].to(device).float()
             targets = F.interpolate(targets[:, None], probability.shape[-2:], mode="nearest")[:, 0]
             logits = torch.logit(probability.clamp(1e-6, 1 - 1e-6))
@@ -141,7 +141,7 @@ def main() -> int:
                 record = {
                     "pair_id": str(batch["pair_ids"][int(mapping[index])]),
                     "query": str(caption), "direction": "disappeared" if "disappear" in caption.lower() or "demol" in caption.lower() else "appeared",
-                    "correct_soft_iou": float(correct_iou[index]), "native_token_patch_evidence": float(native_evidence[index]), "opposite_soft_iou": float(opposite_iou[index]),
+                    "correct_soft_iou": float(correct_iou[index]), "native_token_patch_evidence_mean": float(native_evidence[index].mean()), "opposite_soft_iou": float(opposite_iou[index]),
                     "soft_query_swap_gap": float(correct_iou[index] - opposite_iou[index]), **item_metrics,
                 }
                 records.append(record)
@@ -164,8 +164,9 @@ def main() -> int:
         checkpoint_sha256=sha256(args.checkpoint), manifest=str(args.manifest), manifest_sha256=sha256(args.manifest),
         accepted_selection_report=str(selected_report), accepted_selection_sha256=selected_sha,
         mask_pixels_used_for_training=False, supervised_mask_decoder_used=False,
-        scientific_claim="query-conditioned decoded soft segmentation from adapted text tokens and B token-patch evidence",
+        scientific_claim="query-conditioned emergent soft map from adapted text tokens and B token-patch evidence; no trained mask decoder",
     )
+    torch.save({"native_patch_evidence": native_evidence.detach().cpu(), "native_grid_side": 32, "source": "B_token_patch_similarity"}, args.output_dir / "native_patch_evidence_last_batch.pt")
     (args.output_dir / "c0_emergent_metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
     (args.output_dir / "qualitative_examples.json").write_text(json.dumps(records, indent=2) + "\n")
     print(json.dumps(summary, indent=2))

@@ -74,6 +74,8 @@ class UniChangeV3RetrievalModel(nn.Module):
         self.text_encoder = text_encoder
         self.retrieval_head = retrieval_head
         self.text_adapter = text_adapter
+        if isinstance(text_adapter, SharedTextAttentionAdapter) and grounding_backbone is not None:
+            raise ValueError("SharedTextAttentionAdapter retrieval-only mode requires grounding_backbone=None")
         self.grounding_backbone = grounding_backbone
         self.grounder = grounder
         self.freeze_backbones()
