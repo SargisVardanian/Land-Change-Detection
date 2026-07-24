@@ -8,6 +8,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from land_change_detection.backbones.jina_v5_text import TextFeatures
+from land_change_detection.models.shared_adapters import SharedTextAttentionAdapter
 from land_change_detection.models.qcpr_v3 import (
     QCPRV3AlignedMaskOutput,
     QCPRV3GenericGrounding,
@@ -72,7 +73,7 @@ class UniChangeV3RetrievalModel(nn.Module):
         self.temporal_encoder = temporal_encoder
         self.text_encoder = text_encoder
         self.retrieval_head = retrieval_head
-        self.text_adapter = text_adapter
+        self.text_adapter = text_adapter or SharedTextAttentionAdapter()
         self.grounding_backbone = grounding_backbone
         self.grounder = grounder
         self.freeze_backbones()
@@ -118,12 +119,15 @@ class UniChangeV3RetrievalModel(nn.Module):
         if not isinstance(features, TextFeatures) and not hasattr(features, "global_embedding"):
             raise TypeError("text encoder must return TextFeatures-compatible output")
         base_embedding = F.normalize(features.global_embedding, dim=-1)
-        global_embedding = base_embedding
-        if self.text_adapter is not None:
-            global_embedding = self.text_adapter(global_embedding)
         token_embeddings = features.token_embeddings
         attention_mask = features.attention_mask.bool()
         content_mask = features.content_token_mask.bool()
+        if isinstance(self.text_adapter, SharedTextAttentionAdapter):
+            global_embedding, token_embeddings = self.text_adapter(
+                base_embedding, token_embeddings, attention_mask, content_mask
+            )
+        elif self.text_adapter is not None:
+            global_embedding = self.text_adapter(base_embedding)
         if self.grounding_backbone is not None:
             grounding_text = self.grounding_backbone.encode_texts(
                 captions,

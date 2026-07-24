@@ -10,7 +10,8 @@ from land_change_detection.backbones.sequence_universat import SequenceUniverSat
 from land_change_detection.backbones.universat_backend import UniverSatBackendConfig, UniverSatJointBackend
 from land_change_detection.backbones.universat_frame_backend import UniverSatFrameBackend
 from land_change_detection.models.qcpr_v3 import QCPRV3Config, QCPRV3GenericGrounding
-from land_change_detection.models.retrieval_heads import RetrievalProjectionHead, TextEmbeddingAdapter
+from land_change_detection.models.retrieval_heads import RetrievalProjectionHead
+from land_change_detection.models.shared_adapters import SharedTextAttentionAdapter
 from land_change_detection.models.temporal_change_encoder import TemporalChangeEncoder, TemporalChangeEncoderConfig
 from land_change_detection.models.unichange_v3_retrieval import UniChangeV3RetrievalModel
 
@@ -85,7 +86,7 @@ def build_clean_v3_model(
         max_logit_scale=config.max_logit_scale,
     )
     adapter = (
-        TextEmbeddingAdapter(512, hidden_dim=config.text_adapter_hidden_dim)
+        SharedTextAttentionAdapter(512, heads=8, ffn_dim=2048, depth=2)
         if config.use_text_adapter
         else None
     )
