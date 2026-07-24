@@ -20,6 +20,6 @@ test -f "$CHAIN_ROOT/a0_long/best_feasible.pt"
 export PYTHONPATH="$QCPR_WORKTREE/src:$CODE_ROOT/scripts"
 exec "$RSCHANGE_PYTHON" scripts/train_qcpr_emergent_epochs.py \
   --track B --output-dir "$CHAIN_ROOT/b_smoke" --manifest-dir "$MANIFEST_DIR" \
-  --parent-checkpoint "$CHAIN_ROOT/a0_long/best_feasible.pt" \
+  --initialization-checkpoint "$CHAIN_ROOT/a0_long/best_feasible.pt" \
   --baseline-report "$CHAIN_ROOT/a0_long/best_feasible_development.json" \
   --max-epochs 1 --min-epochs 1 --patience 1 --batch-size 32 --engineering-smoke

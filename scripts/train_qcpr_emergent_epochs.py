@@ -65,6 +65,39 @@ def write_metrics(path: Path, rows: list[dict[str, object]]) -> None:
         writer.writerows(rows)
 
 
+def build_training_command(
+    args: argparse.Namespace,
+    *,
+    epoch: int,
+    total_steps: int,
+    phase: str,
+    resume_checkpoint: Path | None,
+) -> list[str]:
+    """Build one immutable epoch command without mixing warm start and resume."""
+    command = [
+        sys.executable, "scripts/train_qcpr_v3.py",
+        "--output-dir", str(args.output_dir / "epochs" / f"epoch_{epoch:03d}"), "--phase", phase,
+        "--initialization-mode", "clean_pretrained",
+        "--derived-manifest-dir", str(args.manifest_dir),
+        "--steps", str(total_steps), "--batch-size", str(args.batch_size),
+        "--num-workers", str(args.num_workers), "--seed", str(args.seed),
+        "--sampler-epoch", str(epoch - 1), "--checkpoint-interval", "250",
+        "--contrastive-temperature", "0.07",
+    ]
+    if args.track == "B":
+        if args.initialization_checkpoint is None:
+            raise ValueError("B requires accepted A0 initialization checkpoint")
+        command += ["--v3-checkpoint", str(args.initialization_checkpoint)]
+        command += ["--b-stage", "B1" if epoch <= 10 else "B2"]
+    if resume_checkpoint is not None:
+        command += ["--resume-checkpoint", str(resume_checkpoint)]
+    if args.learning_rate is not None:
+        command += ["--learning-rate", str(args.learning_rate)]
+    if args.text_adapter_learning_rate is not None:
+        command += ["--text-adapter-learning-rate", str(args.text_adapter_learning_rate)]
+    return command
+
+
 def plot_metrics(output: Path, rows: list[dict[str, object]], track: str) -> None:
     import matplotlib.pyplot as plt
 
@@ -96,6 +129,8 @@ def main() -> int:
     parser.add_argument("--track", choices=("A0", "B"), required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--manifest-dir", type=Path, required=True)
+    parser.add_argument("--initialization-checkpoint", type=Path,
+                        help="accepted A0 model checkpoint used only for B model warm start")
     parser.add_argument("--parent-checkpoint", type=Path)
     parser.add_argument("--baseline-report", type=Path)
     parser.add_argument("--prior-run", type=Path)
@@ -133,6 +168,8 @@ def main() -> int:
         "validation_manifest_sha256": sha256(validation_manifest),
         "parent_checkpoint": None if args.parent_checkpoint is None else str(args.parent_checkpoint),
         "parent_checkpoint_sha256": None if args.parent_checkpoint is None else sha256(args.parent_checkpoint),
+        "initialization_checkpoint": None if args.initialization_checkpoint is None else str(args.initialization_checkpoint),
+        "initialization_checkpoint_sha256": None if args.initialization_checkpoint is None else sha256(args.initialization_checkpoint),
     }
     (args.output_dir / "run_contract.json").write_text(json.dumps(state, indent=2) + "\n")
     (args.output_dir / "environment.json").write_text(json.dumps({
@@ -169,27 +206,10 @@ def main() -> int:
         epoch_dir.parent.mkdir(parents=True, exist_ok=True)
         total_steps = epoch * steps_per_epoch
         phase = "global_bootstrap" if args.track == "A0" else "late_interaction"
-        command = [
-            sys.executable, "scripts/train_qcpr_v3.py",
-            "--output-dir", str(epoch_dir), "--phase", phase,
-            "--initialization-mode", "clean_pretrained",
-            "--derived-manifest-dir", str(args.manifest_dir),
-            "--steps", str(total_steps), "--batch-size", str(args.batch_size),
-            "--num-workers", str(args.num_workers), "--seed", str(args.seed),
-            "--sampler-epoch", str(epoch - 1), "--checkpoint-interval", "250",
-            "--contrastive-temperature", "0.07",
-        ]
-        if parent is not None:
-            command += ["--resume-checkpoint", str(parent)]
-        if args.track == "B":
-            if args.parent_checkpoint is None:
-                raise ValueError("B requires accepted A0 parent checkpoint")
-            command += ["--v3-checkpoint", str(args.parent_checkpoint)]
-            command += ["--b-stage", "B1" if epoch <= 10 else "B2"]
-        if args.learning_rate is not None:
-            command += ["--learning-rate", str(args.learning_rate)]
-        if args.text_adapter_learning_rate is not None:
-            command += ["--text-adapter-learning-rate", str(args.text_adapter_learning_rate)]
+        command = build_training_command(
+            args, epoch=epoch, total_steps=total_steps, phase=phase,
+            resume_checkpoint=parent,
+        )
         run(command)
 
         checkpoint = epoch_dir / "last.pt"

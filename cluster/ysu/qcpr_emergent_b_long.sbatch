@@ -19,6 +19,7 @@ cd "$QCPR_WORKTREE"; test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"; test -z "$(
 export PYTHONPATH="$QCPR_WORKTREE/src:$CODE_ROOT/scripts"
 exec "$RSCHANGE_PYTHON" scripts/train_qcpr_emergent_epochs.py \
   --track B --output-dir "$CHAIN_ROOT/b_long" --manifest-dir "$MANIFEST_DIR" \
+  --initialization-checkpoint "$CHAIN_ROOT/a0_long/best_feasible.pt" \
   --parent-checkpoint "$CHAIN_ROOT/b_smoke/last.pt" \
   --baseline-report "$CHAIN_ROOT/a0_long/best_feasible_development.json" \
   --prior-run "$CHAIN_ROOT/b_smoke" --start-epoch 2 --max-epochs 30 --min-epochs 10 --patience 6 \
