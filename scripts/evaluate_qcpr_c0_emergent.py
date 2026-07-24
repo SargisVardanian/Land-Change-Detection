@@ -105,7 +105,7 @@ def main() -> int:
     model.load_state_dict(payload["model"], strict=True)
     model.eval()
     records: list[dict[str, object]] = []
-    all_logits, all_targets = [], []
+    all_logits, all_targets, all_native_evidence = [], [], []
     loader = data_compat.make_eval_loader(dataset, config)
     with torch.no_grad():
         for batch in loader:
@@ -126,6 +126,7 @@ def main() -> int:
             logits = torch.logit(probability.clamp(1e-6, 1 - 1e-6))
             all_logits.append(logits.cpu())
             all_targets.append(targets.cpu())
+            all_native_evidence.append(native_evidence.cpu())
             pair_rows: dict[int, list[int]] = {}
             for query_index, pair_index in enumerate(mapping.tolist()):
                 pair_rows.setdefault(int(pair_index), []).append(query_index)
@@ -155,6 +156,7 @@ def main() -> int:
                 break
     logits = torch.cat(all_logits)
     targets = torch.cat(all_targets)
+    native_patch_evidence = torch.cat(all_native_evidence)
     summary = query_mask_metrics(logits, targets)
     for direction in ("appeared", "disappeared"):
         subset = [row for row in records if row["direction"] == direction]
@@ -166,7 +168,7 @@ def main() -> int:
         mask_pixels_used_for_training=False, supervised_mask_decoder_used=False,
         scientific_claim="query-conditioned emergent soft map from adapted text tokens and B token-patch evidence; no trained mask decoder",
     )
-    torch.save({"native_patch_evidence": native_evidence.detach().cpu(), "native_grid_side": 32, "source": "B_token_patch_similarity"}, args.output_dir / "native_patch_evidence_last_batch.pt")
+    torch.save({"native_patch_evidence": native_patch_evidence, "native_grid_side": 32, "source": "B_token_patch_similarity"}, args.output_dir / "native_patch_evidence.pt")
     (args.output_dir / "c0_emergent_metrics.json").write_text(json.dumps(summary, indent=2) + "\n")
     (args.output_dir / "qualitative_examples.json").write_text(json.dumps(records, indent=2) + "\n")
     print(json.dumps(summary, indent=2))
