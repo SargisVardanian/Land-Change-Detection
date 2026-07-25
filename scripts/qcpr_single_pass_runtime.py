@@ -1,5 +1,6 @@
 from __future__ import annotations
-import hashlib,json,math,os,subprocess
+import hashlib,json,math,os,random,subprocess
+import numpy as np
 from pathlib import Path
 from typing import Any
 import torch
@@ -69,13 +70,20 @@ def evaluate_retrieval(model,dataset,batch_size,workers,device):
           "top10_scores":[float(scores[i,j]) for j in top10[i]],"true_pair_rank":int(ranks[i])})
     return metrics,rows
 
-def save_checkpoint(path,model,optimizer,epoch,metrics,config,role,localizer=None):
-    payload={"role":role,"model":model.state_dict(),"optimizer":optimizer.state_dict() if optimizer else None,
-      "epoch":epoch,"metrics":metrics,"config":config}
+def save_checkpoint(path,model,optimizer,epoch,metrics,config,role,localizer=None,
+                    scheduler=None,global_step=0,extra=None):
+    payload={"role":role,"model":model.state_dict(),
+      "optimizer":optimizer.state_dict() if optimizer else None,
+      "scheduler":scheduler.state_dict() if scheduler else None,
+      "scaler":None,"epoch":epoch,"global_step":global_step,
+      "metrics":metrics,"config":config,
+      "rng":{"torch":torch.get_rng_state(),"cuda":torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+               "python":random.getstate(),"numpy":np.random.get_state()}}
     if localizer is not None: payload["localizer"]=localizer.state_dict()
+    if extra: payload.update(extra)
     torch.save(payload,path)
     loaded=torch.load(path,map_location="cpu",weights_only=False)
-    if loaded["role"]!=role: raise RuntimeError("checkpoint round-trip role mismatch")
+    if loaded["role"]!=role or loaded["epoch"]!=epoch: raise RuntimeError("checkpoint round-trip mismatch")
 
 def git_sha():
     return subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()

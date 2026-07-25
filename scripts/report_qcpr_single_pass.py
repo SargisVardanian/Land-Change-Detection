@@ -21,7 +21,7 @@ def main():
  "",
  "## Architecture",
  "",
- "Frozen UniverSat emits aligned per-time grids at the configured native grid resolution. Per-cell temporal descriptors (T1, T2, signed delta, absolute delta, product) are projected to 384 dimensions, receive learned 2D positions, and are contextualized with CLS_PAIR by a six-layer Transformer. CLS_PAIR is projected to one normalized 512-D gallery vector. Frozen Jina pooled features are projected to one normalized 512-D query vector. Localization uses query-to-patch cross-attention and pair-level sigmoid supervision only."]
+ "Frozen UniverSat jointly encodes the complete temporal series into native 768-D dense tokens. Two zero-initialized residual bottleneck adapters preserve the initial token field. Three PAIR-query cross-attention blocks pool the field with linear token complexity; a zero-initialized PAIR delta is added to baseline mean pooling before the normalized 512-D projection. Grounding consumes contextual Jina tokens and the same adapted dense field, and its score is computed only from the relevance-weighted regional embedding."]
  (a.run_root/"report/report.md").write_text("\n".join(lines)+"\n")
  (a.run_root/"report/complete.json").write_text(json.dumps({"status":"complete","evaluation":str(a.run_root/"evaluation/evaluation.json")},indent=2)+"\n")
 if __name__=="__main__": main()
