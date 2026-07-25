@@ -19,8 +19,8 @@ def arguments():
  p.add_argument("--jina-model",default="/mnt/weka/svardanyan/rs_change_project/models/jina-v5-text-small-retrieval")
  p.add_argument("--output-grid",type=int,default=32); p.add_argument("--epochs",type=int,default=25)
  p.add_argument("--min-epochs",type=int,default=8); p.add_argument("--patience",type=int,default=5)
- p.add_argument("--workers",type=int,default=8); p.add_argument("--batch-size",type=int,default=32)
- p.add_argument("--accumulation",type=int,default=2); p.add_argument("--weight-decay",type=float,default=.05)
+ p.add_argument("--workers",type=int,default=8); p.add_argument("--batch-size",type=int,default=16)
+ p.add_argument("--accumulation",type=int,default=4); p.add_argument("--weight-decay",type=float,default=.05)
  p.add_argument("--mrr-improvement-tolerance",type=float,default=1e-8)
  p.add_argument("--recall-regression-tolerance",type=float,default=.002)
  p.add_argument("--seed",type=int,default=20260725); p.add_argument("--resume",type=Path)
@@ -151,8 +151,9 @@ def main():
    optimizer.zero_grad(set_to_none=True); break
   except torch.cuda.OutOfMemoryError:
    optimizer.zero_grad(set_to_none=True); torch.cuda.empty_cache()
-   if (actual_batch,actual_accum)!=(a.batch_size,a.accumulation): raise
-   actual_batch,actual_accum=16,4
+   fallback=(max(a.batch_size//2,1),a.accumulation*2)
+   if (actual_batch,actual_accum)==fallback: raise
+   actual_batch,actual_accum=fallback
  props=torch.cuda.get_device_properties(device)
  batch_contract={"gpu_name":props.name,"total_vram_gib":props.total_memory/2**30,
   "temporal_series_length":int(first["images"].shape[1]),"native_grid":[a.output_grid,a.output_grid],

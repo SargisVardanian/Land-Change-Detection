@@ -23,7 +23,7 @@ The frozen joint UniverSat output is detached before the trainable adapter.
 
 Text uses frozen Jina plus two pre-normalized ReZero attention/FFN blocks. Every residual gate starts at exactly zero, the base pooled projection starts as identity, and the learned pooled-token delta projection starts at exactly zero. Thus initial contextual tokens equal Jina tokens and the initial normalized query vector equals the frozen Jina pooled geometry.
 
-Every physical item contributes exactly two captions per epoch, rotated deterministically across epochs. A micro-batch of 32 physical items therefore always forms a 64 x 32 contrastive matrix. The measured first real H100 forward/backward writes the actual batch, query count, matrix shape, accumulation, and CUDA peaks to `batch_contract.json`.
+Every physical item contributes exactly two captions per epoch, rotated deterministically across epochs. The queue-friendly initial micro-batch is 16 physical items, producing a 32 x 16 contrastive matrix with accumulation 4 and effective physical batch 64. The one allowed in-job OOM fallback is 8/8, preserving the same effective batch. The measured first real H100 forward/backward writes the actual batch, query count, matrix shape, accumulation, and CUDA peaks to `batch_contract.json`.
 
 Training uses one balanced multi-positive SigLIP objective:
 

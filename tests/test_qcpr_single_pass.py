@@ -131,7 +131,9 @@ def test_mask_free_dataset_and_collator(tmp_path:Path):
 def test_in_job_oom_fallback_and_no_joint_training():
  root=Path(__file__).parents[1]; retrieval=(root/"scripts/train_qcpr_single_pass.py").read_text()
  grounding=(root/"scripts/train_qcpr_query_localization.py").read_text()
- assert "actual_batch,actual_accum=16,4" in retrieval
+ assert 'default=16' in retrieval and 'default=4' in retrieval
+ assert "fallback=(max(a.batch_size//2,1),a.accumulation*2)" in retrieval
+ assert "--batch-size 16 --accumulation 4" in (root/"cluster/ysu/submit_qcpr_single_pass_pipeline.sh").read_text()
  assert "actual_batch,actual_accum=4,4" in grounding
  assert "for parameter in model.parameters(): parameter.requires_grad_(False)" in grounding
  assert "optimizer.load_state_dict(payload" not in grounding
