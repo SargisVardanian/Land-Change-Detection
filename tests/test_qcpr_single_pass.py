@@ -8,7 +8,7 @@ from torch import nn
 from land_change_detection.backbones.jina_v5_text import TextFeatures
 from land_change_detection.models.qcpr_single_pass import (
  DeepResidualPairAdapter,QCPRSinglePassRetriever,QueryConditionedLocalizer,
- ResidualBottleneckTokenAdapter,SinglePassConfig,balanced_siglip_loss,build_pair_masks,
+ ResidualBottleneckTokenAdapter,SinglePassConfig,TextSearchProjection,balanced_siglip_loss,build_pair_masks,
  multi_positive_sigmoid_loss)
 from land_change_detection.models.qcpr_single_pass_factory import JointUniverSatSeriesEncoder
 from land_change_detection.training.qcpr_single_pass_data import MaskFreePairDataset,PairCaptionCollator
@@ -52,6 +52,19 @@ def test_pair_adapter_baseline_parity_and_depth():
   assert torch.allclose(block.ffn_layer_scale,torch.full((12,),1e-3))
  assert not any(isinstance(module,nn.TransformerEncoder) for module in adapter.modules())
 
+
+def test_text_adapter_is_exact_identity_anchored_and_empty_content_is_safe():
+ torch.manual_seed(9); adapter=TextSearchProjection(config()).eval()
+ base=torch.nn.functional.normalize(torch.randn(2,8),dim=-1); tokens=torch.randn(2,3,8)
+ attention=torch.tensor([[1,1,1],[1,1,0]],dtype=torch.bool); content=torch.zeros_like(attention)
+ output=adapter(base,tokens,attention,content)
+ assert torch.equal(output.contextual_text_tokens,tokens)
+ assert torch.allclose(output.text_search_vector,base,atol=1e-6)
+ assert torch.isfinite(output.text_search_vector).all()
+ assert torch.count_nonzero(adapter.delta_projection.weight)==0
+ for block in adapter.adapter:
+  assert block.attention_gate.item()==0 and block.ffn_gate.item()==0
+
 def test_retriever_supports_arbitrary_temporal_length_and_normalized_vectors():
  visual=FakeVisual(); model=QCPRSinglePassRetriever(visual,FakeText(),config()).eval()
  out=model(torch.randn(2,5,3,8,8),["alpha","beta"])
@@ -86,6 +99,9 @@ def test_grounding_uses_contextual_text_and_only_weighted_dense_tokens():
  text=torch.randn(2,8); tokens=torch.randn(2,3,8); mask=torch.ones(2,3,dtype=torch.bool); patches=torch.randn(2,16,12)
  out=grounder(text,tokens,mask,mask,patches,output_size=(32,32))
  assert out.native_soft_map.shape==(2,4,4) and out.upsampled_soft_map.shape==(2,32,32)
+ assert torch.allclose(out.native_pooling_map.sum((1,2)),torch.ones(2),atol=1e-6)
+ assert torch.equal(out.native_soft_map,out.soft_relevance_probabilities.reshape(2,4,4))
+ assert ((out.native_soft_map>=0)&(out.native_soft_map<=1)).all()
  projected=grounder.dense_value_projection(patches)
  expected=torch.nn.functional.normalize(torch.einsum("bn,bnd->bd",out.relevance_probabilities,projected),dim=-1)
  assert torch.allclose(out.grounded_visual_embedding,expected,atol=1e-6)
@@ -109,6 +125,7 @@ def test_mask_free_dataset_and_collator(tmp_path:Path):
  manifest=tmp_path/"m.jsonl"; manifest.write_text(json.dumps(row)+"\n")
  batch=PairCaptionCollator(2)([MaskFreePairDataset(manifest,"train",8)[0]])
  assert batch["images"].shape==(1,2,3,8,8)
+ assert len(batch["captions"])==2 and len(batch["query_pair_ids"])==2
  assert not ({"mask","masks","query_masks","segmentation_targets"}&batch.keys())
 
 def test_in_job_oom_fallback_and_no_joint_training():
@@ -118,3 +135,9 @@ def test_in_job_oom_fallback_and_no_joint_training():
  assert "actual_batch,actual_accum=4,4" in grounding
  assert "for parameter in model.parameters(): parameter.requires_grad_(False)" in grounding
  assert "optimizer.load_state_dict(payload" not in grounding
+ assert "retrieval scientific acceptance gate failed" in grounding
+ assert "validation-candidates" in grounding and "hard-cache-size" in grounding
+ assert "learned_map_beats_uniform" in grounding and "grounding_acceptance.json" in grounding
+ assert "contrastive_matrix_shape" in retrieval and "retrieval_acceptance.json" in retrieval
+ launcher=(root/"cluster/ysu/submit_qcpr_single_pass_pipeline.sh").read_text()
+ assert "--retrieval-acceptance" in launcher

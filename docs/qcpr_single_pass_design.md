@@ -21,13 +21,17 @@ The frozen joint UniverSat output is detached before the trainable adapter.
 4. The baseline is a projected mean of adapted dense tokens. The final PAIR token produces a residual delta through an exactly zero-initialized projection. The initial retrieval embedding is therefore exactly the normalized baseline.
 5. Only the final representation is projected from 768 to 512 dimensions.
 
-Text uses frozen Jina plus its permitted external token projection, a two-layer small text adapter, and a normalized 512-D projection.
+Text uses frozen Jina plus two pre-normalized ReZero attention/FFN blocks. Every residual gate starts at exactly zero, the base pooled projection starts as identity, and the learned pooled-token delta projection starts at exactly zero. Thus initial contextual tokens equal Jina tokens and the initial normalized query vector equals the frozen Jina pooled geometry.
+
+Every physical item contributes exactly two captions per epoch, rotated deterministically across epochs. A micro-batch of 32 physical items therefore always forms a 64 x 32 contrastive matrix. The measured first real H100 forward/backward writes the actual batch, query count, matrix shape, accumulation, and CUDA peaks to `batch_contract.json`.
 
 Training uses one balanced multi-positive SigLIP objective:
 
 0.5 * mean(softplus(-positive_logits)) + 0.5 * mean(softplus(valid_negative_logits)).
 
 Known caption collisions are excluded from valid negatives. No spatial, direction, object, count, mask, or counterfactual loss exists.
+
+Before grounding, `retrieval_acceptance.json` requires improved development MRR, improved median rank, non-degraded Recall@5/10, and the exact SHA256 of `best_retrieval.pt`. Slurm `afterok` alone is not treated as scientific acceptance.
 
 ## Grounding path
 
@@ -37,7 +41,11 @@ The grounder consumes contextual Jina tokens and adapted 768-D dense tokens befo
 
 Different normalized caption groups from the same physical item are retained together in grounding batches. Their own query-conditioned regional embeddings form diagonal positives; cross-caption regional matches within the same item are generic valid negatives.
 
-The only optimized grounding objective is the balanced pairwise SigLIP loss. Entropy, concentration, query sensitivity, pair sensitivity, deletion, insertion, and fixed-location collapse are diagnostics only. Held-out masks are opened only by the frozen evaluator.
+Training samples 1 positive plus 3 negatives from a frozen 32-candidate cache. Checkpoint validation uses a fixed positive plus 15 hard negatives.
+
+The only optimized grounding objective is the balanced pairwise SigLIP loss. Entropy, effective patch count, concentration, query sensitivity, pair sensitivity, learned-versus-uniform score, deletion, insertion, and fixed-location collapse are diagnostics only. `grounding_acceptance.json` records whether learned-map score beats uniform pooling, top-evidence deletion lowers score, and non-equivalent same-pair queries change the map.
+
+Softmax weights are used only for grounded pooling. A separate sigmoid of the same logits is saved as an uncalibrated query-conditioned relevance map; it is not claimed to be a calibrated segmentation probability. Held-out masks are opened only by the frozen evaluator.
 
 ## Primary evidence
 

@@ -12,6 +12,7 @@ from land_change_detection.training.qcpr_single_pass_data import CaptionCollisio
 
 def arguments():
  p=argparse.ArgumentParser(); p.add_argument("--retrieval-checkpoint",type=Path,required=True)
+ p.add_argument("--retrieval-acceptance",type=Path,required=True)
  p.add_argument("--output-dir",type=Path,required=True); p.add_argument("--manifest-dir",type=Path,required=True)
  p.add_argument("--universat-source",default="/mnt/weka/svardanyan/rs_change_project/external/UniverSat")
  p.add_argument("--universat-checkpoint",default="/mnt/weka/svardanyan/rs_change_project/models/universat-base")
@@ -19,6 +20,8 @@ def arguments():
  p.add_argument("--output-grid",type=int,default=32); p.add_argument("--epochs",type=int,default=20)
  p.add_argument("--min-epochs",type=int,default=6); p.add_argument("--patience",type=int,default=5)
  p.add_argument("--query-batch",type=int,default=8); p.add_argument("--candidates",type=int,default=4)
+ p.add_argument("--hard-cache-size",type=int,default=32)
+ p.add_argument("--validation-candidates",type=int,default=16)
  p.add_argument("--accumulation",type=int,default=2); p.add_argument("--workers",type=int,default=8)
  p.add_argument("--weight-decay",type=float,default=.05); p.add_argument("--seed",type=int,default=20260725)
  p.add_argument("--resume",type=Path); return p.parse_args()
@@ -69,6 +72,19 @@ def mine(model,dataset,collisions,device,workers,candidate_count):
    "candidate_scores":[float(scores[row,i]) for i in indices]})
  return rows
 
+def sample_candidate_subsets(rows,candidate_count,seed):
+ sampled=[]
+ for row in rows:
+  if len(row["candidate_indices"])<candidate_count: raise RuntimeError("hard-negative cache too small")
+  order=list(range(1,len(row["candidate_indices"])))
+  random.Random(f"{seed}:{row['query_pair_id']}:{row['normalized_caption_group']}").shuffle(order)
+  chosen=[0]+order[:candidate_count-1]
+  copied=dict(row)
+  for key in ("candidate_indices","candidate_pair_ids","candidate_scores"):
+   copied[key]=[row[key][index] for index in chosen]
+  sampled.append(copied)
+ return sampled
+
 def grouped_epoch_rows(rows,seed):
  groups=defaultdict(list)
  for row in rows: groups[row["query_pair_id"]].append(row)
@@ -109,14 +125,17 @@ def evidence_diagnostics(localizer,out,repeated_text,patches,k):
   weights=weights/weights.sum(-1,keepdim=True).clamp_min(1e-8)
   embedding=torch.nn.functional.normalize(torch.einsum("bn,bnd->bd",weights,values),dim=-1)
   return localizer.scale*(torch.nn.functional.normalize(repeated_text,dim=-1)*embedding).sum(-1)+localizer.logit_bias
- insertion=score(probabilities*mask); deletion=score(probabilities*(~mask))
- maps=out.native_soft_map; argmax=probabilities.argmax(-1)
- fixed=float(torch.bincount(argmax,minlength=count).max()/argmax.numel())
+ insertion=score(probabilities*mask); deletion=score(probabilities*(~mask)); uniform=score(torch.ones_like(probabilities))
+ true_rows=torch.arange(0,probabilities.shape[0],k,device=probabilities.device)
+ argmax=probabilities.argmax(-1); fixed=float(torch.bincount(argmax,minlength=count).max()/argmax.numel())
  return {"normalized_entropy":float(out.diagnostics["entropy"].mean()/math.log(count)),
+  "effective_patch_count":float(out.diagnostics["effective_patch_count"].mean()),
   "concentration":float(out.diagnostics["concentration"].mean()),
   "spatial_variance":float(out.diagnostics["spatial_variance"].mean()),
   "insertion_score":float(insertion.mean()),"deletion_score":float(deletion.mean()),
-  "deletion_drop":float((out.grounded_score-deletion).mean()),"fixed_location_ratio":fixed}
+  "deletion_drop":float((out.grounded_score[true_rows]-deletion[true_rows]).mean()),
+  "uniform_score":float(uniform[true_rows].mean()),
+  "learned_uniform_margin":float((out.grounded_score[true_rows]-uniform[true_rows]).mean()),"fixed_location_ratio":fixed}
 
 def grounded(model,localizer,rows,texts,images,k,device):
  with torch.no_grad():
@@ -131,11 +150,12 @@ def grounded(model,localizer,rows,texts,images,k,device):
  diagnostics=evidence_diagnostics(localizer,output,repeated_query,pair.adapted_dense_tokens,k)
  if len(rows)>1:
   query_changes=[]; pair_changes=[]
-  maps=output.native_soft_map.reshape(len(rows),k,localizer.grid_size,localizer.grid_size)
+  maps=output.native_pooling_map.reshape(len(rows),k,localizer.grid_size,localizer.grid_size)
   for i in range(len(rows)):
    pair_changes.append((maps[i,0]-maps[i,1]).abs().mean())
    for j in range(i+1,len(rows)):
-    if rows[i]["query_pair_id"]==rows[j]["query_pair_id"]:
+    if (rows[i]["query_pair_id"]==rows[j]["query_pair_id"] and
+        rows[i]["normalized_caption_group"]!=rows[j]["normalized_caption_group"]):
      query_changes.append((maps[i,0]-maps[j,0]).abs().mean())
   diagnostics["same_query_different_pair_map_change"]=float(torch.stack(pair_changes).mean())
   diagnostics["same_pair_different_query_map_change"]=float(torch.stack(query_changes).mean()) if query_changes else 0.
@@ -161,12 +181,17 @@ def main():
  train=MaskFreePairDataset(train_path,"train"); val=MaskFreePairDataset(val_path,"val"); collisions=CaptionCollisionIndex(collision_path)
  model=build_single_pass_retriever(universat_source=a.universat_source,universat_checkpoint=a.universat_checkpoint,
   jina_model=a.jina_model,device=device,output_grid=a.output_grid)
+ acceptance=json.loads(a.retrieval_acceptance.read_text())
+ checkpoint_hash=sha256(a.retrieval_checkpoint)
+ if not acceptance.get("passed"): raise RuntimeError("retrieval scientific acceptance gate failed")
+ if acceptance.get("checkpoint_sha256")!=checkpoint_hash: raise RuntimeError("retrieval acceptance SHA mismatch")
  payload=torch.load(a.retrieval_checkpoint,map_location=device,weights_only=False)
  if payload.get("role")!="retrieval": raise RuntimeError("grounding requires accepted retrieval checkpoint")
  model.load_state_dict(payload["model"]); model.eval()
  for parameter in model.parameters(): parameter.requires_grad_(False)
  localizer=QueryConditionedLocalizer(grid_size=a.output_grid).to(device); optimizer=make_optimizer(localizer,a.weight_decay)
- train_rows=mine(model,train,collisions,device,a.workers,a.candidates); val_rows=mine(model,val,collisions,device,a.workers,a.candidates)
+ train_rows=mine(model,train,collisions,device,a.workers,a.hard_cache_size)
+ val_rows=mine(model,val,collisions,device,a.workers,a.validation_candidates)
  with (a.output_dir/"hard_candidates.jsonl").open("w") as handle:
   for row in train_rows: handle.write(json.dumps(row)+"\n")
  steps_per_epoch=math.ceil(math.ceil(len(train_rows)/a.query_batch)/a.accumulation); total_steps=steps_per_epoch*a.epochs
@@ -192,7 +217,8 @@ def main():
   "load_segmentation_targets":False,"optimizer_lineage":"fresh_grounding_optimizer",
   "scientific_loss":"balanced_multi_positive_siglip_grounded_region_only"}
  while True:
-  rows=grouped_epoch_rows(train_rows,a.seed)[:actual_batch]; selected,texts,images=aligned_batch(train,rows,0,actual_batch,device)
+  sampled=sample_candidate_subsets(train_rows,a.candidates,a.seed)
+  rows=grouped_epoch_rows(sampled,a.seed)[:actual_batch]; selected,texts,images=aligned_batch(train,rows,0,actual_batch,device)
   optimizer.zero_grad(set_to_none=True)
   try:
    torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats(device)
@@ -207,6 +233,7 @@ def main():
    if (actual_batch,actual_accum)!=(a.query_batch,a.accumulation): raise
    actual_batch,actual_accum=4,4
  props=torch.cuda.get_device_properties(device)
+ validation_query_batch=max(1,min(actual_batch,32//a.validation_candidates))
  retrieval_contract=payload.get("batch_contract",{})
  batch_contract={"gpu_name":props.name,"total_vram_gib":props.total_memory/2**30,
   "temporal_series_length":retrieval_contract.get("temporal_series_length",2),
@@ -214,14 +241,17 @@ def main():
   "retrieval_captions_per_item":retrieval_contract.get("captions_per_item"),
   "retrieval_accumulation":retrieval_contract.get("accumulation_steps"),
   "native_grid":[a.output_grid,a.output_grid],"dense_token_count":a.output_grid**2,
-  "grounding_query_batch":actual_batch,"candidates_per_query":a.candidates,
+  "grounding_query_batch":actual_batch,"training_candidates_per_query":a.candidates,
+  "hard_negative_cache_size":a.hard_cache_size,"validation_candidates_per_query":a.validation_candidates,
+  "validation_query_batch":validation_query_batch,"validation_combinations_per_forward":validation_query_batch*a.validation_candidates,
   "query_candidate_combinations":actual_batch*a.candidates,"grounding_accumulation":actual_accum,
   "peak_allocated_gib":allocated,"peak_reserved_gib":reserved,"oom_fallback_used":actual_batch!=a.query_batch}
  (a.output_dir/"batch_contract.json").write_text(json.dumps(batch_contract,indent=2,sort_keys=True)+"\n")
  (a.output_dir/"run_config.json").write_text(json.dumps(config,indent=2,sort_keys=True,default=str)+"\n")
- best=None; stale=0
+ best=None; best_metrics=None; stale=0
  for epoch in range(start_epoch,a.epochs):
-  localizer.train(); ordered=grouped_epoch_rows(train_rows,a.seed+epoch); optimizer.zero_grad(set_to_none=True)
+  localizer.train(); sampled=sample_candidate_subsets(train_rows,a.candidates,a.seed+epoch)
+  ordered=grouped_epoch_rows(sampled,a.seed+epoch); optimizer.zero_grad(set_to_none=True)
   sums=defaultdict(float); steps=0
   for start in range(0,len(ordered),actual_batch):
    selected,texts,images=aligned_batch(train,ordered,start,actual_batch,device)
@@ -237,7 +267,7 @@ def main():
   if steps%actual_accum:
    torch.nn.utils.clip_grad_norm_(localizer.parameters(),1.); optimizer.step(); scheduler.step()
    optimizer.zero_grad(set_to_none=True); global_step+=1
-  localizer.eval(); metrics=development(model,localizer,val,val_rows,actual_batch,a.candidates,device)
+  localizer.eval(); metrics=development(model,localizer,val,val_rows,validation_query_batch,a.validation_candidates,device)
   record={"epoch":epoch+1,**{key:value/max(steps,1) for key,value in sums.items()},
           "grounding_logit_scale":float(localizer.scale),"grounding_logit_bias":float(localizer.logit_bias),
           "development":metrics}
@@ -245,15 +275,28 @@ def main():
   selector=(metrics["grounding_mrr"],metrics["grounding_recall_at_1"])
   extra={"accepted_retrieval_checkpoint":str(a.retrieval_checkpoint),
          "accepted_retrieval_sha256":sha256(a.retrieval_checkpoint),"batch_contract":batch_contract,
-         "grounding_candidate_configuration":{"candidates_per_query":a.candidates,"source":"frozen_retriever_scores"}}
+         "grounding_candidate_configuration":{"training_candidates":a.candidates,"cache_size":a.hard_cache_size,
+          "validation_candidates":a.validation_candidates,"source":"frozen_retriever_scores"}}
   save_checkpoint(a.output_dir/"last.pt",model,optimizer,epoch+1,metrics,config,"grounding",localizer,
                   scheduler=scheduler,global_step=global_step,extra=extra)
   if best is None or selector>best:
-   best=selector; stale=0
+   best=selector; best_metrics=metrics; stale=0
    save_checkpoint(a.output_dir/"best_grounding.pt",model,optimizer,epoch+1,metrics,config,"grounding",localizer,
                    scheduler=scheduler,global_step=global_step,extra=extra)
   else: stale+=1
   if epoch+1>=a.min_epochs and stale>=a.patience: break
  (a.output_dir/"training_complete.json").write_text(json.dumps({"best_selector":best,"epochs":epoch+1,
   "global_step":global_step,"batch_contract":batch_contract},indent=2)+"\n")
+ checkpoint=a.output_dir/"best_grounding.pt"
+ gates={"learned_map_beats_uniform":best_metrics["learned_uniform_margin"]>0,
+        "top_evidence_deletion_lowers_score":best_metrics["deletion_drop"]>0,
+        "non_equivalent_queries_change_map":best_metrics["same_pair_different_query_map_change"]>1e-6}
+ grounding_acceptance={"passed":bool(all(gates.values())),"gates":gates,"metrics":best_metrics,
+  "checkpoint_path":str(checkpoint),"checkpoint_sha256":sha256(checkpoint),
+  "map_semantics":{"pooling_weights":"softmax distribution used by grounded retrieval loss",
+                   "soft_relevance":"sigmoid logits; uncalibrated query-conditioned relevance, not segmentation probability"},
+  "selection_candidate_count":a.validation_candidates,
+  "note":"Failure is preserved as a non-collapse result; no handcrafted loss is added automatically."}
+ (a.output_dir/"grounding_acceptance.json").write_text(json.dumps(grounding_acceptance,indent=2,sort_keys=True)+"\n")
+
 if __name__=="__main__": main()

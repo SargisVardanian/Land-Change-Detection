@@ -111,6 +111,7 @@ def main():
   return .5*(1+math.cos(math.pi*progress))
  scheduler=torch.optim.lr_scheduler.LambdaLR(optimizer,schedule)
  start_epoch=0; global_step=0; actual_batch=a.batch_size; actual_accum=a.accumulation
+ baseline_metrics=None
  if a.resume:
   payload=torch.load(a.resume,map_location=device,weights_only=False)
   if payload.get("role")!="retrieval": raise RuntimeError("retrieval can resume only retrieval checkpoint")
@@ -122,6 +123,9 @@ def main():
   if rng.get("numpy"): np.random.set_state(rng["numpy"])
   contract=payload.get("batch_contract",{}); actual_batch=int(contract.get("physical_batch",actual_batch))
   actual_accum=int(contract.get("accumulation_steps",actual_accum))
+  baseline_metrics=payload.get("retrieval_baseline_metrics")
+ if baseline_metrics is None:
+  model.eval(); baseline_metrics,_=evaluate_retrieval(model,val,min(16,actual_batch),a.workers,device)
  config=vars(a)|{"git_sha":git_sha(),"train_manifest_sha256":sha256(train_manifest),
   "val_manifest_sha256":sha256(val_manifest),"collision_audit_sha256":sha256(collision_path),
   "load_segmentation_targets":False,"captions_per_item":2,"scientific_loss":"balanced_multi_positive_siglip",
@@ -133,6 +137,9 @@ def main():
   try:
    torch.cuda.empty_cache(); torch.cuda.reset_peak_memory_stats(device)
    loss,stats,out=train_step(model,first,collisions,device,actual_accum)
+   expected_shape=(actual_batch*2,actual_batch)
+   if out.score_matrix.shape!=expected_shape or len(first["captions"])!=actual_batch*2:
+    raise RuntimeError(f"fixed caption/query contract violated: expected {expected_shape}")
    grads=[p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
    if not torch.isfinite(loss) or not grads or not all(torch.isfinite(g).all() for g in grads): raise RuntimeError("first batch finite-gradient check")
    if out.pair.adapted_dense_tokens.shape[1:]!=(a.output_grid**2,model.cfg.visual_dim): raise RuntimeError("native dense shape")
@@ -149,10 +156,11 @@ def main():
   "temporal_series_length":int(first["images"].shape[1]),"native_grid":[a.output_grid,a.output_grid],
   "dense_token_count":a.output_grid**2,"physical_batch":actual_batch,"captions_per_item":2,
   "text_queries_per_microbatch":actual_batch*2,"accumulation_steps":actual_accum,
+  "contrastive_matrix_shape":[actual_batch*2,actual_batch],
   "effective_physical_batch":actual_batch*actual_accum,"peak_allocated_gib":allocated,
   "peak_reserved_gib":reserved,"oom_fallback_used":actual_batch!=a.batch_size}
  (a.output_dir/"batch_contract.json").write_text(json.dumps(batch_contract,indent=2,sort_keys=True)+"\n")
- best=None; stale=0; history=a.output_dir/"metrics.jsonl"
+ best=None; best_metrics=None; stale=0; history=a.output_dir/"metrics.jsonl"
  for epoch in range(start_epoch,a.epochs):
   model.train(); optimizer.zero_grad(set_to_none=True)
   sums={key:0. for key in ("loss","positive_loss","negative_loss","positive_cosine","negative_cosine",
@@ -179,17 +187,31 @@ def main():
   record={"epoch":epoch+1,**{key:value/max(count,1) for key,value in sums.items()},
    "logit_scale":float(model.scale),"logit_bias":float(model.logit_bias),"development":metrics,"selector":current}
   with history.open("a") as handle: handle.write(json.dumps(record,sort_keys=True)+"\n")
-  extra={"batch_contract":batch_contract,"native_grid_metadata":out.pair.metadata}
+  extra={"batch_contract":batch_contract,"native_grid_metadata":out.pair.metadata,
+         "retrieval_baseline_metrics":baseline_metrics}
   save_checkpoint(a.output_dir/"last.pt",model,optimizer,epoch+1,metrics,config,"retrieval",
                   scheduler=scheduler,global_step=global_step,extra=extra)
   if best is None or current>best:
-   best=current; stale=0
+   best=current; best_metrics=metrics; stale=0
    save_checkpoint(a.output_dir/"best_retrieval.pt",model,optimizer,epoch+1,metrics,config,"retrieval",
                    scheduler=scheduler,global_step=global_step,extra=extra)
    with (a.output_dir/"best_top10.jsonl").open("w") as handle:
     for row in rows: handle.write(json.dumps(row)+"\n")
   else: stale+=1
   if epoch+1>=a.min_epochs and stale>=a.patience: break
+ checkpoint=a.output_dir/"best_retrieval.pt"
+ baseline_all=baseline_metrics["all"]; accepted_all=best_metrics["all"]
+ mrr_improved=accepted_all["mrr"]>baseline_all["mrr"]
+ median_improved=accepted_all["median_rank"]<baseline_all["median_rank"]
+ recall_constraints=(accepted_all["recall_at_5"]>=baseline_all["recall_at_5"] and accepted_all["recall_at_10"]>=baseline_all["recall_at_10"])
+ acceptance={"passed":bool(mrr_improved and median_improved and recall_constraints),
+  "mrr_improved":bool(mrr_improved),"median_rank_improved":bool(median_improved),"recall_constraints_passed":bool(recall_constraints),
+  "baseline_metrics":baseline_metrics,"accepted_metrics":best_metrics,"checkpoint_path":str(checkpoint),
+  "checkpoint_sha256":sha256(checkpoint),
+  "recall_constraint":"Recall@5 and Recall@10 must not fall below the initialization baseline"}
+ (a.output_dir/"retrieval_acceptance.json").write_text(json.dumps(acceptance,indent=2,sort_keys=True)+"\n")
  (a.output_dir/"training_complete.json").write_text(json.dumps({"best_selector":best,"epochs":epoch+1,
   "global_step":global_step,"batch_contract":batch_contract},indent=2)+"\n")
+ if not acceptance["passed"]:
+  raise RuntimeError("retrieval scientific acceptance gate failed; grounding chain is blocked")
 if __name__=="__main__": main()

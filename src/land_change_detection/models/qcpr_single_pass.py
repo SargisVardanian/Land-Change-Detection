@@ -53,8 +53,10 @@ class RetrievalOutput:
 class LocalizationOutput:
     relevance_logits:Tensor
     relevance_probabilities:Tensor
+    soft_relevance_probabilities:Tensor
     grounded_visual_embedding:Tensor
     native_soft_map:Tensor
+    native_pooling_map:Tensor
     upsampled_soft_map:Tensor|None
     grounded_score:Tensor
     cross_attention_weights:Tensor
@@ -146,24 +148,47 @@ class DeepResidualPairAdapter(nn.Module):
                      "pair_attention_complexity":"linear_in_dense_tokens"})
         return PairEncoding(pair,adapted,search,native,meta)
 
+class TextResidualAdapterBlock(nn.Module):
+    """Pre-normalized ReZero block that is an exact identity at initialization."""
+    def __init__(self,dim:int,heads:int,ffn_dim:int=2048,dropout:float=.1):
+        super().__init__()
+        self.attention_norm=nn.LayerNorm(dim)
+        self.attention=nn.MultiheadAttention(dim,heads,dropout=dropout,batch_first=True)
+        self.attention_gate=nn.Parameter(torch.zeros(()))
+        self.ffn_norm=nn.LayerNorm(dim)
+        self.ffn=nn.Sequential(nn.Linear(dim,ffn_dim),nn.GELU(),nn.Dropout(dropout),
+                               nn.Linear(ffn_dim,dim),nn.Dropout(dropout))
+        self.ffn_gate=nn.Parameter(torch.zeros(()))
+    def forward(self,x:Tensor,padding_mask:Tensor)->Tensor:
+        normalized=self.attention_norm(x)
+        update,_=self.attention(normalized,normalized,normalized,key_padding_mask=padding_mask,need_weights=False)
+        x=x+self.attention_gate*update
+        return x+self.ffn_gate*self.ffn(self.ffn_norm(x))
+
 class TextSearchProjection(nn.Module):
-    """Small adapter over frozen Jina representations."""
+    """Identity-anchored adapter over frozen Jina representations."""
     def __init__(self,cfg:SinglePassConfig):
         super().__init__(); self.cfg=cfg
-        layer=nn.TransformerEncoderLayer(cfg.text_dim,cfg.text_heads,2048,cfg.dropout,"gelu",
-                                         batch_first=True,norm_first=True)
-        self.adapter=nn.TransformerEncoder(layer,cfg.text_adapter_layers,enable_nested_tensor=False)
-        self.final_norm=nn.LayerNorm(cfg.text_dim)
-        self.projection=nn.Linear(cfg.text_dim,cfg.retrieval_dim)
-        if cfg.text_dim==cfg.retrieval_dim: nn.init.eye_(self.projection.weight)
-        nn.init.zeros_(self.projection.bias)
+        self.adapter=nn.ModuleList(TextResidualAdapterBlock(cfg.text_dim,cfg.text_heads,2048,cfg.dropout)
+                                   for _ in range(cfg.text_adapter_layers))
+        self.base_projection=nn.Linear(cfg.text_dim,cfg.retrieval_dim)
+        self.delta_norm=nn.LayerNorm(cfg.text_dim)
+        self.delta_projection=nn.Linear(cfg.text_dim,cfg.retrieval_dim)
+        if cfg.text_dim==cfg.retrieval_dim: nn.init.eye_(self.base_projection.weight)
+        nn.init.zeros_(self.base_projection.bias)
+        nn.init.zeros_(self.delta_projection.weight)
+        nn.init.zeros_(self.delta_projection.bias)
     def forward(self,base:Tensor,tokens:Tensor,attention:Tensor,content:Tensor,metadata=None)->TextEncoding:
         if base.ndim!=2 or base.shape[-1]!=self.cfg.text_dim: raise ValueError("text pooled shape")
         if tokens.shape[:2]!=attention.shape or content.shape!=attention.shape: raise ValueError("text mask shape")
-        sequence=torch.cat((base.unsqueeze(1),tokens),dim=1)
-        valid=torch.cat((torch.ones(base.shape[0],1,dtype=torch.bool,device=attention.device),attention.bool()),dim=1)
-        adapted=self.final_norm(self.adapter(sequence,src_key_padding_mask=~valid))
-        return TextEncoding(F.normalize(self.projection(adapted[:,0]),dim=-1),adapted[:,1:],
+        adapted=tokens
+        for block in self.adapter: adapted=block(adapted,~attention.bool())
+        pool_mask=content.bool()
+        pool_mask=torch.where(pool_mask.any(dim=1,keepdim=True),pool_mask,attention.bool())
+        weights=pool_mask.to(adapted.dtype)
+        pooled=(adapted*weights.unsqueeze(-1)).sum(1)/weights.sum(1,keepdim=True).clamp_min(1)
+        search=F.normalize(self.base_projection(base)+self.delta_projection(self.delta_norm(pooled)),dim=-1)
+        return TextEncoding(search,adapted,
             attention.bool(),content.bool(),base,metadata or {})
 
 class QCPRSinglePassRetriever(nn.Module):
@@ -260,17 +285,19 @@ class QueryConditionedLocalizer(nn.Module):
         k=F.normalize(self.relevance_key_projection(patches),dim=-1)
         relevance=torch.einsum("bd,bnd->bn",q,k)+self.relevance_bias(patches).squeeze(-1)
         probabilities=relevance.softmax(dim=-1)
+        soft_relevance=relevance.sigmoid()
         projected=self.dense_value_projection(patches)
         grounded=F.normalize(torch.einsum("bn,bnd->bd",probabilities,projected),dim=-1)
         grounded_score=self.scale*(F.normalize(text,dim=-1)*grounded).sum(-1)+self.logit_bias
         count=patches.shape[1]
         if self.grid_size*self.grid_size!=count: raise ValueError("native grid metadata/token count mismatch")
-        soft_map=probabilities.reshape(-1,self.grid_size,self.grid_size)
+        pooling_map=probabilities.reshape(-1,self.grid_size,self.grid_size)
+        soft_map=soft_relevance.reshape(-1,self.grid_size,self.grid_size)
         upsampled=None if output_size is None else F.interpolate(soft_map[:,None],output_size,mode="bilinear",align_corners=False)[:,0]
         entropy=-(probabilities*probabilities.clamp_min(1e-8).log()).sum(-1)
         diagnostics={"entropy":entropy,"concentration":probabilities.amax(-1),
-                     "spatial_variance":soft_map.var(dim=(1,2),unbiased=False)}
-        return LocalizationOutput(relevance,probabilities,grounded,soft_map,upsampled,grounded_score,
+                     "spatial_variance":pooling_map.var(dim=(1,2),unbiased=False),"effective_patch_count":entropy.exp()}
+        return LocalizationOutput(relevance,probabilities,soft_relevance,grounded,soft_map,pooling_map,upsampled,grounded_score,
                                   torch.stack(history,dim=1),diagnostics)
 
 def balanced_siglip_loss(scores:Tensor,positive_mask:Tensor,valid_negative_mask:Tensor):
