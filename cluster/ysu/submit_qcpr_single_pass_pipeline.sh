@@ -7,18 +7,21 @@ PYTHON=$PROJECT/envs/rschange/bin/python
 STAMP=$(date +%Y%m%d-%H%M%S)
 RUN_ROOT=${RUN_ROOT:-$PROJECT/runs/qcpr_residual_pair_grounding_$STAMP}
 SHA=$(git -C "$WORKTREE" rev-parse HEAD)
+BRANCH=$(git -C "$WORKTREE" branch --show-current)
+REMOTE_PUSH_STATUS=${REMOTE_PUSH_STATUS:-not_attempted}
 test -z "$(git -C "$WORKTREE" status --porcelain)"
 TRAIN_HASH=$(sha256sum "$MANIFEST_DIR/natural_train_retrieval_manifest.jsonl" | awk '{print $1}')
 VAL_HASH=$(sha256sum "$MANIFEST_DIR/natural_validation_retrieval_manifest.jsonl" | awk '{print $1}')
 AUDIT_HASH=$(sha256sum "$MANIFEST_DIR/caption_quality_audit.jsonl" | awk '{print $1}')
 mkdir -p "$RUN_ROOT"/{retrieval,grounding,evaluation,report,logs,examples}
-"$PYTHON" - "$RUN_ROOT" "$SHA" "$TRAIN_HASH" "$VAL_HASH" "$AUDIT_HASH" <<'PY'
+"$PYTHON" - "$RUN_ROOT" "$SHA" "$BRANCH" "$REMOTE_PUSH_STATUS" "$TRAIN_HASH" "$VAL_HASH" "$AUDIT_HASH" <<'PY'
 import json,sys
 from pathlib import Path
 root=Path(sys.argv[1])
 (root/"run_contract.json").write_text(json.dumps({
  "architecture":"joint_universat_residual_pair_adapter_plus_mask_free_grounding",
- "git_sha":sys.argv[2],"manifest_sha256":{"train":sys.argv[3],"validation":sys.argv[4],"caption_audit":sys.argv[5]},
+ "git_sha":sys.argv[2],"branch":sys.argv[3],"remote_push_status":sys.argv[4],
+ "manifest_sha256":{"train":sys.argv[5],"validation":sys.argv[6],"caption_audit":sys.argv[7]},
  "output_grid":32,"masks_during_training":False,
  "backbone_audit":{"input_shape":[1,2,3,256,256],"joint_output_shape":[1,1024,768],"finite":True,"api_supports_arbitrary_T":True},
  "chain":["qcpr-retrieval-full","qcpr-query-grounding-full","qcpr-evaluation","qcpr-report"]},indent=2)+"\n")

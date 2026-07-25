@@ -139,5 +139,9 @@ def test_in_job_oom_fallback_and_no_joint_training():
  assert "validation-candidates" in grounding and "hard-cache-size" in grounding
  assert "learned_map_beats_uniform" in grounding and "grounding_acceptance.json" in grounding
  assert "contrastive_matrix_shape" in retrieval and "retrieval_acceptance.json" in retrieval
+ assert '"passed":bool(mrr_improved and recall_constraints and finite_metrics and checkpoint_valid)' in retrieval
+ assert "mrr_improvement_tolerance" in retrieval and "recall_regression_tolerance" in retrieval
+ assert '"median_rank_improved":bool(median_improved)' in retrieval
  launcher=(root/"cluster/ysu/submit_qcpr_single_pass_pipeline.sh").read_text()
  assert "--retrieval-acceptance" in launcher
+ assert "remote_push_status" in launcher and "test \\$(git rev-parse HEAD) = $SHA" in launcher

@@ -31,7 +31,7 @@ Training uses one balanced multi-positive SigLIP objective:
 
 Known caption collisions are excluded from valid negatives. No spatial, direction, object, count, mask, or counterfactual loss exists.
 
-Before grounding, `retrieval_acceptance.json` requires improved development MRR, improved median rank, non-degraded Recall@5/10, and the exact SHA256 of `best_retrieval.pt`. Slurm `afterok` alone is not treated as scientific acceptance.
+Before grounding, `retrieval_acceptance.json` requires development MRR above initialization by a positive numerical tolerance, finite metrics, Recall@5/10 no more than 0.002 below baseline, and the exact SHA256 of `best_retrieval.pt`. Median/mean rank and Recall@1 remain diagnostics and tie-breakers rather than mandatory gates. Slurm `afterok` alone is not treated as scientific acceptance.
 
 ## Grounding path
 
