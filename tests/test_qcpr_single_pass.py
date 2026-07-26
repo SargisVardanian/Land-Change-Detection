@@ -82,6 +82,10 @@ def test_joint_universat_wrapper_preserves_arbitrary_t():
  backend=SimpleNamespace(model=encoder,config=SimpleNamespace(adapter_spec=spec))
  wrapper=JointUniverSatSeriesEncoder(backend,4,12); output=wrapper(torch.randn(2,7,3,8,8))
  assert encoder.last==7 and output.features.shape==(2,16,12) and not output.features.requires_grad
+ assert not torch.is_inference(output.features)
+ adapter=DeepResidualPairAdapter(config())
+ adapter(output.features).pair_search_vector.sum().backward()
+ assert adapter.baseline_projection.weight.grad is not None
 
 def test_balanced_siglip_does_not_let_negative_count_dominate():
  scores=torch.tensor([[2.,-1.,-1.,-1.]],requires_grad=True)

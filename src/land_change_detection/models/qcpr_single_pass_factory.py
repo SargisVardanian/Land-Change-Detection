@@ -41,7 +41,10 @@ class JointUniverSatSeriesEncoder(nn.Module):
         expected=self.output_grid**2
         if output.shape!=(batch,expected,self.visual_dim):
             raise ValueError(f"joint UniverSat expected {(batch,expected,self.visual_dim)}, got {tuple(output.shape)}")
-        output=output.detach()
+        # Tensors created by inference_mode keep an inference-only flag even
+        # after detach(). Trainable adapters cannot save such tensors for
+        # backward, so materialize a normal tensor outside the context.
+        output=output.detach().clone()
         return NativeDenseSeriesFeatures(output,self.output_grid,self.output_grid,{
             "backend":"universat_joint_temporal_spatial","temporal_series_length":time_steps,
             "grid_height":self.output_grid,"grid_width":self.output_grid,
