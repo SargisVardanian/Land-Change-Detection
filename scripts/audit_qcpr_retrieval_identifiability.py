@@ -193,35 +193,44 @@ def main():
         same_direction = [candidate for candidate in top_audits if candidate.get("temporal_direction") == query_direction]
         object_matches = [candidate for candidate in same_direction if query_objects & set(candidate.get("object_family_audit_tags", []))]
         status = "no_change" if true_meta.get("source_metadata", {}).get("changeflag") == 0 else "changed"
+        buckets = []
         if top_pair in normalized_pairs[normalized_query]:
-            bucket = "exact caption ambiguity"
+            buckets.append("exact caption ambiguity")
         elif top_pair in lexical_pairs[signature]:
-            bucket = "near-duplicate caption ambiguity"
-        elif status == "no_change" and len(signature.split()) <= 4:
-            bucket = "no-change generic query"
-        elif object_matches and query_locations and all(
+            buckets.append("near-duplicate caption ambiguity")
+        if status == "no_change" and len(signature.split()) <= 4:
+            buckets.append("no-change generic query")
+        if any(lexical_signature(caption) == signature for caption in top_meta["captions"]):
+            buckets.append("wrong physical pair but semantically valid result")
+        if object_matches and query_locations and all(
             not (query_locations & set(candidate.get("location_audit_tags", [])))
             for candidate in object_matches
         ):
-            bucket = "correct change type but wrong location"
-        elif object_matches and query_counts and all(
+            buckets.append("correct change type but wrong location")
+        if object_matches and query_counts and all(
             not (query_counts & set(candidate.get("count_audit_tags", [])))
             for candidate in object_matches
         ):
-            bucket = "correct object but wrong count"
-        elif true_meta["dataset_name"] != top_meta["dataset_name"]:
-            bucket = "LEVIR/SECOND domain confusion"
-        elif any(lexical_signature(caption) == signature for caption in top_meta["captions"]):
-            bucket = "wrong physical pair but semantically valid result"
-        elif true_meta.get("preprocessing_fingerprint") == top_meta.get("preprocessing_fingerprint"):
-            bucket = "probable annotation mismatch"
-        elif true_meta["dataset_name"] == top_meta["dataset_name"]:
-            bucket = "same domain and visually similar pair"
+            buckets.append("correct object but wrong count")
+        if true_meta["dataset_name"] != top_meta["dataset_name"]:
+            buckets.append("LEVIR/SECOND domain confusion")
         else:
-            bucket = "genuine model ranking failure"
-        bucket_counts[bucket] += 1
+            buckets.append("same domain and visually similar pair")
+        if true_meta.get("preprocessing_fingerprint") == top_meta.get("preprocessing_fingerprint"):
+            buckets.append("probable annotation mismatch")
+        explanatory = {
+            "exact caption ambiguity", "near-duplicate caption ambiguity",
+            "no-change generic query", "wrong physical pair but semantically valid result",
+            "correct change type but wrong location", "correct object but wrong count",
+            "probable annotation mismatch",
+        }
+        if not (set(buckets) & explanatory):
+            buckets.append("genuine model ranking failure")
+        for bucket in buckets:
+            bucket_counts[bucket] += 1
+        primary_bucket = next((name for name in bucket_names if name in buckets), buckets[0])
         initial = initial_by_query[row["query_id"]]
-        errors.append({**row, "status": status, "bucket": bucket,
+        errors.append({**row, "status": status, "bucket": primary_bucket, "buckets": buckets,
                        "initial_rank": initial["true_pair_rank"],
                        "rank_improvement": initial["true_pair_rank"] - row["true_pair_rank"],
                        "top_wrong_dataset": top_meta["dataset_name"],
@@ -238,7 +247,7 @@ def main():
         "immutable_reproduction": reproduction,
         "train": train_audit, "validation": val_audit,
         "error_bucket_counts": dict(bucket_counts),
-        "error_bucket_note": "heuristic analysis only; buckets are never used as training labels or losses",
+        "error_bucket_note": "overlapping heuristic analysis only; buckets are never used as training labels or losses",
         "semantic_cluster_note": "No human-verified semantic-equivalent groups exist. Lexical signatures are reported as near-duplicate proxies and are not converted to positives.",
         "identifiability_conclusion": {
             "low_exact_pair_performance_partly_under_specified": val_audit["all"]["shared_across_pairs_fraction"] > 0,
