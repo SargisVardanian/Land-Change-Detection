@@ -39,7 +39,12 @@ def git_sha(repo: Path) -> str:
 
 
 def source_record(name: str, raw: Path, state: str, roles: list[str], blocker: str | None = None) -> dict[str, Any]:
-    files = [p for p in raw.rglob("*") if p.is_file()] if raw.exists() else []
+    files: list[Path] = []
+    if raw.exists():
+        try:
+            files = [p for p in raw.rglob("*") if p.is_file()]
+        except OSError:
+            files = []
     return {
         "source_dataset": name,
         "state": state,
