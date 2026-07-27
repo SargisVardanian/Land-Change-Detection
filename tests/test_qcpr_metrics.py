@@ -7,6 +7,8 @@ from land_change_detection.benchmark.qcpr_metrics import (
     ndcg_at,
     normalized_entropy,
     pointing_game,
+    recall_at_k,
+    hit_rate_at_k,
     soft_iou,
 )
 
@@ -26,8 +28,16 @@ def test_ndcg_supports_multi_positive_relevance():
 
 def test_changeretcap_is_explicit_top_k_view():
     result = changeretcap_compat(["x", "a", "b"], {"a", "b"}, k=2)
-    assert result["recall"] == 1.0
+    assert result["hit_rate"] == 1.0
+    assert result["recall"] == 0.5
     assert result["precision"] == 0.5
+
+
+def test_hit_rate_and_recall_differ_for_multi_positive_relevance():
+    ranking = ["a", "wrong", "wrong2"]
+    relevant = {"a", "b"}
+    assert hit_rate_at_k(ranking, relevant, 1) == 1.0
+    assert recall_at_k(ranking, relevant, 1) == 0.5
 
 
 def test_soft_localization_metrics_are_deterministic():

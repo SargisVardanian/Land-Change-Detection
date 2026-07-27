@@ -16,10 +16,32 @@ def reciprocal_rank(ranking: Sequence[str], relevant: set[str]) -> float:
     return 0.0
 
 
+def hit_rate_at_k(ranking: Sequence[str], relevant: set[str], k: int) -> float:
+    """Binary query-level success: at least one relevant item in Top-K."""
+    return float(bool(set(ranking[:k]) & relevant)) if relevant else 0.0
+
+
+def recall_at_k(ranking: Sequence[str], relevant: set[str], k: int) -> float:
+    """Fraction of all relevant items recovered in Top-K."""
+    return len(set(ranking[:k]) & relevant) / len(relevant) if relevant else 0.0
+
+
+def precision_at_k(ranking: Sequence[str], relevant: set[str], k: int) -> float:
+    """Fraction of Top-K slots that are relevant."""
+    return len(set(ranking[:k]) & relevant) / k if k > 0 else 0.0
+
+
+def mrr_at_k(ranking: Sequence[str], relevant: set[str], k: int) -> float:
+    """Reciprocal rank of the first relevant item, truncated to Top-K."""
+    for index, item in enumerate(ranking[:k], start=1):
+        if item in relevant:
+            return 1.0 / index
+    return 0.0
+
+
 def recall_at(ranking: Sequence[str], relevant: set[str], k: int) -> float:
-    if not relevant:
-        return 0.0
-    return float(bool(set(ranking[:k]) & relevant))
+    """Backward-compatible alias for fraction-of-relevant Recall@K."""
+    return recall_at_k(ranking, relevant, k)
 
 
 def ndcg_at(ranking: Sequence[str], relevant: set[str], k: int) -> float:
@@ -36,11 +58,14 @@ def aggregate_rankings(rows: Iterable[tuple[Sequence[str], set[str]]]) -> dict[s
     return {
         "queries": len(values),
         "mrr": sum(ranks) / len(ranks) if ranks else 0.0,
-        "recall@1": sum(recall_at(r, rel, 1) for r, rel in values) / len(values) if values else 0.0,
-        "recall@5": sum(recall_at(r, rel, 5) for r, rel in values) / len(values) if values else 0.0,
-        "recall@10": sum(recall_at(r, rel, 10) for r, rel in values) / len(values) if values else 0.0,
-        "recall@50": sum(recall_at(r, rel, 50) for r, rel in values) / len(values) if values else 0.0,
-        "recall@100": sum(recall_at(r, rel, 100) for r, rel in values) / len(values) if values else 0.0,
+        "hit@1": sum(hit_rate_at_k(r, rel, 1) for r, rel in values) / len(values) if values else 0.0,
+        "hit@5": sum(hit_rate_at_k(r, rel, 5) for r, rel in values) / len(values) if values else 0.0,
+        "hit@10": sum(hit_rate_at_k(r, rel, 10) for r, rel in values) / len(values) if values else 0.0,
+        "recall@1": sum(recall_at_k(r, rel, 1) for r, rel in values) / len(values) if values else 0.0,
+        "recall@5": sum(recall_at_k(r, rel, 5) for r, rel in values) / len(values) if values else 0.0,
+        "recall@10": sum(recall_at_k(r, rel, 10) for r, rel in values) / len(values) if values else 0.0,
+        "recall@50": sum(recall_at_k(r, rel, 50) for r, rel in values) / len(values) if values else 0.0,
+        "recall@100": sum(recall_at_k(r, rel, 100) for r, rel in values) / len(values) if values else 0.0,
         "ndcg@10": sum(ndcg_at(r, rel, 10) for r, rel in values) / len(values) if values else 0.0,
         "mean_rank": sum((next((i for i, x in enumerate(r, 1) if x in rel), len(r) + 1) for r, rel in values), 0) / len(values) if values else 0.0,
         "median_rank": float(__import__("statistics").median([next((i for i, x in enumerate(r, 1) if x in rel), len(r) + 1) for r, rel in values])) if values else 0.0,
@@ -65,9 +90,9 @@ def pair_to_text_metrics(rankings: Iterable[tuple[Sequence[str], set[str]]]) -> 
         "queries": len(values),
         "mAP": sum(average_precision(r, rel) for r, rel in values) / len(values) if values else 0.0,
         "MRR": sum(reciprocal_rank(r, rel) for r, rel in values) / len(values) if values else 0.0,
-        "R@1": sum(recall_at(r, rel, 1) for r, rel in values) / len(values) if values else 0.0,
-        "R@5": sum(recall_at(r, rel, 5) for r, rel in values) / len(values) if values else 0.0,
-        "R@10": sum(recall_at(r, rel, 10) for r, rel in values) / len(values) if values else 0.0,
+        "R@1": sum(recall_at_k(r, rel, 1) for r, rel in values) / len(values) if values else 0.0,
+        "R@5": sum(recall_at_k(r, rel, 5) for r, rel in values) / len(values) if values else 0.0,
+        "R@10": sum(recall_at_k(r, rel, 10) for r, rel in values) / len(values) if values else 0.0,
     }
 
 
@@ -167,4 +192,10 @@ def QCPR_TEMPORAL_SOFT_LOCALIZATION(probabilities: Sequence[float], mask: Sequen
 def changeretcap_compat(ranking: Sequence[str], relevant: set[str], k: int = 5) -> dict[str, float]:
     """Top-k compatibility view; it is not interchangeable with full-gallery MRR."""
     top = list(ranking[:k])
-    return {"k": k, "precision": len(set(top) & relevant) / k, "recall": float(bool(set(top) & relevant)), "mrr@k": reciprocal_rank(top, relevant)}
+    return {
+        "k": k,
+        "hit_rate": hit_rate_at_k(ranking, relevant, k),
+        "recall": recall_at_k(ranking, relevant, k),
+        "precision": precision_at_k(ranking, relevant, k),
+        "mrr@k": mrr_at_k(ranking, relevant, k),
+    }

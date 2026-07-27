@@ -1,30 +1,82 @@
-schema_version: 1
+schema_version: 2
+metric_contract:
+  hit_rate_at_k: "1 iff at least one relevant item occurs in ranking[:k], else 0"
+  recall_at_k: "|set(ranking[:k]) intersect relevant| / |relevant|"
+  precision_at_k: "|set(ranking[:k]) intersect relevant| / k"
+  mrr_at_k: "1 / rank(first relevant) when rank <= k, else 0"
+  bootstrap_unit: physical_pair_or_physical_item
 protocols:
-  - protocol_id: FULL_GALLERY_EXACT
+  - protocol_id: QCPR_EXACT_FULL_GALLERY
+    paper_version: internal_v2
     task: text_to_temporal_pair
+    aggregation: macro_average_over_queries; bootstrap_by_physical_pair
     direction: text_to_pair
-    relevance: exact physical pair IDs, with explicit ignored ambiguity sets
-    metrics: [MRR, Recall@1, Recall@5, Recall@10, nDCG@10, mean_rank, median_rank]
-  - protocol_id: SEMANTIC_MULTI_POSITIVE
+    relevance: exact physical pair ID; explicit ignored ambiguity sets excluded
+    gallery: complete held-out physical-pair gallery
+    truncation: none for MRR/mean/median rank; K in {1,5,10,50,100} for top-K metrics
+    metrics: [hit_rate_at_k, recall_at_k, precision_at_k, mrr_at_k, nDCG, mean_rank, median_rank]
+  - protocol_id: QCPR_SEMANTIC_MULTI_RELEVANCE
+    paper_version: internal_v2
     task: text_to_temporal_pair
+    aggregation: macro_average_over_queries; bootstrap_by_physical_pair
     direction: text_to_pair
-    relevance: verified equivalent or semantic-group pair IDs
-    metrics: [MRR, Recall@1, Recall@5, Recall@10, nDCG@10]
-  - protocol_id: CHANGERETCAP_COMPAT
+    relevance: verified equivalent or semantic-group physical pair IDs
+    gallery: complete held-out physical-pair gallery
+    truncation: K in {1,5,10,50,100}; MRR@K is explicitly truncated
+    metrics: [hit_rate_at_k, recall_at_k, precision_at_k, mrr_at_k, mAP, nDCG]
+  - protocol_id: CHANGERETCAP_FNA_TOP5
+    paper_version: paper_compatibility_v1
     task: temporal_text_to_pair_retrieval
+    aggregation: macro_average_over_queries
     direction: text_to_pair
     relevance: paper-defined caption-similarity relevant items
-    metrics: [P@5, R@5, MRR@5]
-    warning: not comparable to FULL_GALLERY_EXACT
-  - protocol_id: TEXT_ITSR_SEMANTIC_COMPAT
+    gallery: protocol-defined gallery, not QCPR full gallery
+    truncation: exactly Top-5
+    metrics: [hit_rate_at_k, recall_at_k, precision_at_k, mrr_at_k]
+    warning: not interchangeable with QCPR exact full-gallery metrics
+  - protocol_id: TEXT_ITSR_CAPTION_OVERLAP
+    paper_version: paper_compatibility_v1
     task: temporal_cross_modal_retrieval
-    direction: text_to_pair
-    relevance: caption similarity of retrieved item
-    metrics: [BLEU1, BLEU4, METEOR, ROUGE_L]
-    warning: semantic caption quality is not exact physical retrieval
+    aggregation: macro_average_over_queries
+    direction: text_to_pair_or_caption
+    relevance: caption-reference overlap defined by protocol
+    gallery: protocol-defined retrieved set
+    truncation: protocol-defined top-K
+    metrics: [BLEU, METEOR, ROUGE_L, token_overlap]
+  - protocol_id: DFM_CAPTIONING
+    paper_version: paper_compatibility_v1
+    task: captioning
+    aggregation: macro_average_over_examples
+    direction: pair_to_text
+    relevance: reference captions for the same physical item
+    gallery: generated captions only
+    truncation: protocol-defined decoding length
+    metrics: [BLEU, METEOR, ROUGE_L, token_overlap]
+  - protocol_id: DGTRS_STATIC_RETRIEVAL
+    paper_version: paper_compatibility_v1
+    task: static_text_to_image_retrieval
+    aggregation: macro_average_over_queries; bootstrap_by_physical_image
+    direction: text_to_image
+    relevance: static dataset annotations
+    gallery: complete static-image gallery
+    truncation: protocol-defined K
+    metrics: [hit_rate_at_k, recall_at_k, precision_at_k, mrr_at_k, mAP, nDCG]
   - protocol_id: AIR_SLT_COMPAT
+    paper_version: paper_compatibility_v1
     task: static_text_localization
+    aggregation: macro_average_over_images
     direction: text_to_image_region
     relevance: native point/region localization annotations
-    metrics: [Rsu, Ras, Rda, Rmi]
+    gallery: one annotated image at a time
+    truncation: not applicable
+    metrics: [pointing_game, energy_inside_mask, normalized_entropy]
     warning: static single-image localization, not temporal change segmentation
+  - protocol_id: QCPR_TEMPORAL_SOFT_LOCALIZATION
+    paper_version: internal_v2
+    task: query_conditioned_temporal_soft_localization
+    aggregation: macro_average_over_physical_pairs; bootstrap_by_physical_pair
+    direction: text_and_temporal_pair_to_map
+    relevance: held-out dense change region joined by canonical pair ID
+    gallery: selected retrieved physical pairs
+    truncation: native dense-token map; no retrieval Top-K truncation unless reported separately
+    metrics: [energy_inside_mask, soft_iou, auprc, pointing_game, deletion_auc, insertion_auc, normalized_entropy, effective_patch_count, query_swap_sensitivity, pair_swap_sensitivity, time_reversal_sensitivity, fixed_location_collapse]
