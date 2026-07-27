@@ -8,7 +8,7 @@ The current runnable app uses:
 - `gemma4:e4b` through Ollama for the final natural-language visual interpretation.
 - OSCD sample imagery by default, with optional user-uploaded image pairs.
 
-The normal user-facing report is VLM-first: Gemma receives only the before crop, the after crop, and a labeled `A1..D4` before/after contact sheet. It does not receive Mask2Former maps, class labels, transition tables, DINO features, or heatmaps.
+The normal user-facing report is VLM-first: Gemma receives only the before crop, the after crop, and a labeled `A1..D4` before/after contact sheet. It does not receive Mask2Former maps, class labels, transition tables, retired visual baseline features, or heatmaps.
 
 ## What Works Now
 
@@ -41,7 +41,7 @@ Research or debug only:
 | `ibm-nasa-geospatial/Prithvi-EO-2.0-600M-TL` | Heavier future benchmark. Not required for the current app. |
 | `akshaydudhane/EarthDial_4B_RGB` | Relevant remote-sensing VLM candidate, but the local HF custom-code path is unstable with the current Transformers stack. Hidden behind experimental/debug UI. |
 | AdaptLLM remote-sensing Qwen models | Research candidates. Hidden behind experimental/debug UI because they are heavy or unreliable on this MacBook runtime. |
-| DINOv3 SAT models | Feature extractors only, not semantic segmenters. They are not used by the Streamlit app. |
+| retired visual feature extractor SAT models | Feature extractors only, not semantic segmenters. They are not used by the Streamlit app. |
 
 ## Requirements
 
@@ -213,15 +213,162 @@ Experimental/heavy VLMs:
 - intended only for research/debug;
 - not recommended for normal local use.
 
-## Why DINOv3 Is Not Used As Segmentation
+## Training On The YSU Cluster
 
-DINOv3 SAT models such as `facebook/dinov3-vitl16-pretrain-sat493m` and `timm/vit_large_patch16_dinov3.sat493m` are feature-extraction backbones. They do not include a trained land-cover segmentation decoder/head in this project, so they cannot directly output classes such as road, building, water, or bare land.
+The repo now includes a ready cluster bundle under `cluster/ysu/`.
 
-For that reason, DINOv3 is not part of the Streamlit runtime.
+Use it after you have VPN access and Weka mounted on the cluster:
+
+```bash
+cd ~/Land-Change-Detection
+bash cluster/ysu/prepare_workspace.sh
+```
+
+Then create the cluster environment and submit jobs:
+
+```bash
+source /home/svardanyan/miniconda3/etc/profile.d/conda.sh
+conda create -n lcd python=3.11 -y
+conda activate lcd
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -e ".[dev,llm]"
+
+sbatch cluster/ysu/train_qwen_lora.sbatch
+sbatch cluster/ysu/train_retrieval_head.sbatch
+```
+
+Cluster-specific notes:
+
+- `data/` and `artifacts/` are redirected to `/mnt/weka/svardanyan/land-change-detection/`.
+- GPU jobs use the `research` partition by default.
+- Keep large datasets and checkpoints on Weka, not in `/home/svardanyan/`.
+
+For the remote-sensing change retrieval dataset workflow on YSU-HPC, the repo now also includes:
+
+- [docs/ysu_hpc_change_retrieval_setup.md](/Users/sargisvardanyan/Land-Change-Detection/docs/ysu_hpc_change_retrieval_setup.md): end-to-end runbook for the Weka-first `RS_PROJECT_ROOT`
+- [scripts/setup_rs_change_project.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/setup_rs_change_project.py): creates the YSU-HPC directory layout and optional dataset manifest
+- [scripts/download_change_retrieval_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/download_change_retrieval_datasets.py): scripted download/prep stage for `LEVIR-CC`, `LEVIR-MCI`, `SECOND-CC`, and reference repos while preserving an existing unpacked LEVIR-MCI copy
+- [scripts/check_datasets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/check_datasets.py): quick dataset counts and size summary
+- [scripts/bootstrap_change_retrieval_assets.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/bootstrap_change_retrieval_assets.py): builds indexed retrieval assets from downloaded raw datasets
+- [scripts/index_change_retrieval_dataset.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/index_change_retrieval_dataset.py): indexes `LEVIR-MCI` or `SECOND-CC` style folders into JSONL samples
+- [scripts/render_change_retrieval_sample.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/render_change_retrieval_sample.py): renders a `T1/T2/mask/caption` preview from an indexed sample
+- [scripts/render_bootstrap_previews.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/render_bootstrap_previews.py): renders first automatic previews from bootstrap metadata
+- [scripts/build_levir_cc_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_levir_cc_manifest.py): builds a lightweight text retrieval manifest from `LEVIR-CC` captions
+- [scripts/build_change_retrieval_training_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_change_retrieval_training_manifest.py): converts indexed pair datasets into training-ready retrieval JSONL
+- [scripts/train_unichange_v2_retrieval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_unichange_v2_retrieval.py): minimal UniChange v2 Stage-1 retrieval smoke trainer with LEVIR-MCI, per-frame UniverSat, frozen Jina, text-to-pair InfoNCE, gradient audit, memory report, and checkpoint roundtrip
+- [scripts/build_semantic_change_task_manifests.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_semantic_change_task_manifests.py): converts indexed datasets into change-mask and semantic-transition manifests
+- [scripts/train_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/train_semantic_change.py): split-aware `SemanticChangeBaseline` training from semantic-transition manifests with `best.pt`, `last.pt`, rich validation metrics, and optional test metrics
+- [scripts/eval_semantic_change.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/eval_semantic_change.py): `SemanticChangeBaseline` evaluation with T1/T2 semantic metrics, transition metrics, binary QA metrics, and transition summaries
+
+## UniChange And Retrieval Runbook
+
+The main model line is UniChange v2: per-timestamp UniverSat features feed a temporal change encoder whose shared representation supports text-to-pair retrieval, pair-to-pair retrieval, captioning, segmentation, text-conditioned grounding, and event-level descriptions. The `SemanticChangeBaseline` remains useful, but it is one supervised baseline/stage rather than the full architecture.
+
+A. Existing LEVIR-MCI retrieval and localization baseline:
+
+- validate dataset with `scripts/validate_levir_mci_dataset.py`
+- render debug gallery with `scripts/render_levir_mci_debug_gallery.py`
+- run `scripts/overfit_levir_mci_100.py`
+- summarize with `scripts/summarize_run_metrics.py`
+
+B. Pair retrieval simple baseline:
+
+- build SECOND/Hi-UCD manifests with `scripts/build_secondcc_pair_retrieval_manifest.py` and `scripts/build_hiucd_pair_retrieval_manifest.py`
+- train `simple_patch` first with `scripts/train_retired_visual_baseline_pair_retrieval.py --visual-backbone simple_patch`
+- summarize training output with `scripts/summarize_pair_retrieval_train.py`
+- evaluate with `scripts/eval_retired_visual_baseline_pair_retrieval.py`
+- summarize eval output with `scripts/summarize_pair_retrieval_eval.py`
+- query top-k neighbors with `scripts/query_pair_to_pair_retrieval.py`
+
+C. Optional retired visual baseline download:
+
+- download `retired_visual_baseline-small` into `$RS_PROJECT_ROOT/models/retired_visual_baseline-small` with `scripts/download_retired_visual_baseline_small.py`
+
+D. Optional local-only retired visual baseline smoke:
+
+- run `scripts/smoke_retired_visual_baseline_local.py`
+
+E. Optional retired visual baseline pair retrieval:
+
+- switch to `--visual-backbone retired_visual_baseline --retired_visual_baseline-model-path "$RS_PROJECT_ROOT/models/retired_visual_baseline-small" --local-files-only` only after the `simple_patch` path is stable
+
+`retired visual baseline` is optional. It is not required for default tests, pair-retrieval manifest building, or `simple_patch` training.
+- [scripts/build_prithvi_semantic_manifest.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_prithvi_semantic_manifest.py): converts semantic manifests into a Prithvi-style 6-band EO contract when multispectral paths are available
+- [scripts/run_prithvi_semantic_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_semantic_train_eval.py): runs the current semantic baseline in Prithvi-style 6-band mode
+- [scripts/run_prithvi_terratorch_experimental.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_prithvi_terratorch_experimental.py): explicit Prithvi/TerraTorch experimental runner with honest fallback diagnostics
+- [scripts/diagnose_terratorch_env.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/diagnose_terratorch_env.py): writes environment readiness diagnostics for TerraTorch/Prithvi experiments
+- [scripts/install_terratorch.sh](/Users/sargisvardanyan/Land-Change-Detection/scripts/install_terratorch.sh): installs optional TerraTorch dependencies into the active environment
+- [scripts/inspect_prithvi_runtime.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/inspect_prithvi_runtime.py): inspects checkpoint/config/runtime readiness for Prithvi experiments
+- [scripts/write_prithvi_terratorch_template.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/write_prithvi_terratorch_template.py): writes a minimal TerraTorch config template for Prithvi experiments
+- [scripts/validate_prithvi_runtime_bundle.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/validate_prithvi_runtime_bundle.py): exports the unified Prithvi runtime bundle contract as JSON
+- [scripts/inspect_prithvi_backend.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/inspect_prithvi_backend.py): exports the current `PrithviTerratorchBackend` runtime scaffold JSON
+- [scripts/load_prithvi_backend_runtime.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/load_prithvi_backend_runtime.py): exercises the backend loader lifecycle and exports the loaded runtime scaffold JSON
+- [scripts/build_levir_cc_text_index.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/build_levir_cc_text_index.py): builds a small `LEVIR-CC` text index with `faiss` or numpy fallback
+- [scripts/run_change_retrieval_train_eval.py](/Users/sargisvardanyan/Land-Change-Detection/scripts/run_change_retrieval_train_eval.py): runs the current retrieval train/eval scaffold on generated manifests
+- [cluster/ysu/download_change_retrieval_datasets.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/download_change_retrieval_datasets.sh): one-command dataset download stage on the cluster
+- [cluster/ysu/bootstrap_change_retrieval_assets.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/bootstrap_change_retrieval_assets.sh): one-command asset bootstrap on the cluster
+- [cluster/ysu/bootstrap_change_retrieval_assets.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/bootstrap_change_retrieval_assets.sbatch): batch bootstrap for generated indexes and previews
+- [cluster/ysu/train_change_retrieval_head.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_change_retrieval_head.sbatch): batch retrieval train/eval on generated manifests
+- [cluster/ysu/smoke_unichange_v2_retrieval.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/smoke_unichange_v2_retrieval.sbatch): first required H100 smoke for UniChange v2 retrieval; do not claim cluster-ready until this completes with Slurm `COMPLETED` and `ExitCode 0:0`
+- [cluster/ysu/train_unichange_v2_retrieval.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_unichange_v2_retrieval.sbatch): full retrieval baseline entrypoint, gated on successful smoke
+- [cluster/ysu/build_semantic_manifests.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_semantic_manifests.sbatch): batch semantic-manifest generation for mask/transition tasks
+- [cluster/ysu/train_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_semantic_change.sbatch): batch semantic-first baseline training/eval
+- [cluster/ysu/build_prithvi_semantic_manifest.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/build_prithvi_semantic_manifest.sbatch): batch six-band Prithvi-compatible manifest generation
+- [cluster/ysu/train_prithvi_semantic_change.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_semantic_change.sbatch): batch six-band semantic baseline training/eval; true Prithvi/TerraTorch fine-tuning remains separate
+- [cluster/ysu/train_prithvi_terratorch_experimental.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/train_prithvi_terratorch_experimental.sbatch): batch experimental Prithvi/TerraTorch runner with fallback reporting
+- [cluster/ysu/install_terratorch.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/install_terratorch.sh): cluster helper for TerraTorch installation
+- [cluster/ysu/write_prithvi_terratorch_template.sh](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/write_prithvi_terratorch_template.sh): writes a starter TerraTorch config on the cluster
+- [cluster/ysu/diagnose_terratorch_env.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/diagnose_terratorch_env.sbatch): batch TerraTorch readiness diagnostics
+- [cluster/ysu/inspect_prithvi_runtime.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/inspect_prithvi_runtime.sbatch): batch runtime/checkpoint inspection for Prithvi experiments
+- [cluster/ysu/validate_prithvi_runtime_bundle.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/validate_prithvi_runtime_bundle.sbatch): batch runtime bundle export for Prithvi experiments
+- [cluster/ysu/inspect_prithvi_backend.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/inspect_prithvi_backend.sbatch): batch backend runtime scaffold inspection
+- [cluster/ysu/load_prithvi_backend_runtime.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/load_prithvi_backend_runtime.sbatch): batch backend loader lifecycle inspection
+- [cluster/ysu/slurm_test_gpu.sbatch](/Users/sargisvardanyan/Land-Change-Detection/cluster/ysu/slurm_test_gpu.sbatch): safe first GPU smoke test on the cluster
+
+Typical YSU-HPC retrieval setup flow:
+
+```bash
+python scripts/setup_rs_change_project.py --root "$RS_PROJECT_ROOT" --write-manifest
+bash cluster/ysu/download_change_retrieval_datasets.sh
+bash cluster/ysu/bootstrap_change_retrieval_assets.sh
+sbatch cluster/ysu/bootstrap_change_retrieval_assets.sbatch
+sbatch cluster/ysu/train_change_retrieval_head.sbatch
+sbatch cluster/ysu/smoke_unichange_v2_retrieval.sbatch
+# Only after smoke_report.json passes and Slurm reports COMPLETED/0:0:
+# sbatch cluster/ysu/train_unichange_v2_retrieval.sbatch
+sbatch cluster/ysu/build_semantic_manifests.sbatch
+sbatch cluster/ysu/train_semantic_change.sbatch
+sbatch cluster/ysu/build_prithvi_semantic_manifest.sbatch
+sbatch cluster/ysu/train_prithvi_semantic_change.sbatch
+sbatch cluster/ysu/train_prithvi_terratorch_experimental.sbatch
+sbatch cluster/ysu/diagnose_terratorch_env.sbatch
+sbatch cluster/ysu/inspect_prithvi_runtime.sbatch
+sbatch cluster/ysu/validate_prithvi_runtime_bundle.sbatch
+sbatch cluster/ysu/inspect_prithvi_backend.sbatch
+sbatch cluster/ysu/load_prithvi_backend_runtime.sbatch
+sbatch cluster/ysu/slurm_test_gpu.sbatch
+```
+
+## Why retired visual feature extractor Is Not Used As Segmentation
+
+retired visual feature extractor SAT models such as `facebook/retired_visual_feature_extractor-vitl16-pretrain-sat493m` and `timm/vit_large_patch16_retired_visual_feature_extractor.sat493m` are feature-extraction backbones. They do not include a trained land-cover segmentation decoder/head in this project, so they cannot directly output classes such as road, building, water, or bare land.
+
+For that reason, retired visual feature extractor is not part of the Streamlit runtime.
 
 ## Architecture Direction
 
-The longer-term research architecture remains semantic-first:
+The longer-term research architecture is UniChange v2:
+
+```text
+images [B,T,C,H,W]
+  -> UniverSat per timestamp
+  -> TemporalChangeEncoder
+  -> pair_embedding + change_tokens + event_tokens
+  -> retrieval, captioning, segmentation, grounding, event descriptions
+```
+
+The T1/T2 semantic-transition path remains `SemanticChangeBaseline` and a
+segmentation supervision stage, not the whole model:
 
 ```text
 T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> interpretable report
@@ -229,11 +376,11 @@ T1 semantic segmentation -> T2 semantic segmentation -> transition matrix -> int
 
 Planned next steps:
 
-1. Keep Mask2Former as the current RGB baseline.
-2. Integrate `Prithvi-EO-2.0-300M-TL` through a proper multispectral TerraTorch path.
-3. Add `Prithvi-EO-2.0-600M-TL` only after the 300M path is stable.
-4. Add CDMamba as a binary changed/unchanged validation baseline, not as the main semantic answer.
-5. Keep VLMs as explanation/reporting tools, not as pixel-mask evidence generators.
+1. Keep CLIP-like text-pair alignment as the first retrieval objective.
+2. Keep DINO and VL-JEPA out of the first working training pipeline.
+3. Keep Mask2Former and `SemanticChangeBaseline` as supervised segmentation baselines.
+4. Integrate `Prithvi-EO-2.0-300M-TL` through a proper multispectral TerraTorch path.
+5. Add CDMamba as a binary changed/unchanged validation baseline, not as the main semantic answer.
 
 ## Verification
 
@@ -248,7 +395,7 @@ PYTHONPATH=src python -m pytest -q
 Expected current result:
 
 ```text
-26 passed
+178 passed, 1 skipped
 ```
 
 ## Sources

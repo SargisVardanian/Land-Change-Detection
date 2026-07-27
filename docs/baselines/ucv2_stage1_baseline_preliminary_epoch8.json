@@ -1,0 +1,19 @@
+{
+  "status": "PRELIMINARY",
+  "branch": "codex/unichange-universat-jina-v5",
+  "commit": "ab10cb3d3995778e2d1810ed06a15dc0f08620bf",
+  "train_job": "83161",
+  "evaluation_job": "83162",
+  "run_dir": "/mnt/weka/svardanyan/rs_change_project/runs/unichange_v2_retrieval_1gpu_20260702-125746",
+  "note": "Snapshot copied while training was still running; inspect final Slurm state and artifacts before treating it as final.",
+  "epochs": [
+    {"epoch": 1, "train_loss": 3.9135, "R@1": 0.4029, "R@5": 0.5209, "R@10": 0.5377, "MRR": 0.4668, "mean_rank": 125.35, "exact_pair_R@1": 0.0033},
+    {"epoch": 2, "train_loss": 3.6123, "R@1": 0.5047, "R@5": 0.5320, "R@10": 0.5592, "MRR": 0.5249, "mean_rank": 90.60, "exact_pair_R@1": 0.0042},
+    {"epoch": 3, "train_loss": 3.5011, "R@1": 0.4077, "R@5": 0.5431, "R@10": 0.5740, "MRR": 0.4812, "mean_rank": 84.98, "exact_pair_R@1": 0.0060},
+    {"epoch": 4, "train_loss": 3.4434, "R@1": 0.5091, "R@5": 0.5419, "R@10": 0.5668, "MRR": 0.5316, "mean_rank": 74.66, "exact_pair_R@1": 0.0071},
+    {"epoch": 5, "train_loss": 3.3848, "R@1": 0.5092, "R@5": 0.5479, "R@10": 0.5730, "MRR": 0.5347, "mean_rank": 70.78, "exact_pair_R@1": 0.0078},
+    {"epoch": 6, "train_loss": 3.3455, "R@1": 0.5158, "R@5": 0.5616, "R@10": 0.5977, "MRR": 0.5443, "mean_rank": 70.33, "exact_pair_R@1": 0.0108},
+    {"epoch": 7, "train_loss": 3.3277, "R@1": 0.5148, "R@5": 0.5547, "R@10": 0.5877, "MRR": 0.5413, "mean_rank": 68.99, "exact_pair_R@1": 0.0104},
+    {"epoch": 8, "train_loss": 3.2898, "R@1": 0.5163, "R@5": 0.5565, "R@10": 0.5905, "MRR": 0.5422, "mean_rank": 64.78, "exact_pair_R@1": 0.0111}
+  ]
+}

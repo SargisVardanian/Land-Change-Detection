@@ -1,0 +1,24 @@
+#!/bin/bash
+#SBATCH --job-name=rs_bootstrap_assets
+#SBATCH --output=/data/%u/rs_change_project/logs/%x_%j.out
+#SBATCH --error=/data/%u/rs_change_project/logs/%x_%j.err
+#SBATCH --partition=defq
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=16G
+#SBATCH --time=01:00:00
+
+set -euo pipefail
+
+PROJECT_ROOT="${PROJECT_ROOT:-/data/$USER/rs_change_project}"
+CODE_ROOT="${CODE_ROOT:-${PROJECT_ROOT}/code/project}"
+
+cd "${CODE_ROOT}"
+source "$(dirname "$0")/common_env.sh"
+
+if command -v conda >/dev/null 2>&1; then
+    conda activate rschange
+else
+    source ~/venvs/rschange/bin/activate
+fi
+
+bash cluster/ysu/bootstrap_change_retrieval_assets.sh

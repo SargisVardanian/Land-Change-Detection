@@ -38,7 +38,7 @@ The proposal also stresses co-registration, common coordinate systems, radiometr
 The proposal explicitly motivates foundation vision and remote-sensing foundation models:
 
 - SAM and zero/few-shot segmentation ideas;
-- DINOv2 and self-supervised visual features;
+- retired visual baseline and self-supervised visual features;
 - Vision Transformers and Swin-style hierarchical transformers;
 - domain-specific remote-sensing foundation models such as SatlasPretrain-like systems;
 - Siamese or two-stream before/after feature extraction;

@@ -121,7 +121,7 @@ ChangeFormer / BIT / RS-Mamba / ChangeMamba
 
 ### Classification And Feature Extraction
 
-DINOv2 remote-sensing variants and ViT/Swin remote-sensing classifiers found on Hugging Face are useful for embeddings, classification probes, or pretraining comparisons. They do not solve pixel-level transition mapping by themselves, so they are secondary for the current implementation.
+retired visual baseline remote-sensing variants and ViT/Swin remote-sensing classifiers found on Hugging Face are useful for embeddings, classification probes, or pretraining comparisons. They do not solve pixel-level transition mapping by themselves, so they are secondary for the current implementation.
 
 ### VLM / Explanation Layer
 

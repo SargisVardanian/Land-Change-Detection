@@ -2,6 +2,11 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
+pytest.importorskip("transformers")
+pytest.importorskip("torchvision")
+
 from land_change_detection.change_interpretation.parser import parse_cell_response
 from land_change_detection.remote_sensing_vlm import (
     EXPECTED_GRID_CELLS,

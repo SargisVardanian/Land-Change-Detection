@@ -1,0 +1,375 @@
+from __future__ import annotations
+
+import torch
+from torch.nn import functional as F
+
+from land_change_detection.models.retrieval_heads import stable_caption_group_ids
+from land_change_detection.models.qcpr import QCPRPatchReranker
+from ucv2_retrieval_metrics import (
+    RetrievalCorpus,
+    compute_retrieval_metrics,
+    compute_retrieval_ranks,
+    paired_candidate_mask_logits,
+    retrieval_branch_diagnostics,
+    retrieval_branch_similarity_matrices,
+)
+
+
+def _tie_corpus() -> RetrievalCorpus:
+    return RetrievalCorpus(
+        pair_embeddings=F.normalize(
+            torch.tensor(
+                [
+                    [1.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [0.5, 0.5],
+                ]
+            ),
+            dim=-1,
+        ),
+        text_embeddings=F.normalize(
+            torch.tensor(
+                [
+                    [1.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [0.5, 0.5],
+                ]
+            ),
+            dim=-1,
+        ),
+        caption_to_pair=torch.tensor([0, 1, 2, 3]),
+        caption_group_ids=stable_caption_group_ids(["same", "same", "other", "third"]),
+        pair_ids=["pair-b", "pair-a", "pair-c", "pair-d"],
+        captions=["same", "same", "other", "third"],
+        pair_mask_fractions=torch.tensor([0.0, 0.0, 0.1, 0.02]),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        teacher_text_embeddings=F.normalize(
+            torch.tensor(
+                [
+                    [1.0, 0.0],
+                    [1.0, 0.0],
+                    [0.0, 1.0],
+                    [0.5, 0.5],
+                ]
+            ),
+            dim=-1,
+        ),
+    )
+
+
+def _stable_metric_subset(metrics: dict) -> dict:
+    return {
+        key: value
+        for key, value in metrics.items()
+        if key.endswith("R@1")
+        or key.endswith("R@5")
+        or key.endswith("R@10")
+        or key in {"MRR", "mean_rank", "exact_pair_MRR", "exact_pair_mean_rank", "num_queries", "num_candidates", "positive_count_min", "positive_count_max"}
+    }
+
+
+def test_extended_metrics_report_exact_frequency_and_mask_strata():
+    pair_embeddings = F.normalize(
+        torch.tensor([[1.0, 0.0], [0.0, 1.0], [0.8, 0.2]]),
+        dim=-1,
+    )
+    text_embeddings = F.normalize(
+        torch.tensor([[1.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+        dim=-1,
+    )
+    corpus = RetrievalCorpus(
+        pair_embeddings=pair_embeddings,
+        text_embeddings=text_embeddings,
+        caption_to_pair=torch.tensor([0, 2, 1]),
+        caption_group_ids=stable_caption_group_ids(["same", "same", "A new building appeared"]),
+        pair_ids=["a", "b", "c"],
+        captions=["same", "same", "A new building appeared"],
+        pair_mask_fractions=torch.tensor([0.0, 0.1, 0.005]),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+    )
+    metrics, similarities = compute_retrieval_metrics(corpus)
+    assert similarities.shape == (3, 3)
+    assert metrics["text_to_pair_R@1"] == 1.0
+    assert metrics["exact_pair_R@1"] < 1.0
+    assert metrics["rare_caption_count"] == 2
+    assert metrics["unique_caption_count"] == 1
+    assert metrics["mask_no_change_count"] == 1
+    assert metrics["mask_small_change_count"] == 1
+    assert metrics["mask_large_change_count"] == 1
+    assert metrics["appeared_count"] == 1
+    assert metrics["changed_count"] == 1
+    assert metrics["disappeared_empty"] is True
+    assert metrics["text_to_pair_R@1"] <= metrics["text_to_pair_R@5"] <= metrics["text_to_pair_R@10"]
+    assert metrics["num_queries"] == 3
+    assert metrics["num_candidates"] == 3
+    assert metrics["positive_count_min"] >= 1
+    assert "rank_fingerprint" in metrics
+
+
+def test_repeated_retrieval_metrics_are_deterministic_and_do_not_mutate_inputs():
+    corpus = _tie_corpus()
+    before_pairs = corpus.pair_embeddings.clone()
+    before_texts = corpus.text_embeddings.clone()
+    first_ranks = compute_retrieval_ranks(corpus)
+    second_ranks = compute_retrieval_ranks(corpus)
+    first_metrics, _ = compute_retrieval_metrics(corpus)
+    second_metrics, _ = compute_retrieval_metrics(corpus)
+    assert torch.equal(first_ranks.ranked_candidate_indices, second_ranks.ranked_candidate_indices)
+    assert torch.equal(first_ranks.duplicate_aware_ranks, second_ranks.duplicate_aware_ranks)
+    assert torch.equal(first_ranks.exact_pair_ranks, second_ranks.exact_pair_ranks)
+    assert _stable_metric_subset(first_metrics) == _stable_metric_subset(second_metrics)
+    assert first_metrics["semantic_recall@5"] == second_metrics["semantic_recall@5"]
+    assert first_metrics["semantic_nDCG@10"] == second_metrics["semantic_nDCG@10"]
+    assert torch.equal(corpus.pair_embeddings, before_pairs)
+    assert torch.equal(corpus.text_embeddings, before_texts)
+
+
+def test_semantic_retrieval_metrics_find_paraphrase_processes():
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.tensor([[0.0, 1.0], [1.0, 0.0], [0.9, 0.1]]), dim=-1),
+        text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.9, 0.1], [0.0, 1.0]]), dim=-1),
+        teacher_text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.98, 0.02], [0.0, 1.0]]), dim=-1),
+        caption_to_pair=torch.tensor([0, 1, 2]),
+        caption_group_ids=stable_caption_group_ids(["A new building appeared", "New buildings were constructed", "No change"]),
+        pair_ids=["appeared-a", "appeared-b", "no-change"],
+        captions=["A new building appeared", "New buildings were constructed", "No change"],
+        pair_mask_fractions=torch.tensor([0.1, 0.1, 0.0]),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        dataset_names=["levir_mci", "second_cc", "rscc"],
+    )
+    metrics, _ = compute_retrieval_metrics(corpus)
+    assert metrics["semantic_recall@5"] == 1.0
+    assert metrics["semantic_nDCG@10"] > 0.0
+    assert metrics["detailed_query_R@5"] == 1.0
+    assert "macro_semantic_recall@5" in metrics
+
+
+def test_chunked_retrieval_matches_full_matrix_for_multiple_chunk_sizes():
+    corpus = _tie_corpus()
+    full = compute_retrieval_ranks(corpus)
+    for query_chunk, candidate_chunk in [(1, 1), (2, 3), (3, 2), (99, 99)]:
+        chunked = compute_retrieval_ranks(
+            corpus,
+            query_chunk_size=query_chunk,
+            candidate_chunk_size=candidate_chunk,
+        )
+        assert torch.equal(chunked.similarities, full.similarities)
+        assert torch.equal(chunked.ranked_candidate_indices, full.ranked_candidate_indices)
+        assert torch.equal(chunked.duplicate_aware_ranks, full.duplicate_aware_ranks)
+        assert torch.equal(chunked.exact_pair_ranks, full.exact_pair_ranks)
+
+
+def test_branch_diagnostics_report_required_ranking_calibration_and_attributes():
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]), dim=-1),
+        text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]), dim=-1),
+        teacher_text_embeddings=F.normalize(torch.tensor([[1.0, 0.0], [0.8, 0.2], [0.0, 1.0]]), dim=-1),
+        caption_to_pair=torch.arange(3),
+        caption_group_ids=stable_caption_group_ids([
+            "two houses appeared at the top",
+            "two houses disappeared at the top",
+            "one road appeared at the bottom",
+        ]),
+        pair_ids=["a", "b", "c"],
+        captions=[
+            "two houses appeared at the top",
+            "two houses disappeared at the top",
+            "one road appeared at the bottom",
+        ],
+        pair_mask_fractions=torch.ones(3),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+    )
+    branches = retrieval_branch_similarity_matrices(corpus, query_chunk_size=1, candidate_chunk_size=1)
+    diagnostics = retrieval_branch_diagnostics(corpus, branches)
+    assert set(diagnostics) == {"global", "fused"}
+    for metrics in diagnostics.values():
+        for key in (
+            "semantic_recall@1", "semantic_recall@5", "semantic_recall@10", "semantic_nDCG@10",
+            "duplicate_aware_R@1", "exact_pair_R@1", "positive_score_mean",
+            "random_negative_score_p90", "hard_negative_score_p50",
+            "best_positive_minus_best_negative_mean", "top1_minus_top2_mean", "ECE", "Brier",
+            "object_match_R@5", "direction_match_R@5", "location_match_R@5", "count_match_R@5",
+            "relation_match_R@5",
+        ):
+            assert key in metrics
+
+
+def test_v2_global_local_token_and_fused_chunked_scores_match_unchunked() -> None:
+    torch.manual_seed(7)
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.randn(3, 8), dim=-1),
+        text_embeddings=F.normalize(torch.randn(2, 8), dim=-1),
+        teacher_text_embeddings=F.normalize(torch.randn(2, 8), dim=-1),
+        caption_to_pair=torch.tensor([0, 1]),
+        caption_group_ids=stable_caption_group_ids(["two houses appeared at the top", "one road disappeared"]),
+        pair_ids=["a", "b", "c"],
+        captions=["two houses appeared at the top", "one road disappeared"],
+        pair_mask_fractions=torch.ones(3),
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        patch_tokens=F.normalize(torch.randn(3, 4, 8), dim=-1),
+        text_token_embeddings=F.normalize(torch.randn(2, 8, 8), dim=-1),
+        text_attention_mask=torch.tensor([
+            [False, False, True, True, True, False, False, False],
+            [False, True, True, True, True, True, False, False],
+        ]),
+        qcpr_architecture_version="v2",
+        qcpr_reranker=reranker,
+        score_mode="qcpr_v2",
+    )
+    full = retrieval_branch_similarity_matrices(corpus)
+    chunked = retrieval_branch_similarity_matrices(corpus, query_chunk_size=1, candidate_chunk_size=2)
+    assert set(full) == {"global", "local", "token_patch", "fused"}
+    for name in full:
+        assert torch.isfinite(full[name]).all()
+        assert torch.allclose(full[name], chunked[name], atol=1e-6, rtol=1e-6)
+    diagnostics = retrieval_branch_diagnostics(corpus, full)
+    assert set(diagnostics) == {"global", "local", "token_patch", "fused"}
+    supplied = compute_retrieval_ranks(corpus, similarities=full["fused"])
+    assert torch.equal(supplied.ranked_candidate_indices, compute_retrieval_ranks(corpus).ranked_candidate_indices)
+
+
+def test_v2_paired_mask_logits_chunked_match_unchunked() -> None:
+    torch.manual_seed(11)
+    reranker = QCPRPatchReranker(hidden_dim=8, retrieval_dim=8, architecture_version="v2")
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.randn(5, 8), dim=-1),
+        text_embeddings=F.normalize(torch.randn(5, 8), dim=-1),
+        caption_to_pair=torch.arange(5),
+        caption_group_ids=torch.arange(5),
+        pair_ids=[str(index) for index in range(5)],
+        captions=[str(index) for index in range(5)],
+        pair_mask_fractions=torch.ones(5),
+        encode_seconds=0.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+        patch_tokens=F.normalize(torch.randn(5, 4, 8), dim=-1),
+        text_token_embeddings=F.normalize(torch.randn(5, 9, 8), dim=-1),
+        text_attention_mask=torch.tensor([
+            [False, True, True, True, False, False, False, False, False],
+            [False, False, True, True, True, False, False, False, False],
+            [False, True, True, True, True, True, False, False, False],
+            [False, False, False, True, True, True, True, False, False],
+            [False, True, True, True, True, True, True, True, False],
+        ]),
+        qcpr_architecture_version="v2",
+        qcpr_reranker=reranker,
+        score_mode="qcpr_v2",
+    )
+    indices = torch.arange(5)
+    full = paired_candidate_mask_logits(corpus, indices, indices, pair_chunk_size=0)
+    chunked = paired_candidate_mask_logits(corpus, indices, indices, pair_chunk_size=2)
+    assert torch.isfinite(chunked).all()
+    assert torch.allclose(full, chunked, atol=1e-6, rtol=1e-6)
+
+
+def test_v2_paired_mask_logits_include_temporal_changed_prior() -> None:
+    reranker = QCPRPatchReranker(hidden_dim=4, retrieval_dim=4, architecture_version="v2")
+    with torch.no_grad():
+        for parameter in reranker.interaction_mlp.parameters():
+            parameter.zero_()
+    corpus = RetrievalCorpus(
+        pair_embeddings=F.normalize(torch.randn(2, 4), dim=-1),
+        text_embeddings=F.normalize(torch.randn(2, 4), dim=-1),
+        caption_to_pair=torch.tensor([0, 1]), caption_group_ids=torch.arange(2),
+        pair_ids=["a", "b"], captions=["a", "b"], pair_mask_fractions=torch.ones(2),
+        encode_seconds=0.0, peak_allocated_vram_bytes=0, peak_reserved_vram_bytes=0,
+        patch_tokens=F.normalize(torch.randn(2, 4, 4), dim=-1),
+        text_token_embeddings=F.normalize(torch.randn(2, 3, 4), dim=-1),
+        text_attention_mask=torch.ones(2, 3, dtype=torch.bool),
+        temporal_explanation_logits=torch.tensor([
+            [[1.0, 0.0, 0.0]] * 4,
+            [[2.0, 0.0, 0.0]] * 4,
+        ]),
+        qcpr_architecture_version="v2", qcpr_reranker=reranker, score_mode="qcpr_v2",
+    )
+    logits = paired_candidate_mask_logits(corpus, torch.tensor([0, 1]), torch.tensor([0, 1]), pair_chunk_size=1)
+    assert torch.allclose(logits[0], torch.ones(4))
+    assert torch.allclose(logits[1], torch.full((4,), 2.0))
+
+
+def test_metrics_are_derived_from_same_rank_tensor_and_are_monotonic():
+    corpus = _tie_corpus()
+    ranks = compute_retrieval_ranks(corpus)
+    metrics, _ = compute_retrieval_metrics(corpus)
+    assert metrics["text_to_pair_R@1"] == float((ranks.duplicate_aware_ranks <= 1).float().mean().item())
+    assert metrics["text_to_pair_R@5"] == float((ranks.duplicate_aware_ranks <= 5).float().mean().item())
+    assert metrics["text_to_pair_R@10"] == float((ranks.duplicate_aware_ranks <= 10).float().mean().item())
+    assert metrics["text_to_pair_R@1"] <= metrics["text_to_pair_R@5"] <= metrics["text_to_pair_R@10"]
+
+
+def test_candidate_shuffle_with_stable_ids_preserves_ranks_under_ties():
+    corpus = _tie_corpus()
+    base_ranks = compute_retrieval_ranks(corpus)
+    permutation = torch.tensor([2, 0, 3, 1])
+    inverse = torch.empty_like(permutation)
+    inverse[permutation] = torch.arange(permutation.numel())
+    shuffled = RetrievalCorpus(
+        pair_embeddings=corpus.pair_embeddings[permutation],
+        text_embeddings=corpus.text_embeddings,
+        caption_to_pair=inverse[corpus.caption_to_pair],
+        caption_group_ids=corpus.caption_group_ids,
+        pair_ids=[corpus.pair_ids[index] for index in permutation.tolist()],
+        captions=corpus.captions,
+        pair_mask_fractions=corpus.pair_mask_fractions[permutation],
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+    )
+    shuffled_ranks = compute_retrieval_ranks(shuffled)
+    assert torch.equal(shuffled_ranks.duplicate_aware_ranks, base_ranks.duplicate_aware_ranks)
+    assert torch.equal(shuffled_ranks.exact_pair_ranks, base_ranks.exact_pair_ranks)
+
+
+def test_tied_similarity_scores_use_stable_pair_id_tiebreaking():
+    corpus = _tie_corpus()
+    ranks = compute_retrieval_ranks(corpus)
+    tied_candidates = torch.tensor([0, 1])
+    tied_order = ranks.ranked_candidate_indices[0, :2]
+    expected = tied_candidates[torch.argsort(ranks.candidate_tie_keys[tied_candidates], stable=True)]
+    assert torch.equal(tied_order, expected)
+
+
+def test_tie_and_margin_diagnostics_are_reported():
+    corpus = _tie_corpus()
+    metrics, _ = compute_retrieval_metrics(corpus)
+    assert metrics["exact_tie_count"] >= 2
+    assert metrics["near_tie_count_eps_1e-6"] >= 2
+    assert metrics["top1_top2_margin_count"] == 4
+    assert "top1_top2_margin_mean" in metrics
+    assert "best_positive_minus_best_negative_mean" in metrics
+    assert metrics["tie_aware_optimistic_R@1"] >= metrics["tie_aware_pessimistic_R@1"]
+
+
+def test_misaligned_retrieval_corpus_is_rejected():
+    corpus = _tie_corpus()
+    bad = RetrievalCorpus(
+        pair_embeddings=corpus.pair_embeddings,
+        text_embeddings=corpus.text_embeddings,
+        caption_to_pair=torch.tensor([0, 1, 2, 99]),
+        caption_group_ids=corpus.caption_group_ids,
+        pair_ids=corpus.pair_ids,
+        captions=corpus.captions,
+        pair_mask_fractions=corpus.pair_mask_fractions,
+        encode_seconds=1.0,
+        peak_allocated_vram_bytes=0,
+        peak_reserved_vram_bytes=0,
+    )
+    try:
+        compute_retrieval_ranks(bad)
+    except ValueError as exc:
+        assert "out-of-range" in str(exc)
+    else:
+        raise AssertionError("Expected out-of-range caption_to_pair to be rejected")

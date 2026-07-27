@@ -1,0 +1,186 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import torch
+from torch import nn
+
+from land_change_detection.backbones.jina_v5_text import JinaV5TextConfig, JinaV5TextEncoder, _last_token_pool, role_prefix
+from land_change_detection.backbones.universat_backend import (
+    LevirRGBSpec,
+    UniverSatAdapterSpec,
+    UniverSatBackendConfig,
+    UniverSatJointBackend,
+)
+from land_change_detection.losses.unichange_losses import (
+    event_component_coverage_loss,
+    event_overlap_loss,
+    masked_multi_positive_sigmoid_loss,
+    pair_embedding_distillation_loss,
+    smooth_topk_late_interaction_score,
+)
+from land_change_detection.models.directional_change_readout import DirectionalChangeReadout
+from land_change_detection.models.unichange_model import UniChangeConfig, UniChangeModel
+from land_change_detection.retrieval.unichange_index import build_event_records, decode_binary_mask_rle, encode_binary_mask_rle
+from land_change_detection.training.unichange_curriculum import UniChangeStage, default_unichange_curriculum, stage_by_name
+
+
+class FakeUniverSat(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(1))
+        self.seen_shape: tuple[int, ...] | None = None
+
+    def forward(self, x: torch.Tensor, output_grid: int = 36, **_: object) -> torch.Tensor:
+        self.seen_shape = tuple(x.shape)
+        return torch.ones(x.shape[0], output_grid * output_grid, 768, device=x.device) * self.weight
+
+
+def test_text_role_prefixes_and_last_token_pooling() -> None:
+    assert role_prefix("query") == "Query: "
+    assert role_prefix("document") == "Document: "
+    hidden = torch.arange(2 * 4 * 3, dtype=torch.float32).view(2, 4, 3)
+    mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]])
+    pooled = _last_token_pool(hidden, mask)
+    assert torch.equal(pooled[0], hidden[0, 1])
+    assert torch.equal(pooled[1], hidden[1, 2])
+
+
+def test_jina_global_projection_modes_are_explicit(tmp_path: Path) -> None:
+    learned = JinaV5TextEncoder.__new__(JinaV5TextEncoder)
+    nn.Module.__init__(learned)
+    learned.config = JinaV5TextConfig(model_path=tmp_path, hidden_dim=4, retrieval_dim=2, global_projection_mode="learned_projection")
+    learned.global_projection = nn.Linear(4, 2, bias=False)
+    learned.global_projection.weight.data.copy_(torch.tensor([[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]))
+    pooled = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    assert learned._project_global(pooled).shape == (1, 2)
+
+    truncated = JinaV5TextEncoder.__new__(JinaV5TextEncoder)
+    nn.Module.__init__(truncated)
+    truncated.config = JinaV5TextConfig(model_path=tmp_path, hidden_dim=4, retrieval_dim=2, global_projection_mode="matryoshka_truncate")
+    projected = truncated._project_global(pooled)
+    expected = torch.nn.functional.normalize(torch.tensor([[1.0, 2.0]]), dim=-1)
+    assert torch.allclose(projected, expected)
+
+
+def test_universat_joint_backend_uses_single_temporal_input(tmp_path: Path) -> None:
+    fake = FakeUniverSat()
+    backend = UniverSatJointBackend(
+        UniverSatBackendConfig(source_dir=tmp_path, checkpoint_dir=tmp_path),
+        model=fake,
+    )
+    t1 = torch.rand(2, 3, 64, 64)
+    t2 = torch.rand(2, 3, 64, 64)
+    features = backend(t1, t2)
+    assert fake.seen_shape == (2, 2, 3, 64, 64)
+    assert features.local_tokens.shape == (2, 1296, 512)
+    assert features.global_embedding.shape == (2, 512)
+    assert features.metadata["backend"] == "universat_joint_public"
+    assert features.metadata["sensor_spec"]["gsd"]["status"] == "unknown"
+    assert features.metadata["adapter_spec"]["warning"] == "adapter_is_not_verified_sensor_identity"
+
+
+def test_unichange_event_decoder_contract(tmp_path: Path) -> None:
+    backend = UniverSatJointBackend(
+        UniverSatBackendConfig(source_dir=tmp_path, checkpoint_dir=tmp_path),
+        model=FakeUniverSat(),
+    )
+    model = UniChangeModel(visual_encoder=backend, config=UniChangeConfig(event_queries=8))
+    out = model(torch.rand(2, 3, 64, 64), torch.rand(2, 3, 64, 64))
+    assert out.global_pair_embedding.shape == (2, 512)
+    assert out.local_change_tokens.shape == (2, 1296, 512)
+    assert out.event_embeddings is not None and out.event_embeddings.shape == (2, 8, 512)
+    assert out.event_presence is not None and out.event_presence.shape == (2, 8)
+    assert out.event_masks is not None and out.event_masks.shape == (2, 8, 1296)
+    assert out.semantic_prediction is not None and out.semantic_prediction.shape == (2, 512)
+
+
+def test_masked_multi_positive_loss_ignores_unknowns() -> None:
+    pairs = torch.nn.functional.normalize(torch.eye(3, 4), dim=-1)
+    texts = pairs[[0, 0, 2]]
+    caption_to_pair = torch.tensor([0, 0, 2])
+    safe_negatives = torch.tensor(
+        [
+            [False, True, False],
+            [False, True, False],
+            [True, False, False],
+        ]
+    )
+    loss, stats = masked_multi_positive_sigmoid_loss(pairs, texts, caption_to_pair, safe_negatives)
+    assert torch.isfinite(loss)
+    assert stats["positive_ratio"] > 0
+    assert stats["negative_ratio"] > 0
+    assert stats["ignored_ratio"] > 0
+
+
+def test_late_interaction_and_distillation_contracts() -> None:
+    text_tokens = torch.nn.functional.normalize(torch.rand(2, 4, 8), dim=-1)
+    local_tokens = torch.nn.functional.normalize(torch.rand(2, 16, 8), dim=-1)
+    scores = smooth_topk_late_interaction_score(text_tokens, local_tokens, top_k=4)
+    assert scores.shape == (2,)
+    current = torch.nn.functional.normalize(torch.rand(3, 8), dim=-1)
+    previous = current.clone()
+    assert pair_embedding_distillation_loss(current, previous).item() < 1e-5
+
+
+def test_event_mask_regularizers_prefer_coverage_and_low_overlap() -> None:
+    event_masks = torch.zeros(1, 2, 4)
+    event_masks[0, 0, :2] = 1.0
+    event_masks[0, 1, 2:] = 1.0
+    components = event_masks.clone()
+    assert event_component_coverage_loss(event_masks, components).item() < 1e-5
+    assert event_overlap_loss(event_masks).item() < 1e-5
+    collapsed = event_masks.clone()
+    collapsed[0, 1] = collapsed[0, 0]
+    assert event_overlap_loss(collapsed).item() > event_overlap_loss(event_masks).item()
+
+
+def test_directional_change_readout_uses_before_after_tokens() -> None:
+    readout = DirectionalChangeReadout(dim=16, num_heads=4)
+    output = readout(torch.rand(2, 2, 9, 16))
+    assert output.change_tokens.shape == (2, 9, 16)
+    assert output.temporal_attention.shape == (2, 9, 2)
+    assert torch.allclose(output.temporal_attention.sum(dim=-1), torch.ones(2, 9), atol=1e-5)
+
+
+def test_curriculum_keeps_retrieval_before_masks_and_direction() -> None:
+    stages = default_unichange_curriculum()
+    order = [spec.stage for spec in stages]
+    assert order.index(UniChangeStage.GLOBAL_RETRIEVAL) < order.index(UniChangeStage.SUPERVISED_MASKS)
+    assert order.index(UniChangeStage.SUPERVISED_MASKS) < order.index(UniChangeStage.DIRECTIONAL_READOUT)
+    assert order.index(UniChangeStage.DIRECTIONAL_READOUT) < order.index(UniChangeStage.EXPLANATIONS)
+    for spec in stages[order.index(UniChangeStage.LOCAL_RETRIEVAL) : order.index(UniChangeStage.PAIR_TO_PAIR) + 1]:
+        assert spec.retrieval_replay_fraction > 0.0 or spec.loss_weights.distillation > 0.0
+    stage1 = stage_by_name("global_retrieval")
+    assert stage1.loss_weights.retrieval == 1.0
+    assert stage1.loss_weights.mask_bce == 0.0
+    assert "event_decoder" in stage1.frozen_modules
+
+
+def test_levir_rgb_spec_does_not_invent_sensor_dates() -> None:
+    metadata = LevirRGBSpec().to_universat_metadata()
+    assert metadata["calendar_dates"] is None
+    assert metadata["gsd"]["status"] == "unknown"
+    assert metadata["sensor_name"].startswith("unknown")
+    adapter = UniverSatAdapterSpec()
+    assert adapter.to_metadata()["relative_dates"] == [0, 1]
+    assert adapter.to_metadata()["warning"] == "adapter_is_not_verified_sensor_identity"
+
+
+def test_event_index_records_store_masks_not_attention() -> None:
+    mask = torch.tensor([[0.0, 1.0], [1.0, 0.0]])
+    rle = encode_binary_mask_rle(mask)
+    assert torch.equal(decode_binary_mask_rle(rle), mask.bool())
+    records = build_event_records(
+        pair_id="pair_001",
+        event_embeddings=torch.nn.functional.normalize(torch.rand(2, 4), dim=-1),
+        event_presence=torch.tensor([4.0, -4.0]),
+        event_masks=torch.tensor([[0.0, 0.9, 0.8, 0.0], [0.9, 0.0, 0.0, 0.0]]),
+        grid_height=2,
+        grid_width=2,
+        presence_threshold=0.5,
+    )
+    assert len(records) == 1
+    assert records[0].event_id == "pair_001::event_00"
+    assert records[0].bbox_xyxy == (0, 0, 1, 1)
+    assert records[0].mask_rle.height == 2
