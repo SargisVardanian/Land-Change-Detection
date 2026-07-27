@@ -20,18 +20,48 @@ from land_change_detection.data.qcpr_dataset_v2 import (
 )
 
 
+def _read_records(path: Path) -> list[dict[str, Any]]:
+    """Read the official JSON artifact as an array or JSONL without guessing fields."""
+    text = path.read_text(encoding="utf-8")
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return [json.loads(line) for line in text.splitlines() if line.strip()]
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if isinstance(payload, dict):
+        for key in ("data", "records", "conversations", "annotations", "items"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [row for row in value if isinstance(row, dict)]
+    raise ValueError(f"unsupported ChangeChat artifact shape: {path}")
+
+
 def _candidate_source_ids(row: dict[str, Any]) -> set[str]:
     candidates: set[str] = set()
     for key in ("pair_id", "image_id", "source_pair_id", "id", "image", "image_name"):
         value = row.get(key)
         if value is None:
             continue
-        text = str(value).strip()
-        if not text:
-            continue
-        candidates.add(text)
-        candidates.add(Path(text).stem)
+        values = value if isinstance(value, list) else [value]
+        for item in values:
+            text = str(item).strip()
+            if not text:
+                continue
+            candidates.add(text)
+            candidates.add(Path(text).stem)
+            if "/" in text:
+                candidates.add(Path(text).parent.name + ":" + Path(text).stem)
     return candidates
+
+
+def _conversation_text(row: dict[str, Any]) -> tuple[str, str]:
+    turns = row.get("conversations") or row.get("conversation") or []
+    if not isinstance(turns, list):
+        return "", ""
+    human = [str(t.get("value", "")).strip() for t in turns if isinstance(t, dict) and str(t.get("from", "")).casefold() in {"human", "user"}]
+    assistant = [str(t.get("value", "")).strip() for t in turns if isinstance(t, dict) and str(t.get("from", "")).casefold() in {"gpt", "assistant"}]
+    return (human[-1] if human else "", assistant[-1] if assistant else "")
 
 
 def _task_scope(task_type: str) -> str:
@@ -59,11 +89,12 @@ def main() -> None:
     for row in pair_rows:
         canonical_id = str(row["canonical_pair_id"])
         source_id = str(row.get("source_pair_id") or "")
-        for key in {canonical_id, source_id, Path(source_id).stem}:
+        aliases = {canonical_id, source_id, Path(source_id).stem, source_id.rsplit(":", 1)[-1]}
+        for key in aliases:
             if key:
                 index[key].add(canonical_id)
 
-    instructions = jsonl_read(args.instructions)
+    instructions = _read_records(args.instructions)
     if args.limit > 0:
         instructions = instructions[: args.limit]
 
@@ -86,15 +117,17 @@ def main() -> None:
             continue
 
         canonical_id = next(iter(matches))
+        conversation_prompt, conversation_response = _conversation_text(row)
         prompt = str(
             row.get("instruction")
             or row.get("question")
             or row.get("prompt")
             or row.get("query")
+            or conversation_prompt
             or ""
         ).strip()
-        response = str(row.get("response") or row.get("answer") or row.get("output") or "").strip()
-        task_type = str(row.get("task_type") or row.get("type") or "instruction")
+        response = str(row.get("response") or row.get("answer") or row.get("output") or conversation_response or "").strip()
+        task_type = str(row.get("task_type") or row.get("type") or "captioning")
         scope = _task_scope(task_type)
         text = prompt if scope in {"localized_query", "instruction_only"} else response
         if not text:
@@ -112,6 +145,7 @@ def main() -> None:
                 "normalized_text": normalize_text(text),
                 "instruction": prompt,
                 "response": response,
+                "original_record": row,
                 "caption_source": "changechat_gpt_assisted" if generated else "changechat_rule_based",
                 "task_type": task_type,
                 "query_scope": scope,
@@ -123,6 +157,7 @@ def main() -> None:
                 "generator": row.get("generator") or ("GPT-assisted" if generated else None),
                 "verification_status": "generated_unverified" if generated else "rule_based_unverified",
                 "conversation_id": row.get("conversation_id") or row.get("conversation") or row.get("dialogue_id"),
+                "turn_index": row.get("turn_index") or row.get("turn") or row.get("round"),
                 "source_ordinal": ordinal,
                 "retrieval_supervision": scope == "semantic_group",
             }

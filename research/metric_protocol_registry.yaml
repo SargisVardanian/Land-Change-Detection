@@ -1,0 +1,30 @@
+schema_version: 1
+protocols:
+  - protocol_id: FULL_GALLERY_EXACT
+    task: text_to_temporal_pair
+    direction: text_to_pair
+    relevance: exact physical pair IDs, with explicit ignored ambiguity sets
+    metrics: [MRR, Recall@1, Recall@5, Recall@10, nDCG@10, mean_rank, median_rank]
+  - protocol_id: SEMANTIC_MULTI_POSITIVE
+    task: text_to_temporal_pair
+    direction: text_to_pair
+    relevance: verified equivalent or semantic-group pair IDs
+    metrics: [MRR, Recall@1, Recall@5, Recall@10, nDCG@10]
+  - protocol_id: CHANGERETCAP_COMPAT
+    task: temporal_text_to_pair_retrieval
+    direction: text_to_pair
+    relevance: paper-defined caption-similarity relevant items
+    metrics: [P@5, R@5, MRR@5]
+    warning: not comparable to FULL_GALLERY_EXACT
+  - protocol_id: TEXT_ITSR_SEMANTIC_COMPAT
+    task: temporal_cross_modal_retrieval
+    direction: text_to_pair
+    relevance: caption similarity of retrieved item
+    metrics: [BLEU1, BLEU4, METEOR, ROUGE_L]
+    warning: semantic caption quality is not exact physical retrieval
+  - protocol_id: AIR_SLT_COMPAT
+    task: static_text_localization
+    direction: text_to_image_region
+    relevance: native point/region localization annotations
+    metrics: [Rsu, Ras, Rda, Rmi]
+    warning: static single-image localization, not temporal change segmentation
