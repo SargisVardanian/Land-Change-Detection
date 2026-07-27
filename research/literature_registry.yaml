@@ -1,0 +1,25 @@
+schema_version: 1
+papers:
+  - paper_id: changeretcap_2406_13424
+    paper_version: arxiv_2406_13424
+    title: ChangeRetCap
+    url: https://arxiv.org/abs/2406.13424
+    task: temporal_text_to_pair_retrieval_and_captioning
+  - paper_id: text_itsr_2501_19043
+    paper_version: arxiv_2501_19043
+    title: Self-Supervised Cross-Modal Text-Image Time-Series Retrieval
+    url: https://arxiv.org/abs/2501.19043
+    task: temporal_cross_modal_retrieval
+  - paper_id: dfm_2606_27410
+    paper_version: arxiv_2606_27410
+    title: DFM Difference Feature Modeling
+    url: https://arxiv.org/abs/2606.27410
+    task: temporal_change_captioning
+  - paper_id: lrsclip_2503_19311
+    paper_version: arxiv_2503_19311
+    title: LRSCLIP/DGTRS-CLIP lineage
+    url: https://arxiv.org/abs/2503.19311
+    task: static_remote_sensing_image_text_retrieval
+notes:
+  - Keep materially different paper/data versions as separate records.
+  - Headline values are not copied into the result registry until their table and gallery protocol are verified.
