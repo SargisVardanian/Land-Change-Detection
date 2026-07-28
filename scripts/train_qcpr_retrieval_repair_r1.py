@@ -66,6 +66,8 @@ def arguments():
     parser.add_argument("--recall-regression-tolerance", type=float, default=0.002)
     parser.add_argument("--local-loss-weight", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=20260727)
+    parser.add_argument("--max-steps", type=int, default=0)
+    parser.add_argument("--disable-hard-mining", action="store_true")
     return parser.parse_args()
 
 
@@ -227,7 +229,7 @@ def main():
     model.load_state_dict(baseline_payload["model"])
     optimizer = torch.optim.AdamW(optimizer_groups(model, args.weight_decay))
     logical_batches_per_epoch = math.ceil(len(train) / args.logical_physical_batch)
-    total_steps = logical_batches_per_epoch * args.epochs
+    total_steps = args.max_steps if args.max_steps > 0 else logical_batches_per_epoch * args.epochs
     warmup = max(1, int(total_steps * 0.03))
     def schedule(step):
         if step < warmup:
@@ -257,7 +259,8 @@ def main():
     history = args.output_dir / "metrics.jsonl"
     first_batch_checked = False
     for epoch in range(args.epochs):
-        if epoch >= args.hard_warmup_epochs and (epoch - args.hard_warmup_epochs) % args.hard_refresh_epochs == 0:
+        if (not args.disable_hard_mining and epoch >= args.hard_warmup_epochs and
+                (epoch - args.hard_warmup_epochs) % args.hard_refresh_epochs == 0):
             rows, hard_by_pair, mining_stats = mine_cache(model, train, collisions, args.output_dir, args.hard_candidates, args.workers, device, epoch)
             hard_history.append(mining_stats)
             (args.output_dir / "hard_negative_manifest.json").write_text(json.dumps(hard_history, indent=2, sort_keys=True) + "\n")
@@ -315,6 +318,8 @@ def main():
             sums["loss"] += float(loss)
             for key, value in stats.items():
                 sums[key] += float(value)
+            if args.max_steps > 0 and global_step >= args.max_steps:
+                break
         model.eval()
         metrics, rows = extended_evaluation(model, val, collisions, 16, args.workers, device)
         all_metrics = metrics["all"]
@@ -345,6 +350,8 @@ def main():
         else:
             stale += 1
         if epoch + 1 >= args.min_epochs and stale >= args.patience:
+            break
+        if args.max_steps > 0 and global_step >= args.max_steps:
             break
     if best_metrics is None:
         raise RuntimeError("R1 produced no Recall@10-feasible checkpoint")
