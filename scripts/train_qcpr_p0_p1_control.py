@@ -23,5 +23,6 @@ def main():
     subprocess.run(cmd,check=True)
     summary={'arm':a.arm,'status':'COMPLETED','control_contract':json.loads((a.output_dir/'control_contract.json').read_text()),'runtime_output':str(a.output_dir/'r1_runtime')}
     if (a.output_dir/'r1_runtime/r1_acceptance.json').exists(): summary['acceptance']=json.loads((a.output_dir/'r1_runtime/r1_acceptance.json').read_text())
+    if (a.output_dir/'r1_runtime/exposure_accounting.json').exists(): summary['exposure']=json.loads((a.output_dir/'r1_runtime/exposure_accounting.json').read_text())
     (a.output_dir/'control_summary.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
 if __name__=='__main__': main()

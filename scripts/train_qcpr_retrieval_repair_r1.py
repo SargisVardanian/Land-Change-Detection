@@ -6,7 +6,7 @@ import json
 import math
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -256,6 +256,11 @@ def main():
     best_metrics = None
     stale = 0
     global_step = 0
+    pair_presentations = Counter()
+    query_presentations = Counter()
+    source_presentations = Counter()
+    change_presentations = Counter()
+    schedule_hasher = hashlib.sha256()
     history = args.output_dir / "metrics.jsonl"
     first_batch_checked = False
     for epoch in range(args.epochs):
@@ -283,6 +288,14 @@ def main():
             query_ids = sum((batch["query_pair_ids"] for batch in micro_batches), [])
             normalized = sum((batch["normalized_captions"] for batch in micro_batches), [])
             pair_ids = sum((batch["pair_ids"] for batch in micro_batches), [])
+            for pair_id in pair_ids:
+                pair_presentations[str(pair_id)] += 1
+                sample = train.samples[train.pair_ids.index(str(pair_id))]
+                source_presentations[str(sample.get("dataset_name", "unknown"))] += 1
+                change_presentations["no_change" if sample.get("source_metadata", {}).get("changeflag") == 0 else "changed"] += 1
+            for pair_id, caption in zip(query_ids, normalized, strict=True):
+                query_presentations[f"{pair_id}:{caption}"] += 1
+            schedule_hasher.update(json.dumps({"epoch": epoch + 1, "step": global_step + 1, "pairs": [str(x) for x in pair_ids], "queries": [f"{p}:{c}" for p, c in zip(query_ids, normalized, strict=True)]}, sort_keys=True).encode())
             collision_sets = [collisions.collisions(pair_id, caption) for pair_id, caption in zip(query_ids, normalized, strict=True)]
             positive, excluded = build_pair_masks(query_ids, pair_ids, collision_sets, device)
             def encode(batch):
@@ -383,6 +396,22 @@ def main():
         "peak_allocated_gib": peak_allocated, "peak_reserved_gib": peak_reserved,
     }
     (args.output_dir / "batch_contract.json").write_text(json.dumps(batch_contract, indent=2, sort_keys=True) + "\n")
+    exposure = {
+        "total_pair_presentations": int(sum(pair_presentations.values())),
+        "total_query_presentations": int(sum(query_presentations.values())),
+        "unique_pairs": len(pair_presentations),
+        "unique_queries": len(query_presentations),
+        "presentations_per_pair": dict(sorted(pair_presentations.items())),
+        "presentations_per_query": dict(sorted(query_presentations.items())),
+        "mean_presentations_per_pair": float(sum(pair_presentations.values()) / max(len(pair_presentations), 1)),
+        "mean_presentations_per_query": float(sum(query_presentations.values()) / max(len(query_presentations), 1)),
+        "per_source_presentations": dict(sorted(source_presentations.items())),
+        "changed_no_change_presentations": dict(sorted(change_presentations.items())),
+        "sampling_schedule_sha256": schedule_hasher.hexdigest(),
+        "global_steps": global_step,
+        "logical_batch_contract": asdict(contract),
+    }
+    (args.output_dir / "exposure_accounting.json").write_text(json.dumps(exposure, indent=2, sort_keys=True) + "\n")
     (args.output_dir / "training_complete.json").write_text(json.dumps({"epochs": epoch + 1, "global_step": global_step, "best_selector": best, "batch_contract": batch_contract}, indent=2) + "\n")
 
 
