@@ -9,6 +9,9 @@ from land_change_detection.benchmark.qcpr_metrics import (
     pointing_game,
     recall_at_k,
     hit_rate_at_k,
+    QCPR_PAIR_TO_TEXT,
+    RCD_SUPERVISED_COMPAT,
+    SEG2CHANGE_OVCD_COMPAT,
     soft_iou,
 )
 
@@ -38,6 +41,14 @@ def test_hit_rate_and_recall_differ_for_multi_positive_relevance():
     relevant = {"a", "b"}
     assert hit_rate_at_k(ranking, relevant, 1) == 1.0
     assert recall_at_k(ranking, relevant, 1) == 0.5
+
+
+def test_pair_to_text_and_dense_protocol_adapters():
+    result = QCPR_PAIR_TO_TEXT([(["caption-a", "caption-b"], {"caption-b"})])
+    assert result["R@1"] == 0.0
+    dense = RCD_SUPERVISED_COMPAT([1, 0, 0], [1, 0, 1])
+    assert dense["binary_iou"] == 0.5
+    assert SEG2CHANGE_OVCD_COMPAT([1, 0, 0], [1, 0, 1])["IoU_c"] == 0.5
 
 
 def test_soft_localization_metrics_are_deterministic():

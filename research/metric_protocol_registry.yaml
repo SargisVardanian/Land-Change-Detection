@@ -80,3 +80,70 @@ protocols:
     gallery: selected retrieved physical pairs
     truncation: native dense-token map; no retrieval Top-K truncation unless reported separately
     metrics: [energy_inside_mask, soft_iou, auprc, pointing_game, deletion_auc, insertion_auc, normalized_entropy, effective_patch_count, query_swap_sensitivity, pair_swap_sensitivity, time_reversal_sensitivity, fixed_location_collapse]
+  - protocol_id: QCPR_PAIR_TO_TEXT
+    paper_version: internal_v2
+    dataset: QCPR temporal-caption benchmark
+    task: pair_to_text_retrieval
+    official_split: inherited physical-pair split
+    gallery: all valid captions in the held-out caption gallery
+    relevance: every valid caption belonging to the physical pair is positive
+    direction: pair_to_text
+    formula: average_precision, reciprocal_rank, recall_at_k over caption relevance sets
+    aggregation: macro_average_over_physical_pairs; bootstrap_by_physical_pair
+    truncation: K in {1,5,10}; full ranking for mAP/MRR
+    higher_is_better: true
+  - protocol_id: CHANGERETCAP_FNE_TOP5
+    paper_version: ChangeRetCap FNE compatibility
+    dataset: LEVIR-CC
+    official_split: paper-defined split
+    gallery: paper-defined Top-5 retrieved candidates
+    relevance: caption-similarity relevance under FNE
+    direction: text_to_pair
+    formula: hit_rate_at_k, recall_at_k, precision_at_k, mrr_at_k with k=5
+    aggregation: macro_average_over_queries
+    truncation: exactly Top-5
+    higher_is_better: true
+  - protocol_id: RCD_SUPERVISED_COMPAT
+    paper_version: RCDNet-compatible
+    dataset: SECOND/CNAM-CD/LEVIR-CD/WHU-CD when official assets are available
+    official_split: native dataset split
+    gallery: aligned pixels or semantic transition labels
+    relevance: native binary/semantic change labels
+    direction: temporal_pair_to_change_map
+    formula: binary IoU/F1, mIoU, OA, SeK/F_scd when labels support them
+    aggregation: macro_average_over_images
+    truncation: not applicable
+    higher_is_better: true
+  - protocol_id: VISTA_QAG_COMPAT
+    paper_version: VisTA compatibility
+    dataset: QAG-360K
+    official_split: native test split; access status recorded separately
+    gallery: official question-answer and grounding candidates
+    relevance: official answer and grounding annotations
+    direction: image_pair_question_to_answer_and_region
+    formula: answer accuracy, per-question-type accuracy, grounding IoU/mIoU, joint product
+    aggregation: macro_average_over_questions
+    truncation: protocol-defined
+    higher_is_better: true
+  - protocol_id: RSRCC_QA_COMPAT
+    paper_version: RSRCC compatibility
+    dataset: RSRCC
+    official_split: native split; access status recorded separately
+    gallery: official QA candidates
+    relevance: native yes/no, multiple-choice and caption references
+    direction: temporal_pair_question_to_answer
+    formula: yes/no accuracy, multiple-choice accuracy, BERTScore/BLEU/CIDEr/SPICE when dependencies are available
+    aggregation: macro_average_over_questions
+    truncation: protocol-defined
+    higher_is_better: true
+  - protocol_id: SEG2CHANGE_OVCD_COMPAT
+    paper_version: Seg2Change compatibility
+    dataset: official OVCD/semantic-change benchmark assets
+    official_split: native split
+    gallery: aligned semantic transition maps
+    relevance: native transition labels
+    direction: temporal_pair_to_transition_map
+    formula: F1_c, IoU_c, mF1_c, mIoU_c
+    aggregation: macro_average_over_images
+    truncation: not applicable
+    higher_is_better: true

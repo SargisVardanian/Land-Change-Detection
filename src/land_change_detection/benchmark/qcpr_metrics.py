@@ -199,3 +199,50 @@ def changeretcap_compat(ranking: Sequence[str], relevant: set[str], k: int = 5) 
         "precision": precision_at_k(ranking, relevant, k),
         "mrr@k": mrr_at_k(ranking, relevant, k),
     }
+
+
+def QCPR_PAIR_TO_TEXT(rows: Iterable[tuple[Sequence[str], set[str]]]) -> dict[str, float]:
+    """Pair-to-text retrieval: every valid caption ID in ``relevant`` is positive."""
+    return pair_to_text_metrics(rows)
+
+
+def CHANGERETCAP_FNE_TOP5(ranking: Sequence[str], relevant: set[str]) -> dict[str, float]:
+    """ChangeRetCap FNE Top-5 compatibility view with explicit metric names."""
+    return changeretcap_compat(ranking, relevant, k=5)
+
+
+def RCD_SUPERVISED_COMPAT(prediction: Sequence[int], target: Sequence[int]) -> dict[str, float]:
+    """Binary/semantic change compatibility metrics on aligned flattened labels."""
+    if len(prediction) != len(target):
+        raise ValueError("prediction and target must have equal length")
+    tp = sum(int(p == 1 and t == 1) for p, t in zip(prediction, target))
+    fp = sum(int(p == 1 and t == 0) for p, t in zip(prediction, target))
+    fn = sum(int(p == 0 and t == 1) for p, t in zip(prediction, target))
+    tn = sum(int(p == 0 and t == 0) for p, t in zip(prediction, target))
+    iou = tp / (tp + fp + fn) if tp + fp + fn else 1.0
+    f1 = 2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else 1.0
+    oa = (tp + tn) / len(target) if target else 0.0
+    return {"binary_iou": iou, "binary_f1": f1, "oa": oa, "mIoU": iou}
+
+
+def VISTA_QAG_COMPAT(*, answer_correct: bool, grounding_iou: float | None = None) -> dict[str, float]:
+    result = {"answer_accuracy": float(answer_correct)}
+    if grounding_iou is not None:
+        result["grounding_iou"] = float(grounding_iou)
+        result["joint_answer_grounding"] = float(answer_correct) * float(grounding_iou)
+    return result
+
+
+def RSRCC_QA_COMPAT(*, yes_no_correct: bool | None = None, multiple_choice_correct: bool | None = None,
+                    caption: str | None = None, references: Iterable[str] = ()) -> dict[str, float]:
+    result = {}
+    if yes_no_correct is not None: result["yes_no_accuracy"] = float(yes_no_correct)
+    if multiple_choice_correct is not None: result["multiple_choice_accuracy"] = float(multiple_choice_correct)
+    if caption is not None: result.update({f"caption_{k}": v for k, v in text_overlap(caption, references).items()})
+    return result
+
+
+def SEG2CHANGE_OVCD_COMPAT(prediction: Sequence[int], target: Sequence[int]) -> dict[str, float]:
+    result = RCD_SUPERVISED_COMPAT(prediction, target)
+    result.update({"F1_c": result["binary_f1"], "IoU_c": result["binary_iou"], "mF1_c": result["binary_f1"], "mIoU_c": result["mIoU"]})
+    return result
