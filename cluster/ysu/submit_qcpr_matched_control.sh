@@ -11,6 +11,11 @@ IDENT=${IDENTIFIABILITY_AUDIT:?set IDENTIFIABILITY_AUDIT}
 STEPS=${STEPS:-348}; SEED=${SEED:-20260728}
 test "$(git -C "$ROOT" rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git -C "$ROOT" status --porcelain)"
+test -s "$BASELINE"
+test -s "$REPRO"
+test -s "$IDENT"
+test "$(jq -r '.passed' "$REPRO")" = "true"
+test "$(sha256sum "$BASELINE" | awk '{print $1}')" = "$(jq -r '.checkpoint_sha256' "$REPRO")"
 test -f "$CONTROL_ROOT/c0_train.jsonl"; test -f "$CONTROL_ROOT/c1_train.jsonl"
 test -f "$CONTROL_ROOT/c0_collision_audit.jsonl"; test -f "$CONTROL_ROOT/c1_collision_audit.jsonl"
 COMMON=(--initial-checkpoint "$BASELINE" --seed "$SEED" --steps "$STEPS" --manifest-root "$CONTROL_ROOT" --baseline-reproduction "$REPRO" --identifiability-audit "$IDENT")
