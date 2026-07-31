@@ -16,7 +16,17 @@ def main():
     a.output_dir.mkdir(parents=True,exist_ok=False)
     runtime=a.output_dir/'runtime_manifest'; runtime.mkdir()
     for name,src in [('natural_train_retrieval_manifest.jsonl',a.train_manifest),('natural_validation_retrieval_manifest.jsonl',a.development_manifest),('caption_quality_audit.jsonl',a.manifest_root/f'{a.arm}_collision_audit.jsonl')]:
-        os.symlink(src.resolve(),runtime/name)
+        if name == 'natural_validation_retrieval_manifest.jsonl':
+            # The canonical matched manifest uses split=development. The R1
+            # evaluator consumes split=val, so materialize a runtime-only view
+            # without changing the immutable source manifest.
+            with src.open(encoding='utf-8') as source, (runtime/name).open('w', encoding='utf-8') as target:
+                for line in source:
+                    row=json.loads(line)
+                    row['split']='val'
+                    target.write(json.dumps(row,sort_keys=True)+'\n')
+        else:
+            os.symlink(src.resolve(),runtime/name)
     (a.output_dir/'control_contract.json').write_text(json.dumps({'schema_version':'qcpr-p0-p1-control-v1','arm':a.arm,'seed':a.seed,'fixed_steps':a.steps,'physical_microbatch':16,'logical_physical_batch':128,'captions_per_pair':2,'logical_score_matrix':'256x128','gradcache':True,'hard_negative_mining':False,'initial_checkpoint':str(a.initial_checkpoint),'initial_checkpoint_sha256':sha(a.initial_checkpoint),'train_manifest_sha256':sha(a.train_manifest),'development_manifest_sha256':sha(a.development_manifest),'relevance_manifest_sha256':sha(a.relevance_manifest)},indent=2,sort_keys=True)+'\n')
     trainer=Path(__file__).with_name('train_qcpr_retrieval_repair_r1.py')
     cmd=[sys.executable,str(trainer),'--baseline-checkpoint',str(a.initial_checkpoint),'--reproduction',str(a.baseline_reproduction),'--identifiability-audit',str(a.identifiability_audit),'--output-dir',str(a.output_dir/'r1_runtime'),'--manifest-dir',str(runtime),'--physical-micro-batch','16','--logical-physical-batch','128','--captions-per-pair','2','--hard-warmup-epochs','999999','--hard-refresh-epochs','999999','--max-steps',str(a.steps),'--disable-hard-mining','--seed',str(a.seed),'--workers',str(a.workers)]
