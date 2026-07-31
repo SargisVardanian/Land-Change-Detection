@@ -21,8 +21,18 @@ def main():
     trainer=Path(__file__).with_name('train_qcpr_retrieval_repair_r1.py')
     cmd=[sys.executable,str(trainer),'--baseline-checkpoint',str(a.initial_checkpoint),'--reproduction',str(a.baseline_reproduction),'--identifiability-audit',str(a.identifiability_audit),'--output-dir',str(a.output_dir/'r1_runtime'),'--manifest-dir',str(runtime),'--physical-micro-batch','16','--logical-physical-batch','128','--captions-per-pair','2','--hard-warmup-epochs','999999','--hard-refresh-epochs','999999','--max-steps',str(a.steps),'--disable-hard-mining','--seed',str(a.seed),'--workers',str(a.workers)]
     subprocess.run(cmd,check=True)
+    complete_path=a.output_dir/'r1_runtime/training_complete.json'
+    exposure_path=a.output_dir/'r1_runtime/exposure_accounting.json'
+    batch_path=a.output_dir/'r1_runtime/batch_contract.json'
+    if not complete_path.is_file(): raise RuntimeError('missing training_complete.json')
+    if not exposure_path.is_file(): raise RuntimeError('missing exposure_accounting.json')
+    if not batch_path.is_file(): raise RuntimeError('missing batch_contract.json')
+    complete=json.loads(complete_path.read_text())
+    if int(complete.get('global_step',-1)) != a.steps: raise RuntimeError(f"fixed-step contract mismatch: {complete.get('global_step')} != {a.steps}")
     summary={'arm':a.arm,'status':'COMPLETED','control_contract':json.loads((a.output_dir/'control_contract.json').read_text()),'runtime_output':str(a.output_dir/'r1_runtime')}
     if (a.output_dir/'r1_runtime/r1_acceptance.json').exists(): summary['acceptance']=json.loads((a.output_dir/'r1_runtime/r1_acceptance.json').read_text())
     if (a.output_dir/'r1_runtime/exposure_accounting.json').exists(): summary['exposure']=json.loads((a.output_dir/'r1_runtime/exposure_accounting.json').read_text())
+    summary['training_complete']=complete
+    summary['batch_contract']=json.loads(batch_path.read_text())
     (a.output_dir/'control_summary.json').write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
 if __name__=='__main__': main()

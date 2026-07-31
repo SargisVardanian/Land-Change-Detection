@@ -362,10 +362,12 @@ def main():
                     handle.write(json.dumps(row) + "\n")
         else:
             stale += 1
-        if epoch + 1 >= args.min_epochs and stale >= args.patience:
+        if args.max_steps <= 0 and epoch + 1 >= args.min_epochs and stale >= args.patience:
             break
         if args.max_steps > 0 and global_step >= args.max_steps:
             break
+    if args.max_steps > 0 and global_step != args.max_steps:
+        raise RuntimeError(f"fixed-step contract violated: global_step={global_step}, requested={args.max_steps}")
     if best_metrics is None:
         raise RuntimeError("R1 produced no Recall@10-feasible checkpoint")
     accepted = best_metrics["all"]
