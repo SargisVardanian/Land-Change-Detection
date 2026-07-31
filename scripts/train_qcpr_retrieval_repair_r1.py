@@ -6,7 +6,7 @@ import json
 import math
 import random
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict
 from pathlib import Path
 
@@ -66,6 +66,8 @@ def arguments():
     parser.add_argument("--recall-regression-tolerance", type=float, default=0.002)
     parser.add_argument("--local-loss-weight", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=20260727)
+    parser.add_argument("--max-steps", type=int, default=0)
+    parser.add_argument("--disable-hard-mining", action="store_true")
     return parser.parse_args()
 
 
@@ -227,7 +229,7 @@ def main():
     model.load_state_dict(baseline_payload["model"])
     optimizer = torch.optim.AdamW(optimizer_groups(model, args.weight_decay))
     logical_batches_per_epoch = math.ceil(len(train) / args.logical_physical_batch)
-    total_steps = logical_batches_per_epoch * args.epochs
+    total_steps = args.max_steps if args.max_steps > 0 else logical_batches_per_epoch * args.epochs
     warmup = max(1, int(total_steps * 0.03))
     def schedule(step):
         if step < warmup:
@@ -254,10 +256,16 @@ def main():
     best_metrics = None
     stale = 0
     global_step = 0
+    pair_presentations = Counter()
+    query_presentations = Counter()
+    source_presentations = Counter()
+    change_presentations = Counter()
+    schedule_hasher = hashlib.sha256()
     history = args.output_dir / "metrics.jsonl"
     first_batch_checked = False
     for epoch in range(args.epochs):
-        if epoch >= args.hard_warmup_epochs and (epoch - args.hard_warmup_epochs) % args.hard_refresh_epochs == 0:
+        if (not args.disable_hard_mining and epoch >= args.hard_warmup_epochs and
+                (epoch - args.hard_warmup_epochs) % args.hard_refresh_epochs == 0):
             rows, hard_by_pair, mining_stats = mine_cache(model, train, collisions, args.output_dir, args.hard_candidates, args.workers, device, epoch)
             hard_history.append(mining_stats)
             (args.output_dir / "hard_negative_manifest.json").write_text(json.dumps(hard_history, indent=2, sort_keys=True) + "\n")
@@ -280,6 +288,14 @@ def main():
             query_ids = sum((batch["query_pair_ids"] for batch in micro_batches), [])
             normalized = sum((batch["normalized_captions"] for batch in micro_batches), [])
             pair_ids = sum((batch["pair_ids"] for batch in micro_batches), [])
+            for pair_id in pair_ids:
+                pair_presentations[str(pair_id)] += 1
+                sample = train.samples[train.pair_ids.index(str(pair_id))]
+                source_presentations[str(sample.get("dataset_name", "unknown"))] += 1
+                change_presentations["no_change" if sample.get("source_metadata", {}).get("changeflag") == 0 else "changed"] += 1
+            for pair_id, caption in zip(query_ids, normalized, strict=True):
+                query_presentations[f"{pair_id}:{caption}"] += 1
+            schedule_hasher.update(json.dumps({"epoch": epoch + 1, "step": global_step + 1, "pairs": [str(x) for x in pair_ids], "queries": [f"{p}:{c}" for p, c in zip(query_ids, normalized, strict=True)]}, sort_keys=True).encode())
             collision_sets = [collisions.collisions(pair_id, caption) for pair_id, caption in zip(query_ids, normalized, strict=True)]
             positive, excluded = build_pair_masks(query_ids, pair_ids, collision_sets, device)
             def encode(batch):
@@ -315,6 +331,8 @@ def main():
             sums["loss"] += float(loss)
             for key, value in stats.items():
                 sums[key] += float(value)
+            if args.max_steps > 0 and global_step >= args.max_steps:
+                break
         model.eval()
         metrics, rows = extended_evaluation(model, val, collisions, 16, args.workers, device)
         all_metrics = metrics["all"]
@@ -344,8 +362,12 @@ def main():
                     handle.write(json.dumps(row) + "\n")
         else:
             stale += 1
-        if epoch + 1 >= args.min_epochs and stale >= args.patience:
+        if args.max_steps <= 0 and epoch + 1 >= args.min_epochs and stale >= args.patience:
             break
+        if args.max_steps > 0 and global_step >= args.max_steps:
+            break
+    if args.max_steps > 0 and global_step != args.max_steps:
+        raise RuntimeError(f"fixed-step contract violated: global_step={global_step}, requested={args.max_steps}")
     if best_metrics is None:
         raise RuntimeError("R1 produced no Recall@10-feasible checkpoint")
     accepted = best_metrics["all"]
@@ -376,6 +398,22 @@ def main():
         "peak_allocated_gib": peak_allocated, "peak_reserved_gib": peak_reserved,
     }
     (args.output_dir / "batch_contract.json").write_text(json.dumps(batch_contract, indent=2, sort_keys=True) + "\n")
+    exposure = {
+        "total_pair_presentations": int(sum(pair_presentations.values())),
+        "total_query_presentations": int(sum(query_presentations.values())),
+        "unique_pairs": len(pair_presentations),
+        "unique_queries": len(query_presentations),
+        "presentations_per_pair": dict(sorted(pair_presentations.items())),
+        "presentations_per_query": dict(sorted(query_presentations.items())),
+        "mean_presentations_per_pair": float(sum(pair_presentations.values()) / max(len(pair_presentations), 1)),
+        "mean_presentations_per_query": float(sum(query_presentations.values()) / max(len(query_presentations), 1)),
+        "per_source_presentations": dict(sorted(source_presentations.items())),
+        "changed_no_change_presentations": dict(sorted(change_presentations.items())),
+        "sampling_schedule_sha256": schedule_hasher.hexdigest(),
+        "global_steps": global_step,
+        "logical_batch_contract": asdict(contract),
+    }
+    (args.output_dir / "exposure_accounting.json").write_text(json.dumps(exposure, indent=2, sort_keys=True) + "\n")
     (args.output_dir / "training_complete.json").write_text(json.dumps({"epochs": epoch + 1, "global_step": global_step, "best_selector": best, "batch_contract": batch_contract}, indent=2) + "\n")
 
 

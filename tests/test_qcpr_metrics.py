@@ -1,4 +1,19 @@
-from land_change_detection.benchmark.qcpr_metrics import aggregate_rankings, changeretcap_compat, ndcg_at
+from land_change_detection.benchmark.qcpr_metrics import (
+    aggregate_rankings,
+    auprc,
+    changeretcap_compat,
+    effective_patch_count,
+    energy_inside_mask,
+    ndcg_at,
+    normalized_entropy,
+    pointing_game,
+    recall_at_k,
+    hit_rate_at_k,
+    QCPR_PAIR_TO_TEXT,
+    RCD_SUPERVISED_COMPAT,
+    SEG2CHANGE_OVCD_COMPAT,
+    soft_iou,
+)
 
 
 def test_exact_metrics_use_physical_relevance_sets():
@@ -16,5 +31,32 @@ def test_ndcg_supports_multi_positive_relevance():
 
 def test_changeretcap_is_explicit_top_k_view():
     result = changeretcap_compat(["x", "a", "b"], {"a", "b"}, k=2)
-    assert result["recall"] == 1.0
+    assert result["hit_rate"] == 1.0
+    assert result["recall"] == 0.5
     assert result["precision"] == 0.5
+
+
+def test_hit_rate_and_recall_differ_for_multi_positive_relevance():
+    ranking = ["a", "wrong", "wrong2"]
+    relevant = {"a", "b"}
+    assert hit_rate_at_k(ranking, relevant, 1) == 1.0
+    assert recall_at_k(ranking, relevant, 1) == 0.5
+
+
+def test_pair_to_text_and_dense_protocol_adapters():
+    result = QCPR_PAIR_TO_TEXT([(["caption-a", "caption-b"], {"caption-b"})])
+    assert result["R@1"] == 0.0
+    dense = RCD_SUPERVISED_COMPAT([1, 0, 0], [1, 0, 1])
+    assert dense["binary_iou"] == 0.5
+    assert SEG2CHANGE_OVCD_COMPAT([1, 0, 0], [1, 0, 1])["IoU_c"] == 0.5
+
+
+def test_soft_localization_metrics_are_deterministic():
+    scores = [0.9, 0.1, 0.0, 0.0]
+    mask = [True, False, False, False]
+    assert energy_inside_mask(scores, mask) == 0.9
+    assert soft_iou(scores, mask) == 1.0
+    assert auprc(scores, mask) == 1.0
+    assert pointing_game(scores, mask) == 1.0
+    assert effective_patch_count(scores) > 1.0
+    assert 0.0 <= normalized_entropy(scores) <= 1.0
