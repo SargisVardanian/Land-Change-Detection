@@ -8,9 +8,9 @@ from typing import Any
 def norm(text: str) -> str:
     return " ".join(str(text).casefold().split())
 
-def split_for(event: str) -> str:
-    bucket=int(hashlib.sha256(event.encode()).hexdigest()[:8],16)%100
-    return "test" if bucket<15 else ("development" if bucket<30 else "train")
+def split_for(event: str, ordered_events: list[str]) -> str:
+    index=ordered_events.index(event)
+    return "test" if index < 2 else ("development" if index < 4 else "train")
 
 def main()->int:
     p=argparse.ArgumentParser(); p.add_argument("--annotations",type=Path,required=True); p.add_argument("--ebd-root",type=Path,required=True); p.add_argument("--output-dir",type=Path,required=True); p.add_argument("--pilot",type=int,default=500); a=p.parse_args()
@@ -23,9 +23,11 @@ def main()->int:
         before=a.ebd_root/pre.relative_to(marker); after=a.ebd_root/post.relative_to(marker)
         if not before.is_file() or not after.is_file(): unmatched.append({"pre":str(pre),"post":str(post),"reason":"EBD asset missing"}); continue
         matched+=1; event=before.parent.parent.name; key=(event,before.stem.removesuffix("_pre_disaster"))
-        item=groups.setdefault(key,{"event":event,"before":str(before),"after":str(after),"captions":[],"split":split_for(event)})
+        item=groups.setdefault(key,{"event":event,"before":str(before),"after":str(after),"captions":[],"split":None})
         caption=str(row.get("change_caption","")).strip()
         if caption and caption not in item["captions"]: item["captions"].append(caption)
+    ordered_events=sorted({event for event, _ in groups})
+    for item in groups.values(): item["split"]=split_for(item["event"],ordered_events)
     rows=[]; provenance=collections.Counter()
     for (event,stem), item in sorted(groups.items()):
         pair=f"rscc_ebd:{event}:{stem}"

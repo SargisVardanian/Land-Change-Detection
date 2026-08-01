@@ -25,9 +25,9 @@ def dhash(path: Path) -> str:
     for bit in bits: out=(out<<1)|int(bit)
     return f"{out:016x}"
 
-def split_for(event: str) -> str:
-    bucket=int(hashlib.sha256(event.encode()).hexdigest()[:8],16)%100
-    return "test" if bucket<15 else ("development" if bucket<30 else "train")
+def split_for(event: str, ordered_events: list[str]) -> str:
+    index=ordered_events.index(event)
+    return "test" if index < 2 else ("development" if index < 4 else "train")
 
 def main()->int:
     p=argparse.ArgumentParser()
@@ -37,6 +37,7 @@ def main()->int:
     a=p.parse_args()
     image_root=a.root/"EBD"
     pre=sorted(image_root.glob("*/images/*_pre_disaster.*"))
+    ordered_events=sorted({before.parent.parent.name for before in pre})
     pairs=[]; missing=[]; decode_failures=[]; events=Counter(); splits=Counter()
     for before in pre:
         stem=before.name[:-len("_pre_disaster"+before.suffix)]
@@ -49,7 +50,7 @@ def main()->int:
             with Image.open(after) as ia: ia.load(); aw,ah=ia.size
             if (bw,bh)!=(aw,ah): raise ValueError(f"dimension mismatch {bw,bh} vs {aw,ah}")
             before_sha,after_sha=sha(before),sha(after)
-            split=split_for(event); pair_id=f"rscc_ebd:{event}:{stem}"
+            split=split_for(event, ordered_events); pair_id=f"rscc_ebd:{event}:{stem}"
             row={"schema_version":"qcpr-stage2-rscc-ebd-pair-v1","canonical_pair_id":pair_id,"source_dataset":"RSCC-EBD","source_version":"HF 791a00849c3e684f54df38291cf35a7d828d7004","source_pair_id":f"{event}:{stem}","source_scene_group_id":f"rscc_ebd:event:{event}","source_event_id":event,"parent_pair_id":None,"t1_path":str(before),"t2_path":str(after),"frames":[{"path":str(before),"timestamp":"pre","sha256":before_sha,"perceptual_hash":dhash(before),"width":bw,"height":bh,"modality":"rgb"},{"path":str(after),"timestamp":"post","sha256":after_sha,"perceptual_hash":dhash(after),"width":aw,"height":ah,"modality":"rgb"}],"timestamps":["pre","post"],"modalities":["rgb","rgb"],"split":split,"license":"CC-BY-4.0 / RSCC EBD source terms","sensor":"RGB disaster imagery","gsd":None,"native_dimensions":[bh,bw],"is_synthetic":False,"ordered_pair_hash":hashlib.sha256((before_sha+"\n"+after_sha).encode()).hexdigest(),"order_invariant_pair_hash":hashlib.sha256("\n".join(sorted((before_sha,after_sha))).encode()).hexdigest(),"registration_quality":"source-aligned event pair; requires pilot review","caption_supervision":"none","dense_label_sidecar":{"pre_mask_path":str(image_root/event/"masks"/(stem+"_pre_disaster.png")),"post_mask_path":str(image_root/event/"masks"/(stem+"_post_disaster.png"))}}
             pairs.append(row); events[event]+=1; splits[split]+=1
         except Exception as exc:
@@ -59,7 +60,7 @@ def main()->int:
     output=a.output_dir; output.mkdir(parents=True,exist_ok=True)
     (output/"rscc_ebd_pair_pilot.jsonl").write_text("".join(json.dumps(row,sort_keys=True)+"\n" for row in pilot),encoding="utf-8")
     (output/"rscc_ebd_pair_registry.jsonl").write_text("".join(json.dumps(row,sort_keys=True)+"\n" for row in pairs),encoding="utf-8")
-    report={"schema_version":"qcpr-stage2-rscc-ebd-pair-audit-v1","source":"RSCC-EBD","source_version":"HF 791a00849c3e684f54df38291cf35a7d828d7004","image_root":str(image_root),"candidate_pre_images":len(pre),"pair_count":len(pairs),"pilot_pair_count":len(pilot),"missing_post_count":len(missing),"decode_failure_count":len(decode_failures),"event_count":len(events),"event_pair_counts":dict(sorted(events.items())),"split_counts":dict(sorted(splits.items())),"split_policy":"deterministic event-level hash because EBD archive has no unified official train/dev/test split in the downloaded asset","caption_count":0,"dense_label_sidecar_only":True,"mask_free_loader_passed":False,"real_loader_batch_passed":bool(pilot),"identity_proven":bool(pairs) and not missing and not decode_failures,"status":"PILOT_READY_NO_CAPTION_SUPERVISION" if pilot and not missing and not decode_failures else "DATA_QUALITY_HOLD","blockers":["RSCC QvQ captions reference xBD paths and are not joined to EBD", "generated temporal caption verifier is still required before retrieval training"] if pairs else ["no complete EBD pairs"],"missing_examples":missing[:20],"decode_failures":decode_failures[:20]}
+    report={"schema_version":"qcpr-stage2-rscc-ebd-pair-audit-v1","source":"RSCC-EBD","source_version":"HF 791a00849c3e684f54df38291cf35a7d828d7004","image_root":str(image_root),"candidate_pre_images":len(pre),"pair_count":len(pairs),"pilot_pair_count":len(pilot),"missing_post_count":len(missing),"decode_failure_count":len(decode_failures),"event_count":len(events),"event_pair_counts":dict(sorted(events.items())),"split_counts":dict(sorted(splits.items())),"split_policy":"deterministic event-level sorted-event split because EBD archive has no unified official train/dev/test split","caption_count":0,"dense_label_sidecar_only":True,"mask_free_loader_passed":False,"real_loader_batch_passed":bool(pilot),"identity_proven":bool(pairs) and not missing and not decode_failures,"status":"PILOT_READY_NO_CAPTION_SUPERVISION" if pilot and not missing and not decode_failures else "DATA_QUALITY_HOLD","blockers":["QvQ captions are joined separately only for rows whose official path is proven to be under EBD", "generated temporal caption verifier is still required before retrieval training"] if pairs else ["no complete EBD pairs"],"missing_examples":missing[:20],"decode_failures":decode_failures[:20]}
     (output/"rscc_ebd_pair_audit.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n",encoding="utf-8")
     print(json.dumps({k:report[k] for k in ("pair_count","pilot_pair_count","event_count","split_counts","caption_count","status")},sort_keys=True)); return 0 if report["identity_proven"] else 2
 
