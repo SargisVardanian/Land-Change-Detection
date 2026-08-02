@@ -354,6 +354,7 @@ def main() -> int:
     parser.add_argument("--gold-semantic-dir", type=Path, required=True)
     parser.add_argument("--stage2-audit-root", type=Path, required=True)
     parser.add_argument("--gate-summary", type=Path, default=None)
+    parser.add_argument("--architecture-report", type=Path, default=None)
     parser.add_argument("--output-root", type=Path, required=True)
     args = parser.parse_args()
     if args.output_root.exists():
@@ -455,7 +456,8 @@ def main() -> int:
         copy_file(args.stage2_audit_root / "rscc_ebd" / name, rscc_report_dir / name)
     for name in ("source_access_audit.json", "architecture_screening_plan.json"):
         copy_file(args.stage2_audit_root / name, reports / name)
-    copy_file(args.stage2_audit_root / "architecture_screening" / "architecture_screening_frozen_report.json", reports / "architecture_screening_frozen_report.json")
+    architecture_report = args.architecture_report or (args.stage2_audit_root / "architecture_screening" / "architecture_screening_frozen_report.json")
+    copy_file(architecture_report, reports / "architecture_screening_frozen_report.json")
     structured_report_dir = reports / "structured_semantic"
     for name in ("structured_semantic_audit.json", "structured_semantic_loader_contract.json", "independent_structured_semantic_verification.json", "semantic_group_registry_structured.jsonl"):
         copy_file(args.structured_dir / name, structured_report_dir / name)

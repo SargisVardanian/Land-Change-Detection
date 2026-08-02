@@ -6,8 +6,8 @@ set -euo pipefail
 ROOT=/mnt/weka/svardanyan/rs_change_project
 WT=$ROOT/code/project-qcpr-dataset-v2-stage2
 PY=$ROOT/envs/rschange/bin/python
-RELEASE=${RELEASE_ROOT:-$ROOT/manifests/qcpr_dataset_v2_stage2_semantic_hold_870cbd2_20260802}
-INITIAL=${INITIAL_CHECKPOINT:-$ROOT/manifests/qcpr_dataset_v2_stage2_audit/architecture_screening/compatible_screen-53fda38bbf15e76e2a3fa171342634d968fd55d9-205163/B1_screen_checkpoint.pt}
+RELEASE=${RELEASE_ROOT:-$ROOT/manifests/qcpr_dataset_v2_stage2_semantic_hold_63d9004_20260802}
+INITIAL=${INITIAL_CHECKPOINT:-$ROOT/manifests/qcpr_dataset_v2_stage2_audit/architecture_screening/corrected-b1-63d9004a38df96a12a7e1c5159ff4dd35a2555c3-206222/B1_screen_checkpoint.pt}
 EXPECTED_SHA=${EXPECTED_SHA:?set EXPECTED_SHA to the immutable Stage-2 code SHA}
 RUN_ROOT=${RUN_ROOT:?set RUN_ROOT to a new immutable run directory}
 P2_TRAIN_MANIFEST=${P2_TRAIN_MANIFEST:?set P2_TRAIN_MANIFEST to reviewed RSCC/P2 data}
@@ -39,5 +39,4 @@ P1=$(sbatch --parsable   --job-name=qcpr-s2-p1-b1   --account=research --partiti
 
 P2=$(sbatch --parsable --dependency=afterok:$P1   --job-name=qcpr-s2-p2-real-b1   --account=research --partition=research --qos=researcher   --gres=gpu:1 --cpus-per-task=16 --mem=100G --time=12:00:00   --output="$RUN_ROOT/p2-real-%j.out"   --wrap="set -eu; cd '$WT'; test \"\$(git rev-parse HEAD)\" = '$EXPECTED_SHA'; test -z \"\$(git status --porcelain)\"; export PYTHONPATH='$WT/src:$WT/scripts'; exec '$PY' '$WT/scripts/train_qcpr_stage2_b1_control.py' --stage P2-real --train-manifest '$P2_TRAIN_MANIFEST' --development-manifest '$P2_DEV_MANIFEST' --output-dir '$RUN_ROOT/p2-real' $COMMON")
 
-mkdir -p "$RUN_ROOT"
 printf '{"p1_job":"%s","p2_job":"%s","dependency":"p2 afterok p1","code_sha":"%s","steps":348,"logical_score_matrix":"256x128"}\n' "$P1" "$P2" "$EXPECTED_SHA" | tee "$RUN_ROOT/submission.json"

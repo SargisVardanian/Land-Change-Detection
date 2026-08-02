@@ -418,6 +418,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.stage == "P2-semantic":
+        raise SystemExit("P2-semantic is disabled until reviewed semantic gold rows are non-empty and a graded semantic objective is implemented")
     if not torch.cuda.is_available():
         raise RuntimeError("Stage-2 B1 trainer requires CUDA")
     if args.steps <= 0 or args.logical_physical_batch % args.physical_microbatch:
