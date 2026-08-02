@@ -28,6 +28,8 @@ def main() -> int:
     semantic=read_json(audit/"semantic_view/semantic_view_audit.json", {})
     automated=read_json(audit/"semantic_view/automated_verified_pilot/automated_verified_semantic_pilot_audit.json", {})
     arch=read_json(audit/"architecture_screening_plan.json", {})
+    arch_actual=read_json(audit/"architecture_screening/architecture_screening_frozen_report.json", {})
+    manual=read_json(audit/"semantic_view/manual_visual_verified_pilot/manual_visual_semantic_pilot_audit.json", {})
     rscc=read_json(audit/"rscc_ebd/rscc_ebd_pair_audit.json", {})
     rscc_loader=read_json(audit/"rscc_ebd/rscc_mask_free_loader_contract.json", {})
     qvq=read_json(audit/"rscc_ebd/rscc_ebd_qvq_caption_audit.json", {})
@@ -61,13 +63,13 @@ def main() -> int:
         "new_real_physical_source_present":bool(registry.get("new_real_physical_source_present")),
         "rscc_ebd":{"pairs":rscc.get("pair_count"),"pilot_pairs":rscc.get("pilot_pair_count"),"events":rscc.get("event_count"),"split_counts":rscc.get("split_counts"),"identity_proven":rscc.get("identity_proven"),"decoded_pilot_passed":rscc.get("decoded_pilot_passed"),"loader_passed":rscc_loader.get("passed"),"loader_artifact_sha256":sha256(audit/"rscc_ebd/rscc_mask_free_loader_contract.json"),"artifact_sha256":sha256(audit/"rscc_ebd/rscc_ebd_pair_audit.json")},
         "rscc_qvq":{"annotation_rows":qvq.get("annotation_rows"),"mapped_pairs":qvq.get("mapped_pairs"),"caption_count":qvq.get("caption_count"),"training_enabled":qvq.get("training_enabled"),"status":qvq.get("status"),"artifact_sha256":sha256(audit/"rscc_ebd/rscc_ebd_qvq_caption_audit.json")},
-        "semantic":{"counts":semantic.get("counts"),"groups":semantic.get("groups"),"structured_source_rows":semantic.get("structured_source_rows"),"human_audit_rows":semantic.get("human_audit_rows"),"review_required_rows":semantic.get("review_required_rows"),"automated_verified_rows":automated.get("row_count",0),"automated_verified_split_counts":automated.get("split_counts",{}),"automated_verification_status":automated.get("status"),"status":semantic.get("status"),"gate":semantic.get("stage2_gate"),"train_sha256":sha256(audit/"semantic_view/retrieval_semantic_train_v2.jsonl"),"development_sha256":sha256(audit/"semantic_view/retrieval_semantic_development_v2.jsonl"),"test_sha256":sha256(audit/"semantic_view/retrieval_semantic_test_v2.jsonl")},
+        "semantic":{"counts":semantic.get("counts"),"groups":semantic.get("groups"),"structured_source_rows":semantic.get("structured_source_rows"),"human_audit_rows":semantic.get("human_audit_rows"),"manual_visual_verified_rows":manual.get("verified_semantic_rows",0),"manual_visual_status":manual.get("status"),"review_required_rows":semantic.get("review_required_rows"),"automated_verified_rows":automated.get("row_count",0),"automated_verified_split_counts":automated.get("split_counts",{}),"automated_verification_status":automated.get("status"),"status":semantic.get("status"),"gate":semantic.get("stage2_gate"),"train_sha256":sha256(audit/"semantic_view/retrieval_semantic_train_v2.jsonl"),"development_sha256":sha256(audit/"semantic_view/retrieval_semantic_development_v2.jsonl"),"test_sha256":sha256(audit/"semantic_view/retrieval_semantic_test_v2.jsonl")},
         "synthetic_rcd":{"mapping_coverage":rcd.get("mapping_coverage"),"mode":rcd.get("mode"),"status":rcd.get("status")},
-        "architecture_screening":{"status":arch.get("status"),"plan_sha256":sha256(audit/"architecture_screening_plan.json")},
+        "architecture_screening":{"status":arch.get("status"),"plan_sha256":sha256(audit/"architecture_screening_plan.json"),"actual_status":arch_actual.get("status"),"actual_report_sha256":sha256(audit/"architecture_screening/architecture_screening_frozen_report.json")},
         "tests":{"status_file":test_status,"full_suite_passed":tests_passed,"summary":"563 passed, 3 skipped" if tests_passed else None,"log_sha256":sha256(audit/"test_suite/pytest.log")},
         "training_submitted":False,
         "blockers":blockers,
-        "artifact_hashes":{str(p.relative_to(audit)):sha256(p) for p in [audit/"source_registry.json",audit/"semantic_view/semantic_view_audit.json",audit/"semantic_view/automated_verified_pilot/automated_verified_semantic_pilot_audit.json",audit/"architecture_screening_plan.json"]},
+        "artifact_hashes":{str(p.relative_to(audit)):sha256(p) for p in [audit/"source_registry.json",audit/"semantic_view/semantic_view_audit.json",audit/"semantic_view/automated_verified_pilot/automated_verified_semantic_pilot_audit.json",audit/"semantic_view/manual_visual_verified_pilot/manual_visual_semantic_pilot_audit.json",audit/"architecture_screening_plan.json",audit/"architecture_screening/architecture_screening_frozen_report.json"] if p.is_file()},
     }
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(payload,indent=2,sort_keys=True)+"\n")
