@@ -33,7 +33,7 @@ def test_stage2_candidate_release_is_additive_and_hold_gated(tmp_path: Path) -> 
         "dense_label_sidecar": {"pre_mask_path": str(pre), "post_mask_path": str(post)},
     }
     rscc_rows = [
-        dict(rscc, canonical_pair_id=f"rscc_ebd:EVENT:{index}", split=split)
+        dict(rscc, canonical_pair_id=f"rscc_ebd:EVENT{index}:{index}", source_scene_group_id=f"rscc_ebd:event:EVENT{index}", source_event_id=f"EVENT{index}", split=split)
         for index, split in enumerate(("train", "development", "test"))
     ]
     rscc_path = tmp_path / "rscc.jsonl"; _write_jsonl(rscc_path, rscc_rows)
@@ -59,12 +59,41 @@ def test_stage2_candidate_release_is_additive_and_hold_gated(tmp_path: Path) -> 
         "verified_rows": 1,
         "mask_free_output": True,
     }))
+    review = tmp_path / "review"
+    review.mkdir()
+    packet = []
+    for event_index in range(12):
+        for row_index in range(20):
+            packet.append({
+                "review_id": f"review:{event_index}:{row_index}",
+                "canonical_pair_id": f"rscc_ebd:E{event_index}:{row_index}",
+                "source_event_id": f"E{event_index}",
+                "split": ("train", "development", "test")[event_index % 3],
+            })
+    _write_jsonl(review / "human_review_packet.jsonl", packet)
+    _write_jsonl(review / "reviewer_a_decisions.jsonl", [])
+    _write_jsonl(review / "reviewer_b_decisions.jsonl", [])
+    _write_jsonl(review / "adjudicated_decisions.jsonl", [])
+    _write_jsonl(review / "verified_rscc_text_registry.jsonl", [])
+    (review / "human_review_agreement.json").write_text(json.dumps({"status": "PENDING_HUMAN_REVIEW"}))
+    (review / "review_package_audit.json").write_text(json.dumps({
+        "status": "READY_FOR_TWO_INDEPENDENT_HUMAN_REVIEWERS", "row_count": 240, "event_count": 12,
+        "event_ids_provenance_only": True, "semantic_positive_sets_materialized": False, "training_enabled": False,
+    }))
+    gold = tmp_path / "gold"
+    gold.mkdir()
+    for split in ("train", "development", "test"):
+        (gold / f"retrieval_semantic_gold_{split}.jsonl").write_text("")
+    _write_jsonl(gold / "semantic_group_registry.jsonl", [])
+    _write_jsonl(gold / "verified_rscc_text_registry.jsonl", [])
+    (gold / "gold_semantic_audit.json").write_text(json.dumps({"status": "GOLD_SEMANTIC_HOLD", "training_enabled": False}))
     stage2 = tmp_path / "stage2"; stage2.mkdir(); (stage2 / "source_registry.json").write_text(json.dumps({"status": "DATA_QUALITY_HOLD"}))
     output = tmp_path / "release"
     subprocess.run([
         sys.executable, "scripts/build_qcpr_stage2_candidate_release.py", "--repo", str(Path.cwd()), "--core-root", str(core),
         "--rscc-pairs", str(rscc_path), "--rscc-qvq", str(qvq_path), "--rscc-qvq-audit", str(qvq_audit),
-        "--structured-dir", str(structured), "--stage2-audit-root", str(stage2), "--output-root", str(output),
+        "--structured-dir", str(structured), "--review-package", str(review), "--gold-semantic-dir", str(gold),
+        "--stage2-audit-root", str(stage2), "--output-root", str(output),
     ], check=True)
     release = json.loads((output / "dataset_v2_stage2_release.json").read_text())
     assert release["status"] == "DATA_QUALITY_HOLD"
