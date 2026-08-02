@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT=/mnt/weka/svardanyan/rs_change_project
 WT=$ROOT/code/project-qcpr-dataset-v2-stage2
 PY=$ROOT/envs/rschange/bin/python
-RELEASE=${RELEASE_ROOT:-$ROOT/manifests/qcpr_dataset_v2_stage2_semantic_hold_63d9004_20260802}
+RELEASE=${RELEASE_ROOT:?set RELEASE_ROOT to an immutable Stage-2 release}
 INITIAL=${INITIAL_CHECKPOINT:-$ROOT/manifests/qcpr_dataset_v2_stage2_audit/architecture_screening/corrected-b1-63d9004a38df96a12a7e1c5159ff4dd35a2555c3-206222/B1_screen_checkpoint.pt}
 EXPECTED_SHA=${EXPECTED_SHA:?set EXPECTED_SHA to the immutable Stage-2 code SHA}
 RUN_ROOT=${RUN_ROOT:?set RUN_ROOT to a new immutable run directory}
