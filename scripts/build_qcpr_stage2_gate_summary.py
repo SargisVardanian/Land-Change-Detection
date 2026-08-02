@@ -34,12 +34,13 @@ def main() -> int:
     rscc_loader=read_json(audit/"rscc_ebd/rscc_mask_free_loader_contract.json", {})
     qvq=read_json(audit/"rscc_ebd/rscc_ebd_qvq_caption_audit.json", {})
     rcd=read_json(audit/"synthetic_rcd/synthetic_rcd_mapping_audit.json", {})
+    head=subprocess.run(["git","rev-parse","HEAD"],cwd=args.repo,check=True,text=True,capture_output=True).stdout.strip()
     structured_candidates=sorted((audit/"semantic_view").glob("structured_source_verified_s2looking_*/structured_semantic_audit.json"))
-    structured_path=structured_candidates[-1] if structured_candidates else audit/"semantic_view/structured_semantic_audit.json"
+    matching_candidates=[path for path in structured_candidates if read_json(path, {}).get("code_sha")==head]
+    structured_path=(matching_candidates or structured_candidates)[-1] if (matching_candidates or structured_candidates) else audit/"semantic_view/structured_semantic_audit.json"
     structured=read_json(structured_path, {})
     test_status=(audit/"test_suite/status").read_text().strip() if (audit/"test_suite/status").is_file() else "missing"
     test_log=(audit/"test_suite/pytest.log").read_text(errors="replace") if (audit/"test_suite/pytest.log").is_file() else ""
-    head=subprocess.run(["git","rev-parse","HEAD"],cwd=args.repo,check=True,text=True,capture_output=True).stdout.strip()
     status=subprocess.run(["git","status","--porcelain"],cwd=args.repo,check=True,text=True,capture_output=True).stdout.splitlines()
     rscc_valid=bool(rscc.get("identity_proven") and rscc_loader.get("passed") and rscc.get("pair_count",0)>0 and len(rscc.get("split_counts",{}))==3)
     semantic_nonempty=all(int(semantic.get("counts",{}).get(s,0))>0 for s in ("train","development","test"))
