@@ -23,7 +23,8 @@ def test_gold_semantic_set_uses_structured_attributes_not_event_ids(tmp_path: Pa
     adjudicated = []
     for row in rows:
         labels = {
-            "review_id": row["review_id"], "reviewer_id": "reviewer_a", "reviewer_identity": "human-A",
+            "review_id": row["review_id"], "canonical_pair_id": row["canonical_pair_id"], "source_event_id": row["source_event_id"], "split": row["split"],
+            "reviewer_id": "reviewer_a", "reviewer_identity": "human-A",
             "reviewed_at": "2026-08-02T12:00:00Z", "independence_attestation": True, "decision_status": "complete",
             "visible_change": True, "changed_object": "building" if row["canonical_pair_id"] != "pair:2" else "road",
             "change_direction": "destroyed", "damage_type": "structural", "severity": "high",
@@ -32,7 +33,8 @@ def test_gold_semantic_set_uses_structured_attributes_not_event_ids(tmp_path: Pa
         decisions.append(labels)
         object_name = labels["changed_object"]
         adjudicated.append({
-            "review_id": row["review_id"], "adjudication_status": "adjudicated", "final_decision": "accept",
+            "review_id": row["review_id"], "canonical_pair_id": row["canonical_pair_id"], "source_event_id": row["source_event_id"], "split": row["split"],
+            "adjudication_status": "adjudicated", "final_decision": "accept",
             "final_caption": f"{object_name} was destroyed", "structured_attributes": {
                 "disaster_type": "earthquake", "changed_object": object_name, "change_direction": "destroyed",
                 "damage_type": "structural", "severity": "high", "spatial_context": "urban",
@@ -77,6 +79,9 @@ def test_grade_one_only_review_rows_are_audit_only(tmp_path: Path) -> None:
         return [
             {
                 "review_id": row["review_id"],
+                "canonical_pair_id": row["canonical_pair_id"],
+                "source_event_id": row["source_event_id"],
+                "split": row["split"],
                 "reviewer_id": reviewer_id,
                 "reviewer_identity": "human-A" if reviewer_id == "reviewer_a" else "human-B",
                 "reviewed_at": "2026-08-02T12:00:00Z",
@@ -98,6 +103,9 @@ def test_grade_one_only_review_rows_are_audit_only(tmp_path: Path) -> None:
     adjudicated = [
         {
             "review_id": row["review_id"],
+            "canonical_pair_id": row["canonical_pair_id"],
+            "source_event_id": row["source_event_id"],
+            "split": row["split"],
             "adjudication_status": "adjudicated",
             "final_decision": "accept",
             "final_caption": row["candidate_caption"],
@@ -159,6 +167,9 @@ def test_gold_semantic_set_rejects_same_human_identity_for_two_roles(tmp_path: P
     def decision(role: str) -> dict:
         return {
             "review_id": row["review_id"],
+            "canonical_pair_id": row["canonical_pair_id"],
+            "source_event_id": row["source_event_id"],
+            "split": row["split"],
             "reviewer_id": role,
             "reviewer_identity": "same-human",
             "reviewed_at": "2026-08-02T12:00:00Z",
@@ -182,6 +193,9 @@ def test_gold_semantic_set_rejects_same_human_identity_for_two_roles(tmp_path: P
     _write_jsonl(reviewer_b, [decision("reviewer_b")])
     _write_jsonl(adjudicated, [{
         "review_id": row["review_id"],
+        "canonical_pair_id": row["canonical_pair_id"],
+        "source_event_id": row["source_event_id"],
+        "split": row["split"],
         "adjudication_status": "adjudicated",
         "final_decision": "accept",
         "final_caption": "a building was damaged",
@@ -218,3 +232,55 @@ def test_gold_semantic_set_rejects_same_human_identity_for_two_roles(tmp_path: P
     audit = json.loads((output / "gold_semantic_audit.json").read_text())
     assert audit["status"] == "GOLD_SEMANTIC_HOLD"
     assert "distinct human reviewer identities" in audit["reason"]
+
+
+def test_gold_semantic_set_rejects_incomplete_reviewer_labels(tmp_path: Path) -> None:
+    row = {
+        "review_id": "labels:0", "canonical_pair_id": "labels-pair:0", "source_event_id": "EVENT_LABELS",
+        "split": "train", "t1_path": "/tmp/labels:0:pre.png", "t2_path": "/tmp/labels:0:post.png",
+        "candidate_caption": "a building changed",
+    }
+    packet = tmp_path / "packet.jsonl"
+    _write_jsonl(packet, [row])
+
+    def decision(role: str, identity: str) -> dict:
+        return {
+            **{key: row[key] for key in ("review_id", "canonical_pair_id", "source_event_id", "split")},
+            "reviewer_id": role, "reviewer_identity": identity,
+            "reviewed_at": "2026-08-02T12:00:00Z", "independence_attestation": True,
+            "decision_status": "complete", "visible_change": True, "changed_object": None,
+            "change_direction": "damaged", "damage_type": "structural", "severity": "medium",
+            "spatial_context": "urban", "location_support": False, "count_bucket": "unknown",
+            "count_support": False, "accept_rewrite_reject": "accept", "confidence": "high",
+        }
+
+    reviewer_a = tmp_path / "a.jsonl"
+    reviewer_b = tmp_path / "b.jsonl"
+    adjudicated = tmp_path / "adjudicated.jsonl"
+    _write_jsonl(reviewer_a, [decision("reviewer_a", "human-A")])
+    _write_jsonl(reviewer_b, [decision("reviewer_b", "human-B")])
+    _write_jsonl(adjudicated, [{
+        **{key: row[key] for key in ("review_id", "canonical_pair_id", "source_event_id", "split")},
+        "adjudication_status": "adjudicated", "final_decision": "accept", "final_caption": "a building changed",
+        "structured_attributes": {
+            "disaster_type": "earthquake", "changed_object": "building", "change_direction": "damaged",
+            "damage_type": "structural", "severity": "medium", "spatial_context": "urban",
+            "count_bucket": "unknown", "verification_confidence": "high",
+        },
+    }])
+    agreement = tmp_path / "agreement.json"
+    agreement.write_text(json.dumps({
+        "status": "HUMAN_REVIEW_COMPLETE", "adjudicated_rows": 1,
+        "reviewer_identities": {"reviewer_a": "human-A", "reviewer_b": "human-B"},
+        "independent_review_attested": True,
+    }))
+    output = tmp_path / "gold"
+    result = subprocess.run([
+        sys.executable, "scripts/build_qcpr_gold_semantic_set.py",
+        "--packet", str(packet), "--reviewer-a", str(reviewer_a), "--reviewer-b", str(reviewer_b),
+        "--adjudicated", str(adjudicated), "--agreement", str(agreement), "--output-dir", str(output),
+    ], check=False, capture_output=True, text=True)
+    assert result.returncode != 0
+    audit = json.loads((output / "gold_semantic_audit.json").read_text())
+    assert audit["status"] == "GOLD_SEMANTIC_HOLD"
+    assert "incomplete required labels" in audit["reason"]

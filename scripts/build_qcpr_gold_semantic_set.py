@@ -10,6 +10,7 @@ import argparse
 import collections
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +43,17 @@ REVIEW_METADATA_REQUIRED = (
     "reviewed_at",
     "independence_attestation",
 )
+REVIEW_STRING_FIELDS = (
+    "changed_object",
+    "change_direction",
+    "damage_type",
+    "severity",
+    "spatial_context",
+    "count_bucket",
+)
+REVIEW_BOOLEAN_FIELDS = ("visible_change", "location_support", "count_support")
+VALID_REVIEW_DECISIONS = {"accept", "rewrite", "reject"}
+VALID_REVIEW_CONFIDENCE = {"low", "medium", "high"}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -71,6 +83,17 @@ def normalize(value: Any) -> str:
         return "unknown"
     value = str(value).strip().casefold()
     return value or "unknown"
+
+
+def valid_iso_timestamp(value: Any) -> bool:
+    text = str(value or "").strip()
+    if not text:
+        return False
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return True
 
 
 def empty_outputs(output_dir: Path, review_rows: int, reason: str, code_sha: str | None) -> int:
@@ -138,13 +161,27 @@ def main() -> int:
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} has pending/incomplete rows", args.code_sha)
             if any(field not in decision for field in REVIEW_REQUIRED):
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} is missing required labels", args.code_sha)
+            for field in ("canonical_pair_id", "source_event_id", "split"):
+                if str(decision.get(field) or "") != str(row.get(field) or ""):
+                    return empty_outputs(args.output_dir, len(packet), f"{reviewer} metadata does not match packet for {field}", args.code_sha)
+            if any(decision.get(field) is None or (isinstance(decision.get(field), str) and not decision[field].strip()) for field in REVIEW_REQUIRED):
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} contains incomplete required labels", args.code_sha)
+            if any(not isinstance(decision[field], bool) for field in REVIEW_BOOLEAN_FIELDS):
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} boolean labels are not explicit booleans", args.code_sha)
+            if normalize(decision.get("accept_rewrite_reject")) not in VALID_REVIEW_DECISIONS:
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} has an invalid review decision", args.code_sha)
+            if normalize(decision.get("confidence")) not in VALID_REVIEW_CONFIDENCE:
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} has invalid confidence", args.code_sha)
             expected_identity = reviewer_a_identity if reviewer == "reviewer_a" else reviewer_b_identity
             if str(decision.get("reviewer_identity") or "").strip() != expected_identity:
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} identity does not match agreement", args.code_sha)
-            if not str(decision.get("reviewed_at") or "").strip():
+            if not valid_iso_timestamp(decision.get("reviewed_at")):
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} reviewed_at is missing", args.code_sha)
             if decision.get("independence_attestation") is not True:
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} independence attestation is missing", args.code_sha)
+        for field in ("canonical_pair_id", "source_event_id", "split"):
+            if str(final.get(field) or "") != str(row.get(field) or ""):
+                return empty_outputs(args.output_dir, len(packet), f"adjudication metadata does not match packet for {field}", args.code_sha)
         if final.get("adjudication_status") != "adjudicated" or final.get("final_decision") not in {"accept", "rewrite"}:
             return empty_outputs(args.output_dir, len(packet), "adjudication is incomplete or rejected all rows", args.code_sha)
         attrs = final.get("structured_attributes") or {}
