@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create a stratified visual-review packet for automated-verified RSCC captions."""
 from __future__ import annotations
-import argparse, json, textwrap
+import argparse, hashlib, json
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -12,6 +12,10 @@ def font(size: int):
         if Path(path).is_file():
             return ImageFont.truetype(path,size)
     return ImageFont.load_default()
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 def main() -> int:
     ap=argparse.ArgumentParser()
@@ -27,7 +31,8 @@ def main() -> int:
         selected.extend(sorted(groups[event],key=lambda r:(-float(r.get("verification_score",0.0)),str(r["canonical_pair_id"])))[:args.per_event])
     selected.sort(key=lambda r:(str(r.get("source_event_id")),str(r["canonical_pair_id"])))
     out=args.output_dir; out.mkdir(parents=True,exist_ok=True)
-    (out/"review_packet.jsonl").write_text("".join(json.dumps(r,sort_keys=True,ensure_ascii=False)+"\n" for r in selected),encoding="utf-8")
+    packet_path = out / "review_packet.jsonl"
+    packet_path.write_text("".join(json.dumps(r,sort_keys=True,ensure_ascii=False)+"\n" for r in selected),encoding="utf-8")
     W,H=720,470
     sheets=[]
     for sheet_start in range(0,len(selected),4):
@@ -45,8 +50,31 @@ def main() -> int:
         path=out/f"review_sheet_{sheet_start//4:02d}.png"
         sheet.save(path)
         sheets.append(str(path))
-    report={"schema_version":"qcpr-stage2-rscc-visual-review-packet-v1","rows":len(selected),"events":len(groups),"per_event":args.per_event,"sheets":sheets,"reviewer_status":"pending_codex_visual_review","automated_source":"siglip2-base-patch16-256","human_audit_passed":False}
+    report={
+        "schema_version":"qcpr-stage2-rscc-visual-review-packet-v2",
+        "rows":len(selected),
+        "events":len(groups),
+        "per_event":args.per_event,
+        "sheets":sheets,
+        "reviewer_status":"pending_independent_human_review",
+        "automated_source":"siglip2-base-patch16-256",
+        "human_audit_passed":False,
+        "source_candidates_sha256":sha256(args.input),
+        "review_packet_sha256":sha256(packet_path),
+        "event_ids_provenance_only":True,
+        "semantic_positive_sets_materialized":False,
+    }
     (out/"review_packet_audit.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n")
+    (out/"README.md").write_text(
+        "# RSCC Stage-2 visual review packet\n\n"
+        "This is a visual convenience packet for two independent human reviewers. "
+        "It is not a completed audit and does not create semantic positives. Inspect "
+        "both T1 and T2 in every sheet, then record decisions only in the formal "
+        "reviewer_a_decisions.jsonl and reviewer_b_decisions.jsonl files. Event IDs "
+        "are provenance/split fields only. Codex and automated model inspection do "
+        "not count as human review.\n",
+        encoding="utf-8",
+    )
     print(json.dumps({"rows":len(selected),"events":len(groups),"sheets":len(sheets),"output_dir":str(out)},sort_keys=True))
     return 0
 
