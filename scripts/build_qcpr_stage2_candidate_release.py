@@ -20,6 +20,42 @@ from typing import Any, Iterable
 
 
 SPLITS = ("train", "development", "test")
+MASK_FREE_DROPPED_KEYS = {
+    "mask_path",
+    "pre_mask_path",
+    "post_mask_path",
+    "semantic_t1_path",
+    "semantic_t2_path",
+    "label_path",
+    "dense_path",
+    "dense_label_join_key",
+    "dense_label_ids",
+    "official_label",
+    "official_label_mapping",
+    "semantic_label",
+    "labels",
+}
+
+
+def mask_free_structured_row(value: Any) -> Any:
+    """Remove dense/semantic-label joins from a mask-free task row.
+
+    Structured S2Looking relations remain a separate evaluation view.  The
+    dense labels are joined only through dense_label_registry, so neither
+    their paths nor their official label identifiers may enter the row seen by
+    a retrieval/grounding loader.
+    """
+    if isinstance(value, dict):
+        output: dict[str, Any] = {}
+        for key, nested in value.items():
+            normalized = str(key).casefold()
+            if normalized in MASK_FREE_DROPPED_KEYS or normalized.endswith("_mask_path") or normalized.endswith("_label_path"):
+                continue
+            output[key] = mask_free_structured_row(nested)
+        return output
+    if isinstance(value, list):
+        return [mask_free_structured_row(item) for item in value]
+    return value
 
 
 def sha256(path: Path) -> str:
@@ -395,7 +431,7 @@ def main() -> int:
         write_jsonl(manifests / f"retrieval_semantic_gold_{split}.jsonl", gold_split)
         write_jsonl(manifests / f"retrieval_semantic_{split}_v2.jsonl", gold_split)
         write_jsonl(manifests / f"retrieval_semantic_structured_s2looking_{split}.jsonl", [
-            {**row, "training_enabled": False, "evaluation_only": True, "task_view": "structured_semantic_evaluation"}
+            {**mask_free_structured_row(row), "training_enabled": False, "evaluation_only": True, "task_view": "structured_semantic_evaluation"}
             for row in structured_rows if row["split"] == split
         ])
     write_jsonl(registries / "semantic_group_registry.jsonl", gold_groups)

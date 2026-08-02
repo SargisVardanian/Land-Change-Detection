@@ -47,7 +47,8 @@ def test_stage2_candidate_release_is_additive_and_hold_gated(tmp_path: Path) -> 
         "text": "new buildings appeared", "normalized_text": "new buildings appeared", "captions": ["new buildings appeared"],
         "normalized_caption_groups": ["new buildings appeared"], "caption_source": "official_dense_label_semantics", "generator": "official_label_template_v1",
         "semantic_group_id": "s2looking:official_relation:appeared", "verification_status": "structured_source_verified", "training_enabled": True,
-        "query_scope": "semantic_group", "provenance": {"dense_labels_remain_sidecar_only": True},
+        "query_scope": "semantic_group", "dense_label_join_key": "s2looking:train:0",
+        "provenance": {"dense_labels_remain_sidecar_only": True, "official_label": "label1", "official_label_mapping": {"label1": "appeared"}},
     }
     for split in ("train", "development", "test"):
         _write_jsonl(structured / f"retrieval_semantic_structured_{split}.jsonl", [structured_row] if split == "train" else [])
@@ -102,4 +103,8 @@ def test_stage2_candidate_release_is_additive_and_hold_gated(tmp_path: Path) -> 
     assert (output / "manifests/physical_pairs_rscc_ebd.jsonl").is_file()
     assert json.loads((output / "registries/pair_registry.jsonl").read_text().splitlines()[-1])["canonical_pair_id"] == rscc_rows[-1]["canonical_pair_id"]
     assert "mask_path" not in (output / "manifests/retrieval_semantic_train_v2.jsonl").read_text()
+    structured_output = json.loads((output / "manifests/retrieval_semantic_structured_s2looking_train.jsonl").read_text().splitlines()[0])
+    assert "dense_label_join_key" not in structured_output
+    assert "official_label" not in structured_output.get("provenance", {})
+    assert "official_label_mapping" not in structured_output.get("provenance", {})
     assert (core / "registries/pair_registry.jsonl").read_text() == '{"canonical_pair_id": "levir_mci:train:0"}\n'
