@@ -90,3 +90,53 @@ def test_stage2_builder_emits_same_split_multi_positive_candidates(tmp_path: Pat
     ]
     assert all(row["training_enabled"] is False for row in rows)
     assert all(str(row["human_audit_status"]).startswith("required") for row in rows)
+
+
+def test_automated_verified_pilot_uses_group_multi_positive_contract(tmp_path: Path) -> None:
+    source = tmp_path / "verified.jsonl"
+    rows = [
+        {
+            "canonical_pair_id": f"rscc_ebd:event:item-{index}",
+            "split": split,
+            "source_event_id": "event-a",
+            "semantic_group_id": "rscc_ebd:event:event-a",
+            "captions": [f"caption {index}"],
+            "verification_status": "automated_frozen_siglip2_verified",
+        }
+        for index, split in enumerate(("train", "train", "development"))
+    ]
+    _write_jsonl(source, rows)
+    output = tmp_path / "automated"
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_rscc_automated_verified_semantic_pilot.py",
+            "--input",
+            str(source),
+            "--output-dir",
+            str(output),
+        ],
+        check=True,
+    )
+    generated = [
+        json.loads(line)
+        for line in (output / "retrieval_semantic_automated_verified_train.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(generated) == 2
+    expected = {
+        "rscc_ebd:event:item-0",
+        "rscc_ebd:event:item-1",
+    }
+    assert all(set(row["positive_pair_ids"]) == expected for row in generated)
+    assert all(row["semantic_candidate_count"] == 2 for row in generated)
+    assert all(row["training_enabled"] is False for row in generated)
+    audit = json.loads(
+        (output / "automated_verified_semantic_pilot_audit.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert audit["multi_positive_rows"] == 2
+    assert audit["single_positive_rows"] == 0
