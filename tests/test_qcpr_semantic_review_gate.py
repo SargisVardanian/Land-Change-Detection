@@ -13,7 +13,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     )
 
 
-def test_human_review_gate_promotes_only_coarse_same_split_groups(tmp_path: Path) -> None:
+def test_single_reviewer_coarse_review_never_promotes_event_groups(tmp_path: Path) -> None:
     packet = tmp_path / "packet.jsonl"
     decisions = tmp_path / "decisions.jsonl"
     output = tmp_path / "verified"
@@ -62,21 +62,31 @@ def test_human_review_gate_promotes_only_coarse_same_split_groups(tmp_path: Path
         if line.strip()
     ]
     assert len(rows) == 2
-    assert all(row["training_enabled"] is True for row in rows)
-    assert all(row["verification_status"] == "human_verified" for row in rows)
-    assert all(
-        set(row["positive_pair_ids"])
-        == {"rscc_ebd:event:item-0", "rscc_ebd:event:item-1"}
-        for row in rows
-    )
+    assert all(row["training_enabled"] is False for row in rows)
+    assert all(row["verification_status"] == "human_coarse_review_only" for row in rows)
+    assert all(row["query_scope"] == "semantic_audit_candidate" for row in rows)
+    assert all(row["semantic_group_id"] is None for row in rows)
+    assert all(row["positive_pair_ids"] == [] for row in rows)
+    assert all(row["event_ids_are_provenance_only"] is True for row in rows)
     assert not list(
-        (output / "retrieval_semantic_human_verified_development.jsonl")
+        (output / "semantic_group_registry_human_verified.jsonl")
         .read_text(encoding="utf-8")
         .splitlines()
     )
+    development_audit_rows = [
+        json.loads(line)
+        for line in (output / "retrieval_semantic_human_verified_development.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(development_audit_rows) == 1
+    assert development_audit_rows[0]["training_enabled"] is False
     audit = json.loads(
         (output / "semantic_human_review_audit.json").read_text(encoding="utf-8")
     )
-    assert audit["status"] == "HUMAN_REVIEW_ACCEPTED_MULTI_POSITIVE"
-    assert audit["verified_group_count"] == 1
-    assert audit["training_enabled"] is True
+    assert audit["status"] == "HUMAN_REVIEW_COARSE_ONLY_HOLD"
+    assert audit["verified_group_count"] == 0
+    assert audit["coarse_audit_only_rows"] == 3
+    assert audit["event_ids_used_for_semantics"] is False
+    assert audit["training_enabled"] is False

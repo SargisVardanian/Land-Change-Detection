@@ -188,6 +188,7 @@ def main() -> int:
     group_by_id = {row["semantic_group_id"]: row for row in registry}
     manifests: dict[str, list[dict[str, Any]]] = {split: [] for split in SPLITS}
     text_registry: list[dict[str, Any]] = []
+    grade_1_audit_only_rows = 0
     for record in records:
         attrs = record["attributes"]
         exact = tuple(attrs[field] for field in GRADE_3_FIELDS)
@@ -198,8 +199,10 @@ def main() -> int:
             group_id = group_lookup.get((record["split"], grade, key))
             if group_id:
                 refs.append({"semantic_group_id": group_id, "grade": int(grade[1]), "weight": 0.1 if grade == "g1" else 1.0})
-        primary = next((ref for ref in refs if ref["grade"] == 3), next((ref for ref in refs if ref["grade"] == 2), refs[0] if refs else None))
+        primary = next((ref for ref in refs if ref["grade"] == 3), next((ref for ref in refs if ref["grade"] == 2), None))
         if primary is None:
+            if refs:
+                grade_1_audit_only_rows += 1
             continue
         row = {
             "schema_version": "temporal-semantic-gold-manifest-v1",
@@ -216,7 +219,7 @@ def main() -> int:
             "source_event_id": record["source_event_id"],
             "verification_status": "two_reviewer_adjudicated",
             "verification_confidence": record["verification_confidence"],
-            "training_enabled": True,
+            "training_enabled": primary["grade"] in {2, 3},
             "t1_path": record["t1_path"],
             "t2_path": record["t2_path"],
         }
@@ -230,7 +233,7 @@ def main() -> int:
             "verification_status": "two_reviewer_adjudicated",
             "verification_confidence": record["verification_confidence"],
             "structured_attributes": attrs,
-            "training_enabled": True,
+            "training_enabled": primary["grade"] in {2, 3},
         })
 
     if not text_registry or not any(row["training_enabled"] for row in text_registry):
@@ -255,6 +258,8 @@ def main() -> int:
         "event_ids_used_for_semantics": False,
         "positive_grades_enabled": [2, 3],
         "grade_1_weight": 0.1,
+        "grade_1_audit_only_rows": grade_1_audit_only_rows,
+        "primary_training_grades": [2, 3],
         "same_event_hard_negative_policy": "same-event semantically different pairs remain negatives unless structured grades match",
         "training_enabled_unreviewed_rows": 0,
     })

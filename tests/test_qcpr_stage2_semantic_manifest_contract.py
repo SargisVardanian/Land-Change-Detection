@@ -13,7 +13,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
     )
 
 
-def test_stage2_builder_emits_same_split_multi_positive_candidates(tmp_path: Path) -> None:
+def test_stage2_builder_rejects_unstructured_rscc_event_candidates(tmp_path: Path) -> None:
     pairs = [
         {
             "canonical_pair_id": f"rscc_ebd:event:pair-{index}",
@@ -62,15 +62,7 @@ def test_stage2_builder_emits_same_split_multi_positive_candidates(tmp_path: Pat
         .splitlines()
         if line.strip()
     ]
-    expected = {
-        "rscc_ebd:event:pair-0",
-        "rscc_ebd:event:pair-1",
-    }
-    assert len(rows) == 2
-    assert all(set(row["positive_pair_ids"]) == expected for row in rows)
-    assert all(row["semantic_candidate_count"] == 2 for row in rows)
-    assert all(row["self_relevance_grade"] == 3 for row in rows)
-    assert all(row["other_relevance_grade"] == 1 for row in rows)
+    assert rows == []
     group_rows = [
         json.loads(line)
         for line in (output / "semantic_group_registry.jsonl")
@@ -78,21 +70,22 @@ def test_stage2_builder_emits_same_split_multi_positive_candidates(tmp_path: Pat
         .splitlines()
         if line.strip()
     ]
-    assert group_rows == [
-        {
-            "graded_relevance_rule": "pair=3;same_event=1",
-            "pair_count": 2,
-            "pair_ids": sorted(expected),
-            "semantic_group_id": "rscc_ebd:event:event-a",
-            "split": "train",
-            "training_enabled": False,
-        }
+    assert group_rows == []
+    summary = json.loads((output / "semantic_view_audit.json").read_text(encoding="utf-8"))
+    assert summary["unstructured_rscc_rows_excluded"] == 3
+    assert summary["event_only_rscc_groups"] == 0
+    assert summary["event_ids_used_for_semantics"] is False
+    excluded = [
+        json.loads(line)
+        for line in (output / "unstructured_candidates_excluded.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
     ]
-    assert all(row["training_enabled"] is False for row in rows)
-    assert all(str(row["human_audit_status"]).startswith("required") for row in rows)
+    assert len(excluded) == 3
 
 
-def test_automated_verified_pilot_uses_group_multi_positive_contract(tmp_path: Path) -> None:
+def test_automated_verified_pilot_is_audit_only(tmp_path: Path) -> None:
     source = tmp_path / "verified.jsonl"
     rows = [
         {
@@ -125,18 +118,21 @@ def test_automated_verified_pilot_uses_group_multi_positive_contract(tmp_path: P
         .splitlines()
         if line.strip()
     ]
-    assert len(generated) == 2
-    expected = {
-        "rscc_ebd:event:item-0",
-        "rscc_ebd:event:item-1",
-    }
-    assert all(set(row["positive_pair_ids"]) == expected for row in generated)
-    assert all(row["semantic_candidate_count"] == 2 for row in generated)
-    assert all(row["training_enabled"] is False for row in generated)
+    assert generated == []
+    group_rows = [
+        json.loads(line)
+        for line in (output / "semantic_group_registry.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert group_rows == []
     audit = json.loads(
         (output / "automated_verified_semantic_pilot_audit.json").read_text(
             encoding="utf-8"
         )
     )
-    assert audit["multi_positive_rows"] == 2
+    assert audit["multi_positive_rows"] == 0
     assert audit["single_positive_rows"] == 0
+    assert audit["audit_candidate_count"] == 3
+    assert audit["event_ids_used_for_semantics"] is False

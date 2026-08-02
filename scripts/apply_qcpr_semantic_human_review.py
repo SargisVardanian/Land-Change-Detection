@@ -89,63 +89,57 @@ def main() -> int:
             counts["accept_rejected_by_contradiction_or_fine"] += 1
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    by_split: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
-    for row in accepted:
-        by_split[str(row["packet"].get("split") or "unknown")].append(row)
-
-    verified_rows: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
-    group_registry: list[dict[str, Any]] = []
-    for split, members in sorted(by_split.items()):
-        pair_ids = sorted({str(item["packet"]["canonical_pair_id"]) for item in members})
-        if len(pair_ids) < 2:
-            continue
-        group_id = f"rscc_ebd:human_verified:coarse_disaster_change:{split}"
-        group_registry.append(
+    # This legacy one-reviewer script is deliberately audit-only.  A coarse
+    # "change is visible" decision does not identify object, direction,
+    # damage, severity, location, or count, so event/split membership must not
+    # be converted into semantic positives.  Promotion is handled only by
+    # build_qcpr_gold_semantic_set.py after two independent reviews and
+    # adjudication.
+    audit_rows: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for item in accepted:
+        packet_row = item["packet"]
+        split = str(packet_row.get("split") or "unknown")
+        pair_id = str(packet_row["canonical_pair_id"])
+        audit_rows[split].append(
             {
-                "semantic_group_id": group_id,
+                "schema_version": "qcpr-stage2-semantic-human-coarse-audit-v2",
+                "query_id": f"{pair_id}:human_coarse_audit",
+                "canonical_pair_id": pair_id,
+                "text": "",
+                "normalized_text": "",
                 "split": split,
-                "pair_ids": pair_ids,
-                "pair_count": len(pair_ids),
-                "graded_relevance_rule": "own_pair=3;same_coarse_change=1",
-                "training_enabled": True,
-                "verification_status": "human_verified",
-                "reviewer_ids": sorted({item["reviewer_id"] for item in members}),
+                "source_dataset": "RSCC-EBD",
+                "query_scope": "semantic_audit_candidate",
+                "text_granularity": "coarse_change_only",
+                "semantic_group_id": None,
+                "positive_pair_ids": [],
+                "semantic_group_pair_count": 0,
+                "semantic_candidate_count": 0,
+                "self_relevance_grade": None,
+                "other_relevance_grade": None,
+                "graded_relevance_rule": None,
+                "ignored_pair_ids": [],
+                "training_enabled": False,
+                "verification_status": "human_coarse_review_only",
+                "human_audit_status": "passed_coarse_only",
+                "reviewer_ids": [item["reviewer_id"]],
+                "event_ids_are_provenance_only": True,
+                "provenance": {
+                    "packet_pair_id": pair_id,
+                    "source_event_id": packet_row.get("source_event_id"),
+                    "original_generated_caption": (packet_row.get("captions") or [""])[0],
+                    "fine_caption_promoted": False,
+                    "decision_file_sha256": sha256(args.decisions),
+                    "review_basis": "single human coarse temporal-change audit only",
+                    "semantic_promotion": "blocked_until_two_reviewer_adjudication",
+                },
             }
         )
-        for item in members:
-            packet_row = item["packet"]
-            pair_id = str(packet_row["canonical_pair_id"])
-            verified_rows[split].append(
-                {
-                    "schema_version": "qcpr-stage2-semantic-human-verified-v1",
-                    "query_id": f"{pair_id}:human_verified_coarse",
-                    "canonical_pair_id": pair_id,
-                    "text": "a visible disaster-related change occurs between the two dates",
-                    "normalized_text": "a visible disaster-related change occurs between the two dates",
-                    "split": split,
-                    "source_dataset": "RSCC-EBD",
-                    "query_scope": "semantic_group",
-                    "text_granularity": "coarse_relation",
-                    "semantic_group_id": group_id,
-                    "positive_pair_ids": pair_ids if len(pair_ids) <= 256 else [],
-                    "semantic_group_pair_count": len(pair_ids),
-                    "self_relevance_grade": 3,
-                    "other_relevance_grade": 1,
-                    "graded_relevance_rule": "own_pair=3;same_coarse_change=1",
-                    "ignored_pair_ids": [],
-                    "training_enabled": True,
-                    "verification_status": "human_verified",
-                    "human_audit_status": "passed",
-                    "reviewer_ids": sorted({item["reviewer_id"] for item in members}),
-                    "provenance": {
-                        "packet_pair_id": pair_id,
-                        "original_generated_caption": (packet_row.get("captions") or [""])[0],
-                        "fine_caption_promoted": False,
-                        "decision_file_sha256": sha256(args.decisions),
-                        "review_basis": "independent human T1/T2 coarse temporal-change decision",
-                    },
-                }
-            )
+
+    # Keep the legacy filenames for downstream audit consumers, but make the
+    # contract explicit: these files contain no semantic training rows.
+    verified_rows = audit_rows
+    group_registry: list[dict[str, Any]] = []
 
     for split in ("train", "development", "test"):
         path = args.output_dir / f"retrieval_semantic_human_verified_{split}.jsonl"
@@ -163,26 +157,26 @@ def main() -> int:
     audit = {
         "schema_version": "qcpr-stage2-semantic-human-review-audit-v1",
         "status": (
-            "HUMAN_REVIEW_ACCEPTED_MULTI_POSITIVE"
-            if group_registry
-            else "HUMAN_REVIEW_COMPLETE_NO_MULTI_POSITIVE_GROUP"
+            "HUMAN_REVIEW_COARSE_ONLY_HOLD"
         ),
         "packet_rows": len(packet),
         "decision_rows": len(decisions),
         "accepted_coarse_rows": len(accepted),
-        "verified_rows": sum(len(values) for values in verified_rows.values()),
+        "verified_rows": 0,
+        "coarse_audit_only_rows": sum(len(values) for values in verified_rows.values()),
         "verified_group_count": len(group_registry),
         "split_counts": {split: len(values) for split, values in sorted(verified_rows.items())},
         "decision_counts": dict(sorted(counts.items())),
         "reviewer_ids": sorted(reviewer_ids),
-        "training_enabled": bool(group_registry),
+        "training_enabled": False,
+        "event_ids_used_for_semantics": False,
         "packet_sha256": sha256(args.packet),
         "decisions_sha256": sha256(args.decisions),
         "notes": [
-            "Only coarse change decisions are promoted.",
-            "Fine generated QvQ detail is never promoted by this gate.",
-            "All positive pairs remain inside the official split.",
-            "This output is eligible for semantic training only when training_enabled is true and the parent release records the audit hash.",
+            "Coarse change decisions are retained for audit only and are not semantic positives.",
+            "Event IDs and split membership are provenance/leakage fields only.",
+            "Fine generated QvQ detail is never promoted by this one-reviewer gate.",
+            "Semantic training requires two independent reviewers, structured attributes, and adjudication via build_qcpr_gold_semantic_set.py.",
         ],
     }
     (args.output_dir / "semantic_human_review_audit.json").write_text(
