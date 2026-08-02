@@ -54,7 +54,7 @@ def main() -> int:
     blockers=[]
     if not rscc_valid: blockers.append("RSCC EBD physical pilot is not fully loader-validated")
     if not semantic_nonempty: blockers.append("semantic train/development/test manifests are not all non-empty")
-    if not semantic_verified: blockers.append("semantic supervision is provisional: generated QvQ and mask/event-derived groups require independent verifier and stratified human audit")
+    if not semantic_verified: blockers.append("generated RSCC QvQ/detail candidates still require independent temporal verification and stratified human audit; the separate coarse S2Looking structured relation view is source-verified but not a human-caption view")
     if arch.get("status")!="SCREENING_COMPLETE": blockers.append("frozen architecture screening is incomplete; native B0 and B2 are not benchmarked, and B3/B4 weight/preprocessing audits remain")
     if rcd.get("mapping_coverage",0) != 1.0: blockers.append("Synthetic RCD real-A mapping remains unavailable; synthetic-A is diagnostic only")
     for name, label in (("SYSU-CD","SYSU-CD official image archive"),("Hi-UCD","Hi-UCD corrected archive")):
