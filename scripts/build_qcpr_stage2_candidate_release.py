@@ -125,7 +125,7 @@ def validate_structured_view(structured_dir: Path) -> tuple[list[dict[str, Any]]
         raise SystemExit("structured semantic view lacks non-empty multi-positive groups")
     if int(independent.get("verified_rows", 0)) != len(rows):
         raise SystemExit("independent semantic row count does not match release rows")
-    return rows, {"audit": audit, "loader": loader, "independent": independent, "group_count": len(group_ids)}
+    return rows, {"audit": audit, "loader": loader, "independent": independent, "group_count": len(group_registry)}
 
 
 def normalize_rscc_pair(row: dict[str, Any]) -> dict[str, Any]:
