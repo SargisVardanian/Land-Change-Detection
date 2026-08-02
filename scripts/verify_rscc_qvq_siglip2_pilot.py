@@ -84,6 +84,7 @@ def main() -> int:
     ap.add_argument("--model-path",type=Path,required=True)
     ap.add_argument("--qvq-pilot",type=Path,required=True)
     ap.add_argument("--human-caption-registry",type=Path,required=True)
+    ap.add_argument("--pair-registry",type=Path,required=True)
     ap.add_argument("--output-dir",type=Path,required=True)
     ap.add_argument("--pilot",type=int,default=500)
     ap.add_argument("--calibration",type=int,default=100)
@@ -96,8 +97,14 @@ def main() -> int:
     device=torch.device("cuda")
     verifier=FrozenVerifier(args.model_path,device,image_size=256)
     qvq=[r for r in read_jsonl(args.qvq_pilot) if r.get("captions")][:args.pilot]
+    pair_lookup={str(row["canonical_pair_id"]):row for row in read_jsonl(args.pair_registry)}
     human=[]
-    for row in read_jsonl(args.human_caption_registry):
+    for source_row in read_jsonl(args.human_caption_registry):
+        row=dict(source_row)
+        pair=pair_lookup.get(str(row.get("canonical_pair_id")))
+        if pair:
+            row["t1_path"]=pair.get("t1_path")
+            row["t2_path"]=pair.get("t2_path")
         source=str(row.get("caption_source") or row.get("source"))
         text=row_caption(row)
         if source=="human" and text and row.get("t1_path") and row.get("t2_path") and Path(str(row["t1_path"])).is_file() and Path(str(row["t2_path"])).is_file():
