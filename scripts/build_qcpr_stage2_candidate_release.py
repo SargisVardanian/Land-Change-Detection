@@ -324,6 +324,7 @@ def main() -> int:
         "counts": {"registries": core_counts, "manifests": manifest_counts},
         "blockers": blockers,
     }
+    release["release_artifact_hashes_path"] = "hashes/stage2_release_artifacts_sha256.json"
     write_json(out / "dataset_v2_stage2_release.json", release)
     write_json(out / "dataset_v2_stage2_source_coverage.json", read_json(args.stage2_audit_root / "source_registry.json", {}))
     write_json(out / "dataset_v2_stage2_build_summary.json", release)
@@ -345,14 +346,18 @@ def main() -> int:
     })
     (reports / "README.md").write_text("DATA_QUALITY_HOLD: Stage-2 candidate contains new RSCC physical pairs and source-verified coarse S2Looking semantics, but is not training-authorized.\n", encoding="utf-8")
 
+    # The hash manifest excludes hashes/ itself.  Determine the count before
+    # the final release write, then hash the final bytes exactly once; do not
+    # mutate release metadata after hashes have been computed.
+    release["release_artifact_hash_count"] = len(hash_tree(out))
+    write_json(out / "dataset_v2_stage2_release.json", release)
+    write_json(out / "dataset_v2_stage2_build_summary.json", release)
     hashes = hash_tree(out)
+    if len(hashes) != release["release_artifact_hash_count"]:
+        raise SystemExit("release artifact count changed while finalizing hashes")
     write_json(out / "hashes" / "stage2_release_artifacts_sha256.json", hashes)
     write_json(out / "hashes" / "registry_sha256.json", {str(path.relative_to(out)): sha256(path) for path in sorted(registries.glob("*.jsonl"))})
     write_json(out / "hashes" / "manifest_sha256.json", {str(path.relative_to(out)): sha256(path) for path in sorted(manifests.glob("*.jsonl"))})
-    release["release_artifact_hash_count"] = len(hashes)
-    release["release_artifact_hashes_path"] = "hashes/stage2_release_artifacts_sha256.json"
-    write_json(out / "dataset_v2_stage2_release.json", release)
-    write_json(out / "dataset_v2_stage2_build_summary.json", release)
     print(json.dumps({
         "status": release["status"],
         "output_root": str(out),
