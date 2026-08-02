@@ -55,3 +55,14 @@ def test_b0_b1_b2_screen_heads_have_finite_gradients() -> None:
         gradients = [p.grad for p in model.parameters() if p.requires_grad and p.grad is not None]
         assert gradients
         assert all(torch.isfinite(grad).all() for grad in gradients)
+
+def test_score_matrix_supports_multiple_captions_per_pair() -> None:
+    torch.manual_seed(9)
+    model = ScreenModel("B2", _config())
+    visual = torch.randn(4, 2, 16, 12)
+    base = torch.randn(8, 8)
+    tokens = torch.randn(8, 5, 8)
+    attention = torch.ones(8, 5, dtype=torch.bool)
+    content = attention.clone()
+    scores = model(visual, base, tokens, attention, content)
+    assert scores.shape == (8, 4)
