@@ -32,7 +32,7 @@ exec "$PY" "$WT/scripts/screen_qcpr_stage2_compatible_architectures.py" \
   --current-checkpoint "$CHECKPOINT" \
   --train-manifest "$TRAIN" \
   --development-manifest "$DEV" \
-  --output-dir "$AUDIT/architecture_screening/compatible_screen-$EXPECTED_SHA-%j" \
+  --output-dir "$AUDIT/architecture_screening/compatible_screen-$EXPECTED_SHA-$SLURM_JOB_ID" \
   --image-size 256 \
   --extract-batch-size 8 \
   --microbatch 16 \
