@@ -450,6 +450,13 @@ def main() -> int:
     gate_summary = read_json(gate_path, {})
     if gate_summary:
         write_json(reports / "stage2_gate_summary.json", gate_summary)
+    rscc_report_dir = reports / "rscc_ebd"
+    for name in ("rscc_ebd_pair_audit.json", "rscc_mask_free_loader_contract.json"):
+        copy_file(args.stage2_audit_root / "rscc_ebd" / name, rscc_report_dir / name)
+    for name in ("source_access_audit.json", "architecture_screening_plan.json"):
+        copy_file(args.stage2_audit_root / name, reports / name)
+    copy_file(args.stage2_audit_root / "architecture_screening" / "architecture_screening_frozen_report.json", reports / "architecture_screening_frozen_report.json")
+    copy_file(args.structured_dir / "semantic_group_registry_structured.jsonl", reports / "structured_semantic" / "semantic_group_registry_structured.jsonl")
 
     source_counts = collections.Counter(str(row.get("source_dataset")) for row in core_pair_rows + rscc_rows)
     split_counts = collections.defaultdict(collections.Counter)
@@ -495,6 +502,11 @@ def main() -> int:
         "p2_submitted": False,
         "counts": {"registries": {name: jsonl_count(registries / name) for name in ("pair_registry.jsonl", "caption_registry.jsonl", "relevance_registry.jsonl", "dense_label_registry.jsonl")}, "manifests": {path.name: jsonl_count(path) for path in sorted(manifests.glob("*.jsonl"))}},
         "license_report": {"source_registry": str(reports / "stage2_source_registry.json"), "rscc_license_ancestry_preserved": True, "access_blockers_explicit": True},
+        "loader_contracts": {
+            "rscc_mask_free": str(rscc_report_dir / "rscc_mask_free_loader_contract.json"),
+            "structured_s2looking": str(reports / "structured_semantic" / "structured_semantic_loader_contract.json"),
+            "primary_semantic_gold": "empty_until_two_reviewer_adjudication",
+        },
         "release_artifact_hashes_path": "hashes/stage2_release_artifacts_sha256.json",
     }
     write_json(out / "dataset_v2_stage2_release.json", release)
