@@ -37,6 +37,10 @@ def test_structured_view_promotes_only_official_coarse_relation(tmp_path: Path) 
     subprocess.run([sys.executable, "scripts/build_qcpr_structured_semantic_view.py", "--input", str(source), "--output-dir", str(output)], check=True)
     train_rows = [json.loads(line) for line in (output / "retrieval_semantic_structured_train.jsonl").read_text().splitlines() if line.strip()]
     assert len(train_rows) == 2
+    assert all(row["schema_version"] == "temporal-caption-manifest-v1" for row in train_rows)
+    assert all(row["pair_id"] == row["canonical_pair_id"] for row in train_rows)
+    assert all(row["captions"] == [row["text"]] for row in train_rows)
+    assert all(Path(row["t1_path"]).is_file() and Path(row["t2_path"]).is_file() for row in train_rows)
     assert all(row["training_enabled"] is True for row in train_rows)
     assert all(row["verification_status"] == "structured_source_verified" for row in train_rows)
     assert all(row["semantic_group_pair_count"] == 2 for row in train_rows)
