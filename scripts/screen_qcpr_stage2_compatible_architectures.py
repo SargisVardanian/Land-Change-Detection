@@ -333,12 +333,10 @@ def train_one(
             for index in indices
             for slot in range(captions_per_pair)
         ]
-        if captions_per_pair > 1:
-            visual_for_text = visual.repeat_interleave(captions_per_pair, dim=0)
-        else:
-            visual_for_text = visual
         base, tokens, attention, content = load_text_batch(text_encoder, captions, device)
-        logits = model(visual_for_text, base, tokens, attention, content)
+        # The score matrix is [logical text queries, physical pair candidates].
+        # Do not repeat visual candidates for each caption.
+        logits = model(visual, base, tokens, attention, content)
         pair_count = visual.shape[0]
         mapping = torch.arange(pair_count, device=device).repeat_interleave(captions_per_pair)
         positive = F.one_hot(mapping, num_classes=pair_count).bool()
