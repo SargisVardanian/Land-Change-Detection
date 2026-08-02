@@ -461,6 +461,12 @@ def main() -> int:
         copy_file(args.structured_dir / name, structured_report_dir / name)
 
     source_counts = collections.Counter(str(row.get("source_dataset")) for row in core_pair_rows + rscc_rows)
+    def count_source(*names: str) -> int:
+        wanted = {name.casefold() for name in names}
+        return sum(count for name, count in source_counts.items() if name.casefold() in wanted)
+
+    dense_only_pairs = count_source("S2Looking", "s2looking")
+    real_temporal_pairs = len(core_pair_rows) + len(rscc_rows) - dense_only_pairs
     split_counts = collections.defaultdict(collections.Counter)
     for row in core_pair_rows + rscc_rows:
         split_counts[str(row.get("source_dataset"))][str(row.get("split"))] += 1
@@ -483,7 +489,7 @@ def main() -> int:
         "code_sha": current_code_sha,
         "core_release_preserved": str(args.core_root),
         "historical_r1_job_200097_touched": False,
-        "physical_pairs": {"real_temporal_retrieval": len(core_pair_rows) + len(rscc_rows) - sum(source_counts.get(name, 0) for name in ("S2Looking", "s2looking")), "dense_only_s2looking": sum(source_counts.get(name, 0) for name in ("S2Looking", "s2looking")), "registry_total": len(core_pair_rows) + len(rscc_rows)},
+        "physical_pairs": {"real_temporal_retrieval": real_temporal_pairs, "dense_only_s2looking": dense_only_pairs, "registry_total": len(core_pair_rows) + len(rscc_rows)},
         "source_pair_counts": dict(sorted(source_counts.items())),
         "source_split_counts": {source: dict(sorted(counts.items())) for source, counts in sorted(split_counts.items())},
         "new_real_physical_source": {"source": "RSCC-EBD", **rscc_audit},
@@ -527,8 +533,8 @@ def main() -> int:
     write_json(reports / "stage2_controlled_exposure_plan.json", {
         "status": "PREPARED_NOT_AUTHORIZED", "p2_submitted": False, "architecture": "B1_framewise_gated_difference", "seed": 20260802,
         "arms": {
-            "P1": {"sources": ["LEVIR-MCI", "SECOND-CC"], "physical_pairs": int(source_counts.get("LEVIR-MCI", 0) + source_counts.get("SECOND-CC", 0))},
-            "P2-real": {"sources": ["LEVIR-MCI", "SECOND-CC", "RSCC-EBD"], "physical_pairs": len(core_pair_rows) + len(rscc_rows)},
+            "P1": {"sources": ["LEVIR-MCI", "SECOND-CC"], "physical_pairs": count_source("LEVIR-MCI", "levir_mci", "SECOND-CC", "second_cc")},
+            "P2-real": {"sources": ["LEVIR-MCI", "SECOND-CC", "RSCC-EBD"], "physical_pairs": real_temporal_pairs},
             "P2-semantic": {"requires": "GOLD_SEMANTIC_READY", "rows_currently_available": len(gold_rows)},
         },
         "common_contract": {"logical_physical_batch": 128, "logical_text_queries": 256, "score_matrix": "256x128", "physical_microbatch": 16, "captions_per_pair": 2, "fixed_exposure": True, "steps": 348, "hard_negative_mining": False, "early_stopping": False, "mask_supervision": False, "bf16": True, "hardware": "one H100 80GB"},
