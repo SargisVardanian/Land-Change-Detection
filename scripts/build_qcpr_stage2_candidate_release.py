@@ -215,6 +215,61 @@ def hash_tree(root: Path, *, excluded_prefixes: tuple[str, ...] = ("hashes/",)) 
     return values
 
 
+def refresh_candidate_reports(
+    reports: Path,
+    release_root: Path,
+    code_sha: str,
+    rscc_audit: dict[str, Any],
+    structured_rows: list[dict[str, Any]],
+    structured_info: dict[str, Any],
+    blockers: list[str],
+    gate_summary: dict[str, Any],
+) -> None:
+    progress_path = reports / "stage2_progress_report.json"
+    if progress_path.is_file():
+        progress = read_json(progress_path, {})
+        progress.update({
+            "code_sha": code_sha,
+            "candidate_release_root": str(release_root),
+            "status": "DATA_QUALITY_HOLD",
+            "stage2_ready": False,
+            "training_submitted": False,
+            "blockers": blockers,
+            "full_suite": gate_summary.get("tests", {}),
+            "rscc": {
+                "pairs": rscc_audit["pair_count"],
+                "events": rscc_audit["event_group_count"],
+                "split_counts": rscc_audit["split_counts"],
+                "identity_proven": True,
+                "loader_passed": True,
+                "captions_training_enabled": False,
+            },
+            "structured_semantic": {
+                "rows": len(structured_rows),
+                "groups": structured_info["group_count"],
+                "split_counts": dict(collections.Counter(row["split"] for row in structured_rows)),
+                "status": structured_info["audit"].get("status"),
+                "training_enabled": True,
+                "human_verified": False,
+                "loader_passed": bool(structured_info["loader"].get("passed")),
+            },
+            "next_authorized_action": "Resolve the remaining semantic and source-access blockers, then rebuild a DATASET_V2_STAGE2_READY release; do not submit P2 while this candidate is on hold.",
+        })
+        write_json(progress_path, progress)
+    plan_path = reports / "p2_bounded_training_plan.json"
+    if plan_path.is_file():
+        plan = read_json(plan_path, {})
+        plan.update({
+            "code_sha": code_sha,
+            "candidate_release_root": str(release_root),
+            "release_not_created": False,
+            "status": "PREPARED_NOT_AUTHORIZED",
+            "training_submitted": False,
+            "blockers": blockers,
+        })
+        write_json(plan_path, plan)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", type=Path, required=True)
@@ -228,6 +283,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.output_root.exists():
         raise SystemExit(f"refusing to overwrite release root: {args.output_root}")
+    current_code_sha = git_sha(args.repo)
     required_core = [args.core_root / "registries" / name for name in ("pair_registry.jsonl", "caption_registry.jsonl", "relevance_registry.jsonl", "dense_label_registry.jsonl")]
     if any(not path.is_file() for path in required_core):
         raise SystemExit("core release is incomplete")
@@ -300,6 +356,16 @@ def main() -> int:
         "Hi-UCD corrected archive is not integrated",
         "cluster GitHub SSH key is not authorized for remote publication",
     ]
+    refresh_candidate_reports(
+        reports,
+        out,
+        current_code_sha,
+        rscc_audit,
+        structured_rows,
+        structured_info,
+        blockers,
+        read_json(args.stage2_audit_root / "stage2_gate_summary.json", {}),
+    )
     release = {
         "schema_version": "qcpr-dataset-v2-stage2-candidate-release-v1",
         "release_name": "QCPR Dataset-v2 Stage-2 candidate",
@@ -307,7 +373,7 @@ def main() -> int:
         "stage2_ready": False,
         "training_authorized": False,
         "training_launched": False,
-        "code_sha": git_sha(args.repo),
+        "code_sha": current_code_sha,
         "core_release_preserved": str(args.core_root),
         "historical_r1_job_200097_touched": False,
         "new_real_physical_source": {"source": "RSCC-EBD", **rscc_audit},
