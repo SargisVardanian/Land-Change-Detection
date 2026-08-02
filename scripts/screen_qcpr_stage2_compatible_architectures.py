@@ -486,6 +486,7 @@ def main() -> int:
     p.add_argument("--max-development-pairs", type=int, default=512)
     p.add_argument("--steps", type=int, default=128)
     p.add_argument("--seed", type=int, default=20260802)
+    p.add_argument("--only-kind", choices=("B0", "B1", "B2"), default=None)
     p.add_argument("--self-test", action="store_true")
     args = p.parse_args()
     if args.self_test:
@@ -522,7 +523,9 @@ def main() -> int:
     text_encoder = JinaV5TextEncoder(JinaV5TextConfig(model_path=backbone["jina_model"], max_length=256, global_projection_mode="matryoshka_truncate", freeze=True)).to(device).eval()
     cfg = SinglePassConfig(grid_size=32, dropout=0.1)
     screen_rows = []
-    for kind, cache in (("B0", joint), ("B1", frame), ("B2", frame)):
+    all_kinds = (("B0", joint), ("B1", frame), ("B2", frame))
+    kinds = tuple(item for item in all_kinds if args.only_kind is None or item[0] == args.only_kind)
+    for kind, cache in kinds:
         train_meta = train_one(kind, train_rows, cache[: len(train_rows)], text_encoder, cfg, device, args.steps, args.microbatch, args.captions_per_pair, args.seed, output)
         ckpt = torch.load(train_meta["checkpoint"], map_location=device, weights_only=False)
         model = ScreenModel(kind, cfg).to(device)
@@ -533,7 +536,7 @@ def main() -> int:
         torch.cuda.empty_cache()
     report = {
         "schema_version": "qcpr-stage2-compatible-architecture-screen-v1",
-        "status": "PASS",
+        "status": "PASS_B1_CORRECTED" if args.only_kind == "B1" else "PASS",
         "code_sha": os.popen(f"git -C {ROOT} rev-parse HEAD").read().strip(),
         "current_checkpoint": str(args.current_checkpoint),
         "current_checkpoint_sha256": sha256_file(args.current_checkpoint),
@@ -555,6 +558,7 @@ def main() -> int:
             "train_schedule_sha256": stable_sha([row["pair_id"] for row in train_rows]),
             "development_schedule_sha256": stable_sha([row["pair_id"] for row in dev_rows]),
         },
+        "screen_scope": {"only_kind": args.only_kind, "corrected_after_temporal_gradient_audit": args.only_kind == "B1"},
         "feature_caches": {"joint": joint_meta, "framewise": frame_meta},
         "architectures": {item["training"]["kind"]: item for item in screen_rows},
         "scientific_notes": [
