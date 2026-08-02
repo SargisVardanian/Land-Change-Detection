@@ -140,11 +140,18 @@ def main() -> int:
             continue
         pair_id = str(source_row["pair_id"])
         rows_by_split[split].append({
-            "schema_version": "qcpr-stage2-structured-semantic-v1",
+            "schema_version": "2.1",
             "query_id": f"{pair_id}:official_relation:{direction}",
             "canonical_pair_id": pair_id,
+            "pair_id": pair_id,
+            "dataset_name": "s2looking",
+            "t1_path": source_row.get("t1_path"),
+            "t2_path": source_row.get("t2_path"),
+            "time_order": ["before", "after"],
             "text": RELATIONS[direction],
             "normalized_text": RELATIONS[direction],
+            "captions": [RELATIONS[direction]],
+            "normalized_caption_groups": [RELATIONS[direction]],
             "split": split,
             "source_dataset": "s2looking",
             "query_scope": "semantic_group",
