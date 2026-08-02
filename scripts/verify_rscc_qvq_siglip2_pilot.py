@@ -60,7 +60,8 @@ class FrozenVerifier:
         for start in range(0,len(texts),batch_size):
             enc=self.tokenizer(texts[start:start+batch_size],padding=True,truncation=True,max_length=self.max_length,return_tensors="pt")
             ids=enc["input_ids"].to(self.device)
-            mask=enc["attention_mask"].to(self.device).bool()
+            attention=enc.get("attention_mask")
+            mask=(attention.to(self.device).bool() if attention is not None else ids.ne(int(self.tokenizer.pad_token_id)))
             hidden=self.model.text_model(input_ids=ids,attention_mask=mask).last_hidden_state
             valid=mask.clone()
             if self.special_ids:
