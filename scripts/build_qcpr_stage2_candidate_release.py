@@ -414,6 +414,7 @@ def main() -> int:
     # Preserve provisional rows as auditable data, but make their disabled
     # role explicit and keep them out of all primary semantic manifests.
     provisional_dir = manifests / "provisional_semantic_candidates"
+    provisional_dir.mkdir(parents=True, exist_ok=True)
     for split in SPLITS:
         source = args.stage2_audit_root / "semantic_view" / f"retrieval_semantic_{split}_v2.jsonl"
         if source.is_file():
