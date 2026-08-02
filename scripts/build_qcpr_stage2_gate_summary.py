@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build a conservative Stage-2 gate summary from immutable audit artifacts."""
 from __future__ import annotations
-import argparse, hashlib, json, subprocess
+import argparse, hashlib, json, re, subprocess
 from pathlib import Path
 from typing import Any
 
@@ -41,7 +41,11 @@ def main() -> int:
     rscc_valid=bool(rscc.get("identity_proven") and rscc_loader.get("passed") and rscc.get("pair_count",0)>0 and len(rscc.get("split_counts",{}))==3)
     semantic_nonempty=all(int(semantic.get("counts",{}).get(s,0))>0 for s in ("train","development","test"))
     semantic_verified=bool(semantic.get("human_audit_rows",0)>0)
-    tests_passed=test_status=="0" and "563 passed, 3 skipped" in test_log
+    summary_match=re.search(r"(?m)^(\d+) passed(?:, (\d+) skipped)?(?:, \d+ warnings)? in ", test_log)
+    passed_count=int(summary_match.group(1)) if summary_match else 0
+    skipped_count=int(summary_match.group(2) or 0) if summary_match else 0
+    tests_passed=test_status=="0" and passed_count>=563 and summary_match is not None
+    test_summary=f"{passed_count} passed, {skipped_count} skipped" if summary_match else None
     blockers=[]
     if not rscc_valid: blockers.append("RSCC EBD physical pilot is not fully loader-validated")
     if not semantic_nonempty: blockers.append("semantic train/development/test manifests are not all non-empty")
@@ -66,7 +70,7 @@ def main() -> int:
         "semantic":{"counts":semantic.get("counts"),"groups":semantic.get("groups"),"structured_source_rows":semantic.get("structured_source_rows"),"human_audit_rows":semantic.get("human_audit_rows"),"manual_visual_verified_rows":manual.get("verified_semantic_rows",0),"manual_visual_status":manual.get("status"),"review_required_rows":semantic.get("review_required_rows"),"automated_verified_rows":automated.get("row_count",0),"automated_verified_split_counts":automated.get("split_counts",{}),"automated_verification_status":automated.get("status"),"status":semantic.get("status"),"gate":semantic.get("stage2_gate"),"train_sha256":sha256(audit/"semantic_view/retrieval_semantic_train_v2.jsonl"),"development_sha256":sha256(audit/"semantic_view/retrieval_semantic_development_v2.jsonl"),"test_sha256":sha256(audit/"semantic_view/retrieval_semantic_test_v2.jsonl")},
         "synthetic_rcd":{"mapping_coverage":rcd.get("mapping_coverage"),"mode":rcd.get("mode"),"status":rcd.get("status")},
         "architecture_screening":{"status":arch.get("status"),"plan_sha256":sha256(audit/"architecture_screening_plan.json"),"actual_status":arch_actual.get("status"),"actual_report_sha256":sha256(audit/"architecture_screening/architecture_screening_frozen_report.json")},
-        "tests":{"status_file":test_status,"full_suite_passed":tests_passed,"summary":"563 passed, 3 skipped" if tests_passed else None,"log_sha256":sha256(audit/"test_suite/pytest.log")},
+        "tests":{"status_file":test_status,"full_suite_passed":tests_passed,"summary":test_summary if tests_passed else None,"log_sha256":sha256(audit/"test_suite/pytest.log")},
         "training_submitted":False,
         "blockers":blockers,
         "artifact_hashes":{str(p.relative_to(audit)):sha256(p) for p in [audit/"source_registry.json",audit/"semantic_view/semantic_view_audit.json",audit/"semantic_view/automated_verified_pilot/automated_verified_semantic_pilot_audit.json",audit/"semantic_view/manual_visual_verified_pilot/manual_visual_semantic_pilot_audit.json",audit/"architecture_screening_plan.json",audit/"architecture_screening/architecture_screening_frozen_report.json"] if p.is_file()},
