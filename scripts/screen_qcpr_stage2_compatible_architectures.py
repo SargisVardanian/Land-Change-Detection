@@ -184,6 +184,36 @@ class ScreenModel(nn.Module):
     def trainable_parameters(self):
         return [parameter for parameter in self.parameters() if parameter.requires_grad]
 
+    def _text_embedding(self, base_text: Tensor, text_tokens: Tensor, attention: Tensor, content: Tensor) -> Tensor:
+        return self.text_projection(base_text, text_tokens, attention, content).text_search_vector
+
+    def _global_pair_embedding(self, visual: Tensor) -> Tensor:
+        if self.kind == "B0":
+            native = visual
+        elif self.kind == "B1":
+            native = self.temporal(visual)
+        else:
+            raise ValueError("B2 requires query-conditioned scoring")
+        return self.pair_adapter(native).pair_search_vector
+
+    def _b2_score_matrix(
+        self,
+        visual: Tensor,
+        base_text: Tensor,
+        text_tokens: Tensor,
+        attention: Tensor,
+        content: Tensor,
+    ) -> Tensor:
+        query_count = base_text.shape[0]
+        candidate_count = visual.shape[0]
+        expanded_visual = visual.unsqueeze(0).expand(query_count, -1, -1, -1, -1)
+        expanded_visual = expanded_visual.reshape(query_count * candidate_count, visual.shape[1], visual.shape[2], visual.shape[3])
+        expanded_text = base_text[:, None].expand(-1, candidate_count, -1).reshape(query_count * candidate_count, -1)
+        fused = self.temporal(expanded_visual, expanded_text)
+        pair = self.pair_adapter(fused).pair_search_vector.reshape(query_count, candidate_count, -1)
+        text = self._text_embedding(base_text, text_tokens, attention, content)
+        return self.logit_scale.exp().clamp(1e-3, 100.0) * torch.bmm(text[:, None, :], pair.transpose(1, 2)).squeeze(1) + self.logit_bias
+
     def forward(
         self,
         visual: Tensor,
@@ -192,26 +222,18 @@ class ScreenModel(nn.Module):
         attention: Tensor,
         content: Tensor,
     ) -> Tensor:
-        if self.kind == "B0":
-            native = visual
-        elif self.kind == "B1":
-            native = self.temporal(visual)
-        else:
-            native = self.temporal(visual, base_text)
-        pair = self.pair_adapter(native).pair_search_vector
-        text = self.text_projection(base_text, text_tokens, attention, content).text_search_vector
+        if self.kind == "B2":
+            return self._b2_score_matrix(visual, base_text, text_tokens, attention, content)
+        pair = self._global_pair_embedding(visual)
+        text = self._text_embedding(base_text, text_tokens, attention, content)
         return self.logit_scale.exp().clamp(1e-3, 100.0) * (text @ pair.T) + self.logit_bias
 
     def pair_embeddings(self, visual: Tensor, base_text: Tensor | None = None) -> Tensor:
-        if self.kind == "B0":
-            native = visual
-        elif self.kind == "B1":
-            native = self.temporal(visual)
-        else:
+        if self.kind == "B2":
             if base_text is None:
                 raise ValueError("B2 pair embeddings require text")
-            native = self.temporal(visual, base_text)
-        return self.pair_adapter(native).pair_search_vector
+            return self.pair_adapter(self.temporal(visual, base_text)).pair_search_vector
+        return self._global_pair_embedding(visual)
 
 
 @torch.no_grad()
@@ -384,45 +406,27 @@ def evaluate_one(
         for caption in row["captions"]:
             captions.append(caption)
             mapping.append(pair_index)
-    score_parts = []
-    for start in range(0, len(captions), text_batch):
-        chunk = captions[start : start + text_batch]
-        base, tokens, attention, content = load_text_batch(text_encoder, chunk, device)
-        if model.kind == "B2":
-            visual = visual_cache[mapping[start : start + len(chunk)]].to(device, dtype=torch.float32)
-        else:
-            visual = visual_cache.to(device, dtype=torch.float32)
-        if model.kind == "B2":
-            logits = model(visual, base, tokens, attention, content)
-        else:
-            pair = pair_embeddings
-            text = model.text_projection(base, tokens, attention, content).text_search_vector
-            logits = model.logit_scale.exp().clamp(1e-3, 100.0) * (text @ pair.T) + model.logit_bias
-        score_parts.append(logits.cpu())
     if model.kind == "B2":
-        # query-conditioned scores are one score per query against its own item;
-        # evaluate a full candidate matrix explicitly to avoid pretending B2 is
-        # indexable. This path is expensive, so it is only used for a bounded
-        # screen subset.
         all_scores = []
+        query_chunk = min(int(text_batch), 8)
+        candidate_chunk = 32
+        for start in range(0, len(captions), query_chunk):
+            chunk = captions[start : start + query_chunk]
+            base, tokens, attention, content = load_text_batch(text_encoder, chunk, device)
+            row_parts = []
+            for pair_start in range(0, len(rows), candidate_chunk):
+                visual = visual_cache[pair_start : pair_start + candidate_chunk].to(device, dtype=torch.float32)
+                row_parts.append(model(visual, base, tokens, attention, content).cpu())
+            all_scores.append(torch.cat(row_parts, dim=1))
+        scores = torch.cat(all_scores, dim=0)
+    else:
+        score_parts = []
         for start in range(0, len(captions), text_batch):
             chunk = captions[start : start + text_batch]
             base, tokens, attention, content = load_text_batch(text_encoder, chunk, device)
-            candidates = []
-            for pair_start in range(0, len(rows), 64):
-                v = visual_cache[pair_start : pair_start + 64].to(device, dtype=torch.float32)
-                expanded = v.unsqueeze(0).expand(len(chunk), -1, -1, -1).reshape(-1, v.shape[1], v.shape[2])
-                qbase = base[:, None].expand(-1, v.shape[0], -1).reshape(-1, base.shape[-1])
-                # B2 fusion needs the query for every candidate.
-                fused = model.temporal(expanded, qbase)
-                pair = model.pair_adapter(fused).pair_search_vector
-                qtext = model.text_projection(base, tokens, attention, content).text_search_vector
-                pair_view = pair.reshape(len(chunk), v.shape[0], -1)
-                logits = model.logit_scale.exp().clamp(1e-3, 100.0) * torch.bmm(qtext[:, None, :], pair_view.transpose(1, 2)).squeeze(1) + model.logit_bias
-                candidates.append(logits)
-            all_scores.append(torch.cat(candidates, dim=1).cpu())
-        scores = torch.cat(all_scores, dim=0)
-    else:
+            text = model._text_embedding(base, tokens, attention, content)
+            logits = model.logit_scale.exp().clamp(1e-3, 100.0) * (text @ pair_embeddings.T) + model.logit_bias
+            score_parts.append(logits.cpu())
         scores = torch.cat(score_parts, dim=0)
     ranks = []
     for query_index, pair_index in enumerate(mapping):
