@@ -54,6 +54,11 @@ def test_stage2_candidate_release_is_additive_and_hold_gated(tmp_path: Path) -> 
     _write_jsonl(structured / "semantic_group_registry_structured.jsonl", [{"semantic_group_id": structured_row["semantic_group_id"], "split": "train", "pair_ids": [structured_row["canonical_pair_id"], "s2looking:train:1"], "pair_count": 2}])
     (structured / "structured_semantic_audit.json").write_text(json.dumps({"status": "STRUCTURED_SOURCE_SEMANTIC_READY", "training_enabled": True, "output_row_count": 1}))
     (structured / "structured_semantic_loader_contract.json").write_text(json.dumps({"passed": True}))
+    (structured / "independent_structured_semantic_verification.json").write_text(json.dumps({
+        "status": "INDEPENDENT_STRUCTURED_SEMANTIC_VERIFIED",
+        "verified_rows": 1,
+        "mask_free_output": True,
+    }))
     stage2 = tmp_path / "stage2"; stage2.mkdir(); (stage2 / "source_registry.json").write_text(json.dumps({"status": "DATA_QUALITY_HOLD"}))
     output = tmp_path / "release"
     subprocess.run([

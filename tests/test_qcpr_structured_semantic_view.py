@@ -51,6 +51,19 @@ def test_structured_view_promotes_only_official_coarse_relation(tmp_path: Path) 
     assert audit["status"] == "STRUCTURED_SOURCE_SEMANTIC_READY"
     assert audit["excluded_empty_direction_counts"] == {"disappeared": 3}
     assert audit["mask_paths_in_output"] is False
+    verification = output / "independent_verification.json"
+    subprocess.run([
+        sys.executable,
+        "scripts/verify_qcpr_structured_semantic_view.py",
+        "--structured-dir",
+        str(output),
+        "--output",
+        str(verification),
+    ], check=True)
+    independent = json.loads(verification.read_text())
+    assert independent["status"] == "INDEPENDENT_STRUCTURED_SEMANTIC_VERIFIED"
+    assert independent["verified_rows"] == 2
+    assert independent["mask_free_output"] is True
 
 
 def test_structured_view_rejects_wrong_official_label_mapping(tmp_path: Path) -> None:

@@ -90,10 +90,17 @@ def validate_rscc(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def validate_structured_view(structured_dir: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     audit = read_json(structured_dir / "structured_semantic_audit.json", {})
     loader = read_json(structured_dir / "structured_semantic_loader_contract.json", {})
+    independent = read_json(structured_dir / "independent_structured_semantic_verification.json", {})
     if audit.get("status") != "STRUCTURED_SOURCE_SEMANTIC_READY" or not audit.get("training_enabled"):
         raise SystemExit("structured semantic audit is not ready")
     if not loader.get("passed"):
         raise SystemExit("structured semantic loader contract did not pass")
+    if (
+        independent.get("status") != "INDEPENDENT_STRUCTURED_SEMANTIC_VERIFIED"
+        or not independent.get("mask_free_output")
+        or int(independent.get("verified_rows", 0)) <= 0
+    ):
+        raise SystemExit("independent structured semantic verification did not pass")
     rows: list[dict[str, Any]] = []
     group_ids: set[str] = set()
     for split in SEMANTIC_SPLITS:
@@ -116,7 +123,9 @@ def validate_structured_view(structured_dir: Path) -> tuple[list[dict[str, Any]]
     }
     if not rows or not group_ids or not valid_groups.intersection(group_ids):
         raise SystemExit("structured semantic view lacks non-empty multi-positive groups")
-    return rows, {"audit": audit, "loader": loader, "group_count": len(group_ids)}
+    if int(independent.get("verified_rows", 0)) != len(rows):
+        raise SystemExit("independent semantic row count does not match release rows")
+    return rows, {"audit": audit, "loader": loader, "independent": independent, "group_count": len(group_ids)}
 
 
 def normalize_rscc_pair(row: dict[str, Any]) -> dict[str, Any]:
@@ -252,6 +261,7 @@ def refresh_candidate_reports(
                 "training_enabled": True,
                 "human_verified": False,
                 "loader_passed": bool(structured_info["loader"].get("passed")),
+                "independent_verified": structured_info["independent"].get("status") == "INDEPENDENT_STRUCTURED_SEMANTIC_VERIFIED",
             },
             "next_authorized_action": "Resolve the remaining semantic and source-access blockers, then rebuild a DATASET_V2_STAGE2_READY release; do not submit P2 while this candidate is on hold.",
         })
@@ -342,6 +352,10 @@ def main() -> int:
     structured_report_dir.mkdir(parents=True, exist_ok=True)
     for name in ("structured_semantic_audit.json", "structured_semantic_loader_contract.json"):
         shutil.copy2(args.structured_dir / name, structured_report_dir / name)
+    shutil.copy2(
+        args.structured_dir / "independent_structured_semantic_verification.json",
+        structured_report_dir / "independent_structured_semantic_verification.json",
+    )
     qvq_report = dict(qvq_audit)
     qvq_report["training_enabled"] = False
     qvq_report["release_role"] = "unverified_candidate_view_only"
@@ -384,6 +398,7 @@ def main() -> int:
             "groups": structured_info["group_count"],
             "training_enabled": True,
             "human_verified": False,
+            "independent_verified": structured_info["independent"].get("status") == "INDEPENDENT_STRUCTURED_SEMANTIC_VERIFIED",
             "loader_passed": bool(structured_info["loader"].get("passed")),
         },
         "unverified_views": {"rscc_qvq_rows": qvq_audit.get("caption_count", 0), "training_enabled": False},
@@ -408,6 +423,7 @@ def main() -> int:
         "exact_view_unchanged_from_core": True,
         "structured_semantic_view": "compact same-split group registry; no materialized ignored lists",
         "structured_semantic_rows": len(structured_rows),
+        "structured_semantic_independent_verification": structured_info["independent"].get("status"),
         "unverified_qvq_excluded_from_training": True,
     })
     (reports / "README.md").write_text("DATA_QUALITY_HOLD: Stage-2 candidate contains new RSCC physical pairs and source-verified coarse S2Looking semantics, but is not training-authorized.\n", encoding="utf-8")
