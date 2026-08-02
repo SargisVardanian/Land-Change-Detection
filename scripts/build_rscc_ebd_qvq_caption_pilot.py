@@ -34,7 +34,17 @@ def main()->int:
         rows.append({"schema_version":"qcpr-stage2-rscc-qvq-caption-v1","canonical_pair_id":pair,"source_dataset":"RSCC-EBD","source_pair_id":f"{event}:{stem}","source_scene_group_id":f"rscc_ebd:event:{event}","source_event_id":event,"split":item["split"],"t1_path":item["before"],"t2_path":item["after"],"captions":item["captions"],"caption_source":"RSCC-QvQ","is_generated":True,"generator":"QvQ-Max","verification_status":"generated_unverified","quality_score":None,"identifiability_score":None,"training_enabled":False,"reason_training_disabled":"independent frozen verifier and stratified human audit pending","query_scope":"semantic_group"})
         provenance["generated_unverified"]+=len(item["captions"])
     rows.sort(key=lambda r:r["canonical_pair_id"]); out=a.output_dir; out.mkdir(parents=True,exist_ok=True)
-    (out/"rscc_ebd_qvq_caption_pilot.jsonl").write_text("".join(json.dumps(r,sort_keys=True,ensure_ascii=False)+"\n" for r in rows[:a.pilot]),encoding="utf-8")
+    buckets=collections.defaultdict(list)
+    for row in rows: buckets[(str(row["split"]),str(row["source_event_id"]))].append(row)
+    pilot_rows=[]
+    bucket_keys=sorted(buckets)
+    cursor=0
+    while len(pilot_rows)<min(len(rows),a.pilot) and bucket_keys:
+        key=bucket_keys[cursor % len(bucket_keys)]
+        if buckets[key]: pilot_rows.append(buckets[key].pop(0))
+        cursor+=1
+        if cursor >= len(bucket_keys) and not any(buckets.values()): break
+    (out/"rscc_ebd_qvq_caption_pilot.jsonl").write_text("".join(json.dumps(r,sort_keys=True,ensure_ascii=False)+"\n" for r in pilot_rows),encoding="utf-8")
     (out/"rscc_ebd_qvq_caption_candidates.jsonl").write_text("".join(json.dumps(r,sort_keys=True,ensure_ascii=False)+"\n" for r in rows),encoding="utf-8")
     report={"schema_version":"qcpr-stage2-rscc-qvq-caption-audit-v1","annotation_rows":total,"matched_ebd_annotation_rows":matched,"unmatched_ebd_rows":len(unmatched),"mapped_pairs":len(rows),"pilot_pairs":min(len(rows),a.pilot),"caption_count":sum(len(r["captions"]) for r in rows),"split_counts":dict(collections.Counter(r["split"] for r in rows)),"event_counts":dict(collections.Counter(r["source_event_id"] for r in rows)),"provenance":dict(provenance),"independent_verification_passed":False,"human_audit_passed":False,"training_enabled":False,"status":"CAPTION_VERIFICATION_REQUIRED","unmatched_examples":unmatched[:50],"blockers":["QvQ is generated supervision, not human caption supervision","independent frozen verifier and stratified human review are required before retrieval use"]}
     (out/"rscc_ebd_qvq_caption_audit.json").write_text(json.dumps(report,indent=2,sort_keys=True)+"\n",encoding="utf-8"); print(json.dumps({k:report[k] for k in ("annotation_rows","matched_ebd_annotation_rows","mapped_pairs","pilot_pairs","caption_count","status")},sort_keys=True)); return 0
