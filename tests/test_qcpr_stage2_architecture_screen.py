@@ -56,6 +56,21 @@ def test_b0_b1_b2_screen_heads_have_finite_gradients() -> None:
         assert gradients
         assert all(torch.isfinite(grad).all() for grad in gradients)
 
+
+def test_b1_temporal_fusion_receives_gradient_through_pair_adapter() -> None:
+    torch.manual_seed(11)
+    model = ScreenModel("B1", _config())
+    frames = torch.randn(3, 2, 16, 12)
+    base = torch.randn(3, 8)
+    tokens = torch.randn(3, 5, 8)
+    attention = torch.ones(3, 5, dtype=torch.bool)
+    scores = model(frames, base, tokens, attention, attention)
+    scores.square().mean().backward()
+    gradient = model.temporal.mix[-1].weight.grad
+    assert gradient is not None
+    assert torch.isfinite(gradient).all()
+
+
 def test_score_matrix_supports_multiple_captions_per_pair() -> None:
     torch.manual_seed(9)
     model = ScreenModel("B2", _config())
