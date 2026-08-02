@@ -46,7 +46,7 @@ def main() -> int:
     if not rscc_valid: blockers.append("RSCC EBD physical pilot is not fully loader-validated")
     if not semantic_nonempty: blockers.append("semantic train/development/test manifests are not all non-empty")
     if not semantic_verified: blockers.append("semantic supervision is provisional: generated QvQ and mask/event-derived groups require independent verifier and stratified human audit")
-    if arch.get("status")!="SCREENING_COMPLETE": blockers.append("frozen architecture screening is incomplete; B1/B2 implementation and B3/B4 weight/preprocessing audits remain")
+    if arch.get("status")!="SCREENING_COMPLETE": blockers.append("frozen architecture screening is incomplete; native B0 and B2 are not benchmarked, and B3/B4 weight/preprocessing audits remain")
     if rcd.get("mapping_coverage",0) != 1.0: blockers.append("Synthetic RCD real-A mapping remains unavailable; synthetic-A is diagnostic only")
     for name, label in (("SYSU-CD","SYSU-CD official image archive"),("Hi-UCD","Hi-UCD corrected archive")):
         row=next((x for x in registry.get("sources",[]) if x.get("source_dataset")==name), {})
