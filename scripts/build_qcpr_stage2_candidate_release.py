@@ -456,7 +456,9 @@ def main() -> int:
     for name in ("source_access_audit.json", "architecture_screening_plan.json"):
         copy_file(args.stage2_audit_root / name, reports / name)
     copy_file(args.stage2_audit_root / "architecture_screening" / "architecture_screening_frozen_report.json", reports / "architecture_screening_frozen_report.json")
-    copy_file(args.structured_dir / "semantic_group_registry_structured.jsonl", reports / "structured_semantic" / "semantic_group_registry_structured.jsonl")
+    structured_report_dir = reports / "structured_semantic"
+    for name in ("structured_semantic_audit.json", "structured_semantic_loader_contract.json", "independent_structured_semantic_verification.json", "semantic_group_registry_structured.jsonl"):
+        copy_file(args.structured_dir / name, structured_report_dir / name)
 
     source_counts = collections.Counter(str(row.get("source_dataset")) for row in core_pair_rows + rscc_rows)
     split_counts = collections.defaultdict(collections.Counter)
