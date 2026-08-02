@@ -55,7 +55,13 @@ def stable_rank(seed: int, event_id: str, pair_id: str) -> str:
 def pending_labels(reviewer_id: str) -> dict[str, Any]:
     return {
         "reviewer_id": reviewer_id,
+        # A role name is not evidence that two people reviewed independently.
+        # Reviewers fill an opaque, stable human identity in the agreement file
+        # and repeat it in each completed row.
+        "reviewer_identity": None,
         "decision_status": "pending",
+        "reviewed_at": None,
+        "independence_attestation": None,
         "visible_change": None,
         "changed_object": None,
         "change_direction": None,
@@ -168,6 +174,9 @@ def main() -> int:
         "status": "PENDING_HUMAN_REVIEW",
         "reviewer_count": 2,
         "reviewers": ["reviewer_a", "reviewer_b"],
+        "reviewer_identities": {"reviewer_a": None, "reviewer_b": None},
+        "independent_review_attested": False,
+        "adjudicator_identity": None,
         "rows_sampled": len(packet),
         "events_sampled": len(by_event),
         "rows_reviewed": 0,
@@ -192,6 +201,11 @@ def main() -> int:
         "semantic_positive_sets_materialized": False,
         "training_enabled": False,
         "reviewer_decisions_required": ["reviewer_a", "reviewer_b"],
+        "reviewer_identity_fields_required": [
+            "reviewer_identity",
+            "reviewed_at",
+            "independence_attestation",
+        ],
         "required_labels": list(REQUIRED_LABELS),
         "source_pairs_sha256": hashlib.sha256(args.pairs.read_bytes()).hexdigest(),
         "candidate_captions_sha256": hashlib.sha256(args.candidates.read_bytes()).hexdigest(),
@@ -201,8 +215,14 @@ def main() -> int:
         "Reviewers must inspect both T1 and T2. Event IDs are provenance only; "
         "they must never define semantic positives. Complete reviewer_a_decisions.jsonl "
         "and reviewer_b_decisions.jsonl independently. Codex or automated model "
-        "inspection is not a human review. Adjudication and training promotion "
-        "remain disabled until both sheets are returned.\n",
+        "inspection is not a human review.\n\n"
+        "Before submission, fill human_review_agreement.json with two distinct "
+        "opaque human reviewer identities and set independent_review_attested=true. "
+        "Each completed decision row must repeat its reviewer_identity, include an "
+        "ISO-8601 reviewed_at timestamp, and set independence_attestation=true. "
+        "Do not use the same person for both identities. Adjudication and training "
+        "promotion remain disabled until both complete sheets are returned and the "
+        "gold builder validates this provenance.\n",
         encoding="utf-8",
     )
     print(json.dumps({"status": "READY_FOR_TWO_INDEPENDENT_HUMAN_REVIEWERS", "events": len(by_event), "rows": len(packet), "training_enabled": False}, sort_keys=True))

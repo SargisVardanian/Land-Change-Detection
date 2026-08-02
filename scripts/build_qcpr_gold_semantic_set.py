@@ -37,6 +37,11 @@ REVIEW_REQUIRED = (
     "accept_rewrite_reject",
     "confidence",
 )
+REVIEW_METADATA_REQUIRED = (
+    "reviewer_identity",
+    "reviewed_at",
+    "independence_attestation",
+)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -114,6 +119,15 @@ def main() -> int:
     agreement = read_json(args.agreement)
     if agreement.get("status") != "HUMAN_REVIEW_COMPLETE" or int(agreement.get("adjudicated_rows", 0)) != len(packet):
         return empty_outputs(args.output_dir, len(packet), "two independent human reviews are not complete", args.code_sha)
+    identities = agreement.get("reviewer_identities")
+    if not isinstance(identities, dict):
+        return empty_outputs(args.output_dir, len(packet), "reviewer identities are missing", args.code_sha)
+    reviewer_a_identity = str(identities.get("reviewer_a") or "").strip()
+    reviewer_b_identity = str(identities.get("reviewer_b") or "").strip()
+    if not reviewer_a_identity or not reviewer_b_identity or reviewer_a_identity == reviewer_b_identity:
+        return empty_outputs(args.output_dir, len(packet), "two distinct human reviewer identities are required", args.code_sha)
+    if agreement.get("independent_review_attested") is not True:
+        return empty_outputs(args.output_dir, len(packet), "independent-review attestation is missing", args.code_sha)
 
     records: list[dict[str, Any]] = []
     for row in packet:
@@ -124,6 +138,13 @@ def main() -> int:
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} has pending/incomplete rows", args.code_sha)
             if any(field not in decision for field in REVIEW_REQUIRED):
                 return empty_outputs(args.output_dir, len(packet), f"{reviewer} is missing required labels", args.code_sha)
+            expected_identity = reviewer_a_identity if reviewer == "reviewer_a" else reviewer_b_identity
+            if str(decision.get("reviewer_identity") or "").strip() != expected_identity:
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} identity does not match agreement", args.code_sha)
+            if not str(decision.get("reviewed_at") or "").strip():
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} reviewed_at is missing", args.code_sha)
+            if decision.get("independence_attestation") is not True:
+                return empty_outputs(args.output_dir, len(packet), f"{reviewer} independence attestation is missing", args.code_sha)
         if final.get("adjudication_status") != "adjudicated" or final.get("final_decision") not in {"accept", "rewrite"}:
             return empty_outputs(args.output_dir, len(packet), "adjudication is incomplete or rejected all rows", args.code_sha)
         attrs = final.get("structured_attributes") or {}
@@ -262,6 +283,8 @@ def main() -> int:
         "primary_training_grades": [2, 3],
         "same_event_hard_negative_policy": "same-event semantically different pairs remain negatives unless structured grades match",
         "training_enabled_unreviewed_rows": 0,
+        "reviewer_identities": {"reviewer_a": reviewer_a_identity, "reviewer_b": reviewer_b_identity},
+        "independent_review_attested": True,
     })
     print(json.dumps({"status": "GOLD_SEMANTIC_READY", "verified_caption_rows": len(text_registry), "semantic_group_count": len(registry)}, sort_keys=True))
     return 0
