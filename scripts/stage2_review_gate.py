@@ -406,8 +406,11 @@ def public_rows(rows: list[dict[str, Any]], bundle: Path) -> tuple[list[dict[str
             "event_type_visually_verified": "unknown",
             "verifier_score": row.get("verifier_score"),
             "selection_reason": row.get("selection_reason", "original_packet"),
-            "t1_path": str(t1),
-            "t2_path": str(t2),
+            # Keep the reveal layer portable as well: absolute cluster/local
+            # paths must never be embedded in a distributed viewer bundle.
+            "t1_source_name": t1.name,
+            "t2_source_name": t2.name,
+            "source_paths_redacted": True,
         })
     return visible, hidden
 
