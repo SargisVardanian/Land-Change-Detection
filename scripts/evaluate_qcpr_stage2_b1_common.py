@@ -38,6 +38,37 @@ def read_rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
+def group_rows_preserve_queries(rows: list[dict]) -> list[dict]:
+    """Group physical pairs without deduplicating query records.
+
+    The common frozen gallery is defined over the immutable 9,640 query rows.
+    Several pairs contain repeated caption text, and those rows remain valid
+    query exposures for this audit even though training samplers may dedupe
+    text within a physical pair.
+    """
+    grouped: dict[str, dict] = {}
+    order: list[str] = []
+    for index, raw in enumerate(rows):
+        pair_id = str(raw.get("canonical_pair_id") or raw.get("pair_id") or "")
+        text = str(raw.get("caption") or raw.get("text") or "").strip()
+        if not pair_id or not text:
+            continue
+        if pair_id not in grouped:
+            grouped[pair_id] = {
+                "pair_id": pair_id,
+                "dataset_name": raw.get("dataset_name", "unknown"),
+                "t1_path": raw["t1_path"],
+                "t2_path": raw["t2_path"],
+                "captions": [],
+                "caption_ids": [],
+            }
+            order.append(pair_id)
+        row = grouped[pair_id]
+        row["captions"].append(text)
+        row["caption_ids"].append(str(raw.get("caption_id") or f"{pair_id}:query:{index}"))
+    return [grouped[pair_id] for pair_id in order]
+
+
 @torch.inference_mode()
 def extract_features(rows: list[dict], args: argparse.Namespace, device: torch.device) -> torch.Tensor:
     cache_path = args.feature_cache
@@ -149,9 +180,7 @@ def main() -> int:
     device = torch.device("cuda", torch.cuda.current_device())
     torch.set_float32_matmul_precision("high")
     raw = read_rows(args.development_manifest)
-    rows = group_rows(raw, max_pairs=None)
-    for row in rows:
-        row["caption_ids"] = [f"{row['pair_id']}:caption:{index}" for index in range(len(row["captions"]))]
+    rows = group_rows_preserve_queries(raw)
     if len(rows) != 1928:
         raise RuntimeError(f"common development gallery must contain 1928 pairs, got {len(rows)}")
     if sum(len(row["captions"]) for row in rows) != 9640:
