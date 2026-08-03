@@ -421,12 +421,17 @@ def validate_claim_rows(rows: list[dict[str, Any]], source_caption_key: str = "c
     if invalid:
         raise ValueError(f"claim bundle violates atomic claim contract: {invalid[:3]}")
     median = sorted(claims_per_row)[len(claims_per_row) // 2] if claims_per_row else 0
+    global_duplicate_records = sum(max(0, count - 1) for text, count in all_claim_texts.items() if text)
+    global_duplicate_texts = sum(count > 1 for text, count in all_claim_texts.items() if text)
     return {
         "rows": len(rows),
         "total_claim_records": total,
         "unique_claim_texts": len([text for text in all_claim_texts if text]),
         "duplicate_claim_records": 0,
         "duplicate_rate": 0.0,
+        "global_duplicate_claim_records": global_duplicate_records,
+        "global_duplicate_claim_rate": global_duplicate_records / total if total else 0.0,
+        "global_repeated_claim_texts": global_duplicate_texts,
         "rows_with_duplicates": 0,
         "max_claims_per_row": max_claims,
         "observed_max_claims_per_row": max(claims_per_row, default=0),
@@ -652,6 +657,9 @@ def write_claim_reports(root: Path, visible: list[dict[str, Any]], extraction_au
         "rows_with_duplicates": claim_audit["rows_with_duplicates"],
         "duplicate_rate": claim_audit["duplicate_rate"],
         "duplicate_gate_pass": claim_audit["duplicate_gate_pass"],
+        "global_duplicate_claim_records": claim_audit["global_duplicate_claim_records"],
+        "global_duplicate_claim_rate": claim_audit["global_duplicate_claim_rate"],
+        "global_repeated_claim_texts": claim_audit["global_repeated_claim_texts"],
         "source_duplicate_propositions_removed": source_removed["duplicate_propositions_removed"],
     })
     examples: dict[str, list[str]] = defaultdict(list)
@@ -706,7 +714,7 @@ def build_bundle(rows: list[dict[str, Any]], root: Path, assistant_zip_name: str
         if path.is_file() and path.name != "SHA256SUMS":
             sums.append(f"{sha256(path)}  {path.relative_to(root).as_posix()}")
     (root / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
-    write_json(root / "bundle_manifest.json", {"schema_version": "qcpr-stage2-claim-review-v2", "packet_sha256": packet_sha, "rows": len(visible), "claim_count": sum(len(row["claims"]) for row in visible), "unique_claim_texts": claim_audit["unique_claim_texts"], "duplicate_claim_records": claim_audit["duplicate_claim_records"], "duplicate_gate_pass": claim_audit["duplicate_gate_pass"], "max_claims_per_row": max_claims, "relative_assets": True})
+    write_json(root / "bundle_manifest.json", {"schema_version": "qcpr-stage2-claim-review-v2", "packet_sha256": packet_sha, "rows": len(visible), "claim_count": sum(len(row["claims"]) for row in visible), "unique_claim_texts": claim_audit["unique_claim_texts"], "duplicate_claim_records": claim_audit["duplicate_claim_records"], "global_duplicate_claim_records": claim_audit["global_duplicate_claim_records"], "duplicate_gate_pass": claim_audit["duplicate_gate_pass"], "max_claims_per_row": max_claims, "relative_assets": True})
     return {"root": str(root), "packet_sha256": packet_sha, "rows": len(visible), "claim_count": sum(len(row["claims"]) for row in visible), "claim_audit": claim_audit}
 
 
@@ -728,7 +736,7 @@ def write_reports(args: argparse.Namespace, root: Path, original: list[dict[str,
     write_json(reports / "ai_audit_import.json", {**ai_summary, "explicit_excluded_audit_row_ids": sorted(EXPLICIT_AI_EXCLUDED), "input_required_for_gate": True})
     write_json(reports / "claim_schema.json", {"claim_types": list(CLAIM_TYPES), "statuses": ["supported", "unsupported", "uncertain", "not_assessable"], "visual_caption": "supported claims only", "event_type": "separate field; no automatic injection"})
     write_json(reports / "claim_extraction_audit.json", claim_audit)
-    write_json(reports / "duplicate_claim_audit.json", {"duplicate_claim_records": claim_audit.get("duplicate_claim_records", -1), "rows_with_duplicates": claim_audit.get("rows_with_duplicates", -1), "duplicate_rate": claim_audit.get("duplicate_rate"), "duplicate_gate_pass": claim_audit.get("duplicate_gate_pass", False)})
+    write_json(reports / "duplicate_claim_audit.json", {"duplicate_claim_records": claim_audit.get("duplicate_claim_records", -1), "rows_with_duplicates": claim_audit.get("rows_with_duplicates", -1), "duplicate_rate": claim_audit.get("duplicate_rate"), "global_duplicate_claim_records": claim_audit.get("global_duplicate_claim_records", -1), "global_duplicate_claim_rate": claim_audit.get("global_duplicate_claim_rate"), "global_repeated_claim_texts": claim_audit.get("global_repeated_claim_texts", -1), "duplicate_gate_pass": claim_audit.get("duplicate_gate_pass", False)})
     source_claim_distribution = root / "human_review_bundle_claims/data/claim_type_distribution.csv"
     if source_claim_distribution.exists():
         shutil.copy2(source_claim_distribution, reports / "claim_type_distribution.csv")
@@ -745,7 +753,7 @@ def write_reports(args: argparse.Namespace, root: Path, original: list[dict[str,
     write_json(reports / "p1_readiness.json", p1_ready)
     write_json(reports / "p2_real_readiness.json", p2_ready)
     write_json(root / "stage2_review_gate_summary.json", {"code_sha": code_sha(), "status": "DATA_QUALITY_HOLD", "p2_submitted": False, "ai_audit": ai_summary, "quality_240": {key: value for key, value in quality_240.items() if key != "_rows"}, "quality_full_rscc": quality_full, "revised_packet": packet_audit, "claim_audit": claim_audit, "replacements": len(replacements), "p1_readiness": p1_ready, "p2_real_readiness": p2_ready, "blockers": ["qcpr_stage2_ai_audit_48.jsonl missing" if ai_summary.get("status") != "IMPORTED" else "independent human review still required", "common frozen full rankings absent", "no P1 runtime probe or fixed-exposure submission performed"]})
-    lines = ["# Stage-2 review gate", "", "**Status:** `DATA_QUALITY_HOLD`", "", "- AI audit: `" + str(ai_summary.get("status")) + "` (advisory only)", f"- revised packet: {len(final)} rows; 20 per event", f"- 240-row image gate exclusions: {quality_240.get('excluded', 0)}", f"- full RSCC rows audited: {quality_full.get('pairs', 0)}", f"- atomic claims: {claim_audit.get('total_claim_records', 0)} records; {claim_audit.get('unique_claim_texts', 0)} unique texts; duplicate gate `{claim_audit.get('duplicate_gate_pass')}`", "- event ID/verifier/selection reason hidden until save", "- visual_caption is generated only from supported atomic claims", "", f"- P1: `{p1_ready['status']}`", f"- P2-real: `{p2_ready['status']}`", "", "The exact qcpr_stage2_ai_audit_48.jsonl was not found; its supplied summary was recorded without fabricating row-level decisions."]
+    lines = ["# Stage-2 review gate", "", "**Status:** `DATA_QUALITY_HOLD`", "", "- AI audit: `" + str(ai_summary.get("status")) + "` (advisory only)", f"- revised packet: {len(final)} rows; 20 per event", f"- 240-row image gate exclusions: {quality_240.get('excluded', 0)}", f"- full RSCC rows audited: {quality_full.get('pairs', 0)}", f"- atomic claims: {claim_audit.get('total_claim_records', 0)} records; {claim_audit.get('unique_claim_texts', 0)} unique texts; within-row duplicates `{claim_audit.get('duplicate_claim_records')}`; global repeat records `{claim_audit.get('global_duplicate_claim_records')}`; gate `{claim_audit.get('duplicate_gate_pass')}`", "- event ID/verifier/selection reason hidden until save", "- visual_caption is generated only from supported atomic claims", "", f"- P1: `{p1_ready['status']}`", f"- P2-real: `{p2_ready['status']}`", "", "The exact qcpr_stage2_ai_audit_48.jsonl was not found; its supplied summary was recorded without fabricating row-level decisions."]
     (reports / "stage2_review_gate.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
