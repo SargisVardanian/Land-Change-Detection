@@ -68,6 +68,32 @@ def count(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
     return dict(sorted(Counter(str(row.get(key)) for row in rows).items()))
 
 
+def pytest_summary(path: Path | None) -> str:
+    if path and path.exists():
+        for line in reversed(path.read_text(encoding="utf-8").splitlines()):
+            if " passed" in line and " skipped" in line:
+                return line.strip()
+    return "not supplied"
+
+
+def pilot_inventory(project_root: Path) -> dict[str, Any]:
+    runs = project_root / "runs"
+    roots = {
+        "Forest-Change": runs / "qcpr_stage2_forest_change_pilot_e8b25bf_20260804",
+        "TAMMs": runs / "qcpr_stage2_tamms_long_series_pilot_2fbb794_20260804",
+    }
+    result: dict[str, Any] = {}
+    for source, root in roots.items():
+        files = sorted(path for path in root.rglob("*") if path.is_file()) if root.exists() else []
+        result[source] = {
+            "root": str(root),
+            "files": {str(path.relative_to(root)): stats(path) for path in files},
+            "training_enabled": False,
+            "release_status": "PILOT_HOLD_NOT_RELEASED",
+        }
+    return result
+
+
 def unique(rows: list[dict[str, Any]], key: str) -> list[str]:
     return sorted({str(row[key]) for row in rows if row.get(key) not in (None, "")})
 
@@ -460,6 +486,7 @@ def markdown(data: dict[str, Any]) -> dict[str, str]:
         "evaluation_contract.md": "# Evaluation contract\n\nExact evaluation uses the corrected development manifest: 9,640 query rows over 1,928 pairs; generic no-change is excluded from primary exact scoring. Semantic gold is empty. Bootstrap unit is physical pair. Common epoch19/R1/C0/B1 frozen evaluation is incomplete because the checkpoint/model contracts differ and no common full-gallery per-query ranking artifact exists.\n",
         "system_inventory.md": "# System inventory\n\nTarget: one H100 80GB on YSU HPC, BF16 and exact GradCache. Corrected B1 screen peak 15.989/18.105 GiB allocated/reserved; C0 historical peak 29.228/31.779 GiB. Final 348-step runtime and full-gallery evaluation duration are unmeasured. Slurm is empty.\n",
         "controlled_plan.md": "# Controlled P1/P2 plan\n\nP1 is corrected LEVIR plus SECOND. P2-real adds RSCC only after verified text. P2-semantic adds adjudicated groups. B1, seed 20260802, fresh optimizer/scheduler, fixed 348 steps, no hard mining, no early stopping and 256x128 are common. Templates use STAGE2_AUTHORIZE=NO and were not executed.\n",
+        "new_source_pilots.md": "# New physical-source pilots\n\nForest-Change and TAMMs pilots are recorded as unreleased holds. Forest has an image-component split leak in the official split; TAMMs has no official/event split and its generated text is unverified. No pilot rows are training-enabled.\n",
         "decision.md": "# QCPR Stage-2 decision\n\nBLOCKED_HUMAN_REVIEW\n\nPrimary blocker: two independent human reviews and adjudication for the 240-row RSCC packet are incomplete. Secondary blockers: primary gold empty; RSCC verified text zero; common frozen evaluation incomplete; final 348-step runtime unmeasured. Release remains immutable DATA_QUALITY_HOLD. No P2 or other training launched.\n",
     }
 
@@ -485,7 +512,7 @@ def main() -> None:
         "release": {"path": str(release), "status": gate.get("status"), "code_sha_in_release": gate.get("code_sha"), "artifact_hash_manifest": stats(release / "hashes/stage2_release_artifacts_sha256.json")},
         "code": git_info(worktree),
         "slurm": {"active_jobs": False, "training_submitted": False, "historical_r1_200097_untouched": True},
-        "tests": {"pytest": "585 passed, 3 skipped, 8 warnings, 276.02 seconds", "pytest_log": stats(args.pytest_log) if args.pytest_log else None, "scope": "Stage-2 worktree; PYTHONPATH=src:scripts; pytest from worktree", "compileall": "must rerun at final package SHA"},
+        "tests": {"pytest": pytest_summary(args.pytest_log), "pytest_log": stats(args.pytest_log) if args.pytest_log else None, "scope": "Stage-2 worktree; PYTHONPATH=src:scripts; pytest from worktree", "compileall": "must rerun at final package SHA"},
         "registry_inventory": inv,
         "dataset_inventory": {"sources": source_rows(release, inv), "totals": {"physical_pair_registry_rows": inv["pair_registry_rows"], "caption_registry_rows": inv["caption_registry_rows"], "instruction_registry_rows": inv["instruction_registry_rows"], "dense_label_registry_rows": inv["dense_label_registry_rows"], "real_temporal_retrieval_pairs": 31059, "s2looking_dense_only_pairs": 5000}},
         "model_inventory": models(release, project_root),
@@ -496,6 +523,7 @@ def main() -> None:
         "evaluation_contract": evaluation(release),
         "system_inventory": system(output),
         "controlled_plan": plan(release, project_root, output),
+        "new_source_pilots": pilot_inventory(project_root),
         "readiness": {"status": "BLOCKED_HUMAN_REVIEW", "training_authorized": False, "p2_submitted": False, "secondary_blockers": ["PRIMARY_SEMANTIC_GOLD_EMPTY", "RSCC_VERIFIED_TEXT_EMPTY", "COMMON_FROZEN_EVALUATION_NOT_COMPLETE", "FINAL_348_STEP_RUNTIME_NOT_MEASURED"]},
     }
     outputs = {
@@ -508,6 +536,7 @@ def main() -> None:
         "evaluation_contract.json": data["evaluation_contract"],
         "system_inventory.json": data["system_inventory"],
         "controlled_plan.json": data["controlled_plan"],
+        "new_source_pilots.json": data["new_source_pilots"],
         "decision_summary.json": data["readiness"],
     }
     for name, value in outputs.items():
