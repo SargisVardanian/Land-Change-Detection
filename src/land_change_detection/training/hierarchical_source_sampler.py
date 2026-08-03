@@ -11,8 +11,11 @@ from typing import Any, Iterable
 @dataclass(frozen=True)
 class HierarchicalSamplingConfig:
     batch_size: int = 128
-    max_event_fraction: float = 0.125
-    max_source_fraction: float = 0.50
+    # Stage-2 first P2-real policy: event-uniform, <=10% per event and
+    # <=25% from one source (RSCC therefore stays within the 20-30% pilot
+    # envelope when mixed with at least three other source domains).
+    max_event_fraction: float = 0.10
+    max_source_fraction: float = 0.25
     seed: int = 20260803
 
 
