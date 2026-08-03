@@ -61,11 +61,13 @@ def group_rows_preserve_queries(rows: list[dict]) -> list[dict]:
                 "t2_path": raw["t2_path"],
                 "captions": [],
                 "caption_ids": [],
+                "query_scopes": [],
             }
             order.append(pair_id)
         row = grouped[pair_id]
         row["captions"].append(text)
         row["caption_ids"].append(str(raw.get("caption_id") or f"{pair_id}:query:{index}"))
+        row["query_scopes"].append(str(raw.get("query_scope") or "unknown"))
     return [grouped[pair_id] for pair_id in order]
 
 
@@ -112,11 +114,13 @@ def evaluate(model: ScreenModel, text_encoder: JinaV5TextEncoder, rows: list[dic
     captions: list[str] = []
     mapping: list[int] = []
     query_ids: list[str] = []
+    query_scopes: list[str] = []
     for pair_index, row in enumerate(rows):
         for caption_index, caption in enumerate(row["captions"]):
             captions.append(str(caption))
             mapping.append(pair_index)
             query_ids.append(str(row["caption_ids"][caption_index]))
+            query_scopes.append(str(row["query_scopes"][caption_index]))
     rank_indices: list[torch.Tensor] = []
     rank_values: list[int] = []
     top100: list[dict] = []
@@ -133,6 +137,7 @@ def evaluate(model: ScreenModel, text_encoder: JinaV5TextEncoder, rows: list[dic
             top = order[local, :100].tolist()
             top100.append({
                 "query_id": query_ids[start + local],
+                "query_scope": query_scopes[start + local],
                 "text": captions[start + local],
                 "true_pair_id": rows[pair_index]["pair_id"],
                 "true_pair_rank": rank,
@@ -140,21 +145,33 @@ def evaluate(model: ScreenModel, text_encoder: JinaV5TextEncoder, rows: list[dic
                 "top100_scores": [float(scores[local, index]) for index in top],
             })
     ranks = torch.tensor(rank_values, dtype=torch.float64)
+    def summarize(values: list[int], scope: str) -> dict:
+        subset = torch.tensor(values, dtype=torch.float64)
+        if not len(values):
+            return {"query_count": 0, "scope": scope}
+        return {
+            "query_count": len(values),
+            "scope": scope,
+            "gallery_pair_count": len(rows),
+            "recall_at_1": float((subset <= 1).double().mean()),
+            "recall_at_5": float((subset <= 5).double().mean()),
+            "recall_at_10": float((subset <= 10).double().mean()),
+            "recall_at_50": float((subset <= 50).double().mean()),
+            "recall_at_100": float((subset <= 100).double().mean()),
+            "mrr": float((1.0 / subset).mean()),
+            "mean_rank": float(subset.mean()),
+            "median_rank": float(subset.median()),
+        }
+    exact_values = [rank for rank, scope in zip(rank_values, query_scopes, strict=True) if scope == "exact_pair"]
+    generic_values = [rank for rank, scope in zip(rank_values, query_scopes, strict=True) if scope == "generic_no_change"]
     metrics = {
-        "query_count": len(rank_values),
-        "gallery_pair_count": len(rows),
-        "recall_at_1": float((ranks <= 1).double().mean()),
-        "recall_at_5": float((ranks <= 5).double().mean()),
-        "recall_at_10": float((ranks <= 10).double().mean()),
-        "recall_at_50": float((ranks <= 50).double().mean()),
-        "recall_at_100": float((ranks <= 100).double().mean()),
-        "mrr": float((1.0 / ranks).mean()),
-        "mean_rank": float(ranks.mean()),
-        "median_rank": float(ranks.median()),
-        "metric_contract": "QCPR_EXACT_FULL_GALLERY; one physical pair positive; generic_no_change excluded upstream",
+        "exact_primary": summarize(exact_values, "exact_pair"),
+        "generic_no_change_diagnostic": summarize(generic_values, "generic_no_change"),
+        "all_diagnostic": summarize(rank_values, "all_queries"),
+        "metric_contract": "QCPR_EXACT_FULL_GALLERY; exact_pair is primary; generic_no_change is diagnostic only",
     }
     output_dir.mkdir(parents=True, exist_ok=True)
-    torch.save({"query_ids": query_ids, "pair_ids": [row["pair_id"] for row in rows], "rank_indices": torch.cat(rank_indices), "true_pair_indices": torch.tensor(mapping, dtype=torch.int32), "true_pair_ranks": torch.tensor(rank_values, dtype=torch.int32)}, output_dir / "full_rankings.pt")
+    torch.save({"query_ids": query_ids, "query_scopes": query_scopes, "pair_ids": [row["pair_id"] for row in rows], "rank_indices": torch.cat(rank_indices), "true_pair_indices": torch.tensor(mapping, dtype=torch.int32), "true_pair_ranks": torch.tensor(rank_values, dtype=torch.int32)}, output_dir / "full_rankings.pt")
     (output_dir / "rankings_top100.jsonl").write_text("\n".join(json.dumps(row, ensure_ascii=False, sort_keys=True) for row in top100) + "\n", encoding="utf-8")
     return metrics
 
