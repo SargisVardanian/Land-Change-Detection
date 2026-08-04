@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "qcpr://dataset-v2/physical-item",
+  "type": "object",
+  "required": ["item_id", "item_type", "source", "source_revision", "physical_group_id", "scene_id", "frames", "split", "training_enabled", "quality_status", "provenance"],
+  "properties": {
+    "item_id": {"type": "string", "minLength": 1},
+    "item_type": {"enum": ["pair", "sequence"]},
+    "source": {"type": "string", "minLength": 1},
+    "source_revision": {"type": "string", "minLength": 1},
+    "physical_group_id": {"type": "string", "minLength": 1},
+    "scene_id": {"type": "string", "minLength": 1},
+    "event_id": {"type": ["string", "null"]},
+    "frames": {"type": "array", "minItems": 2},
+    "split": {"enum": ["train", "development", "test"]},
+    "training_enabled": {"type": "boolean"},
+    "quality_status": {"type": "string", "minLength": 1},
+    "provenance": {"type": "object"}
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "schema_version": "qcpr-shared-contract-v1",
+  "dataset_contract_version": "qcpr-dataset-v2-final-v1",
+  "backward_compatible": true
+}

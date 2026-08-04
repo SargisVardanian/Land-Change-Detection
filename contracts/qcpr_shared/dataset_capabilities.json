@@ -1,0 +1,31 @@
+{
+  "schema_version": "qcpr-dataset-capabilities-v1",
+  "dataset_head_sha": "BUILD_RUNTIME",
+  "release_path": "BUILD_RUNTIME",
+  "release_sha256": "BUILD_RUNTIME",
+  "exact": {
+    "train_items": 0,
+    "development_items": 0,
+    "test_items": 0,
+    "train_queries": 0,
+    "verified": false
+  },
+  "semantic": {
+    "train_queries": 0,
+    "groups": 0,
+    "status": "HOLD"
+  },
+  "localized": {
+    "queries": 0,
+    "evaluation_masks": 0,
+    "status": "HOLD"
+  },
+  "long_series": {
+    "sequences": 0,
+    "verified_queries": 0,
+    "status": "HOLD"
+  },
+  "sources": {},
+  "blocked_sources": {},
+  "manifest_sha256": {}
+}

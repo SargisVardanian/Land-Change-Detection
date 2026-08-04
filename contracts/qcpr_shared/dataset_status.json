@@ -1,0 +1,25 @@
+{
+  "schema_version": "qcpr-dataset-status-v1",
+  "status": "DATA_QUALITY_HOLD",
+  "branch": "codex/qcpr-dataset-v2-final",
+  "dataset_head_sha": "BUILD_RUNTIME",
+  "release_path": "BUILD_RUNTIME",
+  "training_submitted": false,
+  "p2_authorized": false,
+  "views": {
+    "exact": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
+    "semantic": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
+    "localized": "EVAL_ONLY",
+    "long_series": "PILOT_GENERATED_TEXT_HOLD",
+    "rscc": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+    "forest": "PHYSICAL_READY_TEXT_HOLD",
+    "tamms": "PILOT_PHYSICAL_ONLY_TEXT_HOLD"
+  },
+  "model_contract": "MISSING_ON_MODEL_BRANCH_AT_FINALIZATION_TIME",
+  "limitations": [
+    "RSCC-EBD has no completed independent human text review",
+    "primary semantic train/development/test gold manifests remain empty",
+    "localized and long-series records are evaluation/pilot only",
+    "Forest-Change official split is not used because image components cross splits"
+  ]
+}
