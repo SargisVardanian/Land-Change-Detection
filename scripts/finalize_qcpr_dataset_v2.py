@@ -197,6 +197,71 @@ def rscc_ai_audit_status(project_root: Path) -> dict[str, Any]:
     }
 
 
+def source_balance_audit(
+    items: Iterable[Mapping[str, Any]],
+    queries: Iterable[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Audit source/event composition for the only enabled query population."""
+
+    item_rows = {str(row.get("item_id")): row for row in items}
+    training_queries = [row for row in queries if bool(row.get("training_enabled"))]
+    source_counts: collections.Counter[str] = collections.Counter()
+    split_counts: collections.Counter[str] = collections.Counter()
+    event_counts: collections.Counter[str] = collections.Counter()
+    for query in training_queries:
+        positive_ids = [str(value) for value in query.get("positive_item_ids", [])]
+        sources = {str(item_rows[item_id].get("source")) for item_id in positive_ids if item_id in item_rows}
+        for source in sorted(sources):
+            source_counts[source] += 1
+        split_counts[str(query.get("split"))] += 1
+        for item_id in positive_ids:
+            event_id = item_rows.get(item_id, {}).get("event_id")
+            if event_id is not None:
+                event_counts[str(event_id)] += 1
+    new_sources = sorted(source for source in source_counts if source not in {"levir_mci", "second_cc"})
+    event_total = sum(event_counts.values())
+    max_event_fraction = max((count / event_total for count in event_counts.values()), default=0.0)
+    return {
+        "schema_version": "qcpr-source-balance-audit-v1",
+        "training_query_count": len(training_queries),
+        "source_counts": dict(sorted(source_counts.items())),
+        "split_counts": dict(sorted(split_counts.items())),
+        "event_counts": dict(sorted(event_counts.items())),
+        "event_uniform_validation": "NOT_APPLICABLE_NO_TRAINING_EVENT_IDS" if not event_counts else "CHECKED",
+        "max_event_fraction": max_event_fraction,
+        "max_event_fraction_policy": 0.1,
+        "new_source_fraction": len(new_sources) / len(source_counts) if source_counts else 0.0,
+        "new_sources": new_sources,
+        "max_new_source_fraction_initial_pilot": 0.3,
+        "passed": max_event_fraction <= 0.1 and (len(new_sources) / len(source_counts) if source_counts else 0.0) <= 0.3,
+    }
+
+
+def acquired_archive_inventory(project_root: Path, tamms_plan: Mapping[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    forest_archive = project_root / "datasets/raw/Forest-Change/Forest-Change-dataset.zip"
+    if forest_archive.is_file():
+        records.append(
+            {
+                "source": "Forest-Change",
+                "path": str(forest_archive),
+                "bytes": forest_archive.stat().st_size,
+                "sha256": sha256_file(forest_archive),
+                "status": "ACQUIRED_PILOT_ARCHIVE",
+            }
+        )
+    records.append(
+        {
+            "source": "TAMMs",
+            "path": tamms_plan["requested_archive_path"],
+            "bytes": tamms_plan["current_archive_bytes"],
+            "sha256": tamms_plan["current_archive_sha256"],
+            "status": tamms_plan["status"],
+        }
+    )
+    return records
+
+
 def build_pair_items(pair_rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
     items: list[dict[str, Any]] = []
     by_source_id: dict[str, dict[str, Any]] = {}
@@ -408,27 +473,135 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
         raise ValueError(f"{source_registry_path} must contain a source list or object")
     names = {str(row.get("source_dataset")) for row in rows}
     additions = {
-        "QAG-360K": "metadata-only; parent physical identity and license audit required",
-        "RS5M": "PRETRAINING_ONLY; no temporal retrieval integration",
-        "SkyScript": "PRETRAINING_ONLY; no temporal retrieval integration",
-        "GlobalGeoTree": "SPECIALIZED_EVALUATION_ONLY; no temporal retrieval integration",
+        "DUBAI-CC": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "ACCESS_BLOCKED",
+            "roles": ["external_exact_evaluation"],
+            "blocker": "official archive/access not acquired; one obsolete URL is insufficient to classify source unavailable",
+            "physical_pair_count": 500,
+            "text_count": 2500,
+        },
+        "DynamicEarthNet": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+            "roles": ["long_series", "land_cover_evaluation"],
+            "blocker": "official physical archive not acquired; 75-AOI claim remains source audit context",
+            "physical_sequence_count": 75,
+            "text_count": None,
+        },
+        "Forest-Change": {
+            "official_locations": ["https://huggingface.co/datasets/JimmyBrocko/Forest-Change"],
+            "license": "MIT",
+            "license_status": "MIT_DATASET_CARD_WITH_ACADEMIC_REUSE_NOTE",
+            "state": "PHYSICAL_READY_TEXT_HOLD",
+            "roles": ["temporal_retrieval", "dense_evaluation"],
+            "blocker": "scene-disjoint proposal and caption provenance acceptance pending",
+            "physical_pair_count": 334,
+            "text_count": 1670,
+            "training_enabled": False,
+        },
+        "QAG-360K": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "NOT_REQUESTED",
+            "roles": ["pretraining_only"],
+            "blocker": "metadata-only; parent physical identity and license audit required",
+            "physical_pair_count": None,
+            "text_count": None,
+        },
+        "RS5M": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "NOT_REQUESTED",
+            "roles": ["pretraining_only"],
+            "blocker": "PRETRAINING_ONLY; no temporal retrieval integration",
+            "physical_pair_count": None,
+            "text_count": None,
+        },
+        "RSCC-EBD": {
+            "official_locations": [],
+            "license": "SOURCE_TERMS_RECORDED",
+            "license_status": "SOURCE_METADATA_AND_XBD_TERMS_RECORDED_REVIEW_REQUIRED",
+            "state": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+            "roles": ["temporal_retrieval"],
+            "blocker": "18,215 physical pairs; verified training text is zero; independent human review required",
+            "physical_pair_count": 18215,
+            "verified_text_count": 0,
+            "text_count": 0,
+        },
+        "RSRCC": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "NOT_REQUESTED",
+            "roles": ["localized_evaluation"],
+            "blocker": "parent overlap and mask-derived provenance audit incomplete",
+            "physical_pair_count": None,
+            "text_count": None,
+        },
+        "SpaceNet-7": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+            "roles": ["long_series", "urban_development_evaluation"],
+            "blocker": "official AWS physical archive not acquired; 101-AOI claim remains source audit context",
+            "physical_sequence_count": 101,
+            "text_count": None,
+        },
+        "SkyScript": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "NOT_REQUESTED",
+            "roles": ["pretraining_only"],
+            "blocker": "PRETRAINING_ONLY; no temporal retrieval integration",
+            "physical_pair_count": None,
+            "text_count": None,
+        },
+        "TAMMs": {
+            "official_locations": ["https://huggingface.co/datasets/IceInPot/TAMMs"],
+            "license": "APACHE_METADATA_FMOV_TERMS",
+            "license_status": "APACHE_METADATA_FMOV_TERMS_AND_NONCOMMERCIAL_ANNOTATION_RESTRICTION",
+            "state": "PHYSICAL_ONLY_TEXT_HOLD",
+            "roles": ["long_series"],
+            "blocker": "489 physical sequences acquired from one archive subset; full 37,003-sequence archive not acquired; generated text unverified",
+            "physical_sequence_count": 489,
+            "frame_count": 1956,
+            "text_count": 200,
+            "verified_text_count": 0,
+            "training_enabled": False,
+        },
+        "TERRA-CD": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+            "roles": ["semantic_transition_evaluation"],
+            "blocker": "official physical archive and temporal contract not acquired",
+            "physical_pair_count": None,
+            "text_count": None,
+        },
+        "GlobalGeoTree": {
+            "official_locations": [],
+            "license": "NOT_PINNED",
+            "license_status": "REVIEW_REQUIRED",
+            "state": "NOT_REQUESTED",
+            "roles": ["specialized_evaluation_only"],
+            "blocker": "SPECIALIZED_EVALUATION_ONLY; no temporal retrieval integration",
+            "physical_pair_count": None,
+            "text_count": None,
+        },
     }
-    for name, blocker in additions.items():
+    for name, addition in additions.items():
         if name not in names:
-            rows.append(
-                {
-                    "source_dataset": name,
-                    "official_locations": [],
-                    "license": "NOT_PINNED",
-                    "license_status": "REVIEW_REQUIRED",
-                    "state": "NOT_REQUESTED",
-                    "roles": ["pretraining_only" if name != "GlobalGeoTree" else "specialized_evaluation_only"],
-                    "blocker": blocker,
-                    "physical_pair_count": None,
-                    "text_count": None,
-                    "training_enabled": False,
-                }
-            )
+            rows.append({"source_dataset": name, "training_enabled": False, **addition})
     for row in rows:
         name = str(row.get("source_dataset"))
         if name in {"LEVIR-MCI", "SECOND-CC"}:
@@ -519,6 +692,7 @@ def main() -> int:
     model_snapshot = model_contract_snapshot(args.model_contract_root)
     tamms_plan = tamms_download_plan(args)
     ai_audit_status = rscc_ai_audit_status(args.project_root)
+    archive_inventory = acquired_archive_inventory(args.project_root, tamms_plan)
 
     pair_rows = read_jsonl(args.pair_registry)
     caption_rows = read_jsonl(args.caption_registry)
@@ -548,6 +722,8 @@ def main() -> int:
 
     tamms_text = align_tamms_text(read_jsonl(args.tamms_text), tamms_by_id)
     long_series = build_long_series_queries(tamms_text, tamms_by_id)
+    all_query_rows = [*exact, *semantic, *localized, *long_series, *direction, *stable]
+    source_balance = source_balance_audit(items, all_query_rows)
 
     source_registry = source_rows(args.input_release / "registries/source_registry.json")
     forest_status = {
@@ -568,7 +744,7 @@ def main() -> int:
         "DATASET_EXACT": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
         "DATASET_RSCC": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
         "DATASET_FOREST": forest_status["status"],
-        "DATASET_TAMMS": "PILOT_PHYSICAL_ONLY_TEXT_HOLD",
+        "DATASET_TAMMS": "PHYSICAL_ONLY_TEXT_HOLD",
         "DATASET_LOCALIZED": "EVAL_ONLY",
         "DATASET_SEMANTIC": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
         "DATASET_LONG_SERIES": "PILOT_GENERATED_TEXT_HOLD",
@@ -580,6 +756,7 @@ def main() -> int:
         },
         "model_contract": model_snapshot["status"],
         "model_contract_evidence": model_snapshot,
+        "source_balance": source_balance,
     }
     licenses = {
         "schema_version": "qcpr-license-record-v1",
@@ -601,6 +778,8 @@ def main() -> int:
         "model_contract": model_snapshot,
         "rscc_ai_audit": ai_audit_status,
         "tamms_download_plan": tamms_plan,
+        "acquired_archive_inventory": archive_inventory,
+        "source_balance": source_balance,
     }
     release_metadata = {
         "release_name": release_path.name,
@@ -617,6 +796,7 @@ def main() -> int:
         "model_contract": model_snapshot,
         "rscc_ai_audit_status": ai_audit_status["status"],
         "tamms_download_status": tamms_plan["status"],
+        "source_balance": source_balance,
     }
     release_summary = write_release_layout(
         release_path,
@@ -642,12 +822,15 @@ def main() -> int:
             "schema_version": "qcpr-official-source-audit-v1",
             "sources": source_registry,
             "web_evidence": licenses["web_evidence"],
+            "acquired_archives": archive_inventory,
             "blocked_or_deferred": [row for row in source_registry if not row.get("training_enabled", False)],
             "disclaimer": licenses["disclaimer"],
         },
     )
     write_json(release_path / "source_reports/model_contract_snapshot.json", model_snapshot)
+    write_json(release_path / "source_reports/acquired_archive_inventory.json", archive_inventory)
     write_json(release_path / "audits/rscc_ai_audit_status.json", ai_audit_status)
+    write_json(release_path / "audits/source_balance_audit.json", source_balance)
     asset_hash_audit = audit_asset_hashes(items)
     write_json(release_path / "audits/physical_asset_hash_audit.json", asset_hash_audit)
     if not asset_hash_audit["passed"]:
@@ -664,7 +847,7 @@ def main() -> int:
         release_path=release_path,
         source_registry=source_registry,
         items=items,
-        queries=[*exact, *semantic, *localized, *long_series, *direction, *stable],
+        queries=all_query_rows,
         integrity=integrity,
         statuses=statuses,
     )
