@@ -9,10 +9,12 @@ import hashlib
 import json
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -63,22 +65,29 @@ def download_asset(ref: dict[str, str], repository_root: Path, revision: str) ->
     url = f"{REPOSITORY}/resolve/{revision}/{quote(remote, safe='/')}?download=true"
     temporary = target.with_name(target.name + ".part")
     request = Request(url, headers={"User-Agent": "qcpr-rsrcc-audit/1.0"})
-    try:
-        with urlopen(request, timeout=120) as response, temporary.open("wb") as handle:
-            digest = hashlib.sha256()
-            size = 0
-            for block in iter(lambda: response.read(1024 * 1024), b""):
-                handle.write(block)
-                digest.update(block)
-                size += len(block)
-        os.replace(temporary, target)
-        return {**ref, "path": str(target), "bytes": size, "sha256": digest.hexdigest(), "downloaded": True}
-    except Exception as exc:
+    last_error: Exception | None = None
+    for attempt in range(5):
         try:
-            temporary.unlink()
-        except FileNotFoundError:
-            pass
-        return {**ref, "path": str(target), "bytes": None, "sha256": None, "downloaded": False, "error": f"{type(exc).__name__}: {exc}"}
+            with urlopen(request, timeout=120) as response, temporary.open("wb") as handle:
+                digest = hashlib.sha256()
+                size = 0
+                for block in iter(lambda: response.read(1024 * 1024), b""):
+                    handle.write(block)
+                    digest.update(block)
+                    size += len(block)
+            os.replace(temporary, target)
+            return {**ref, "path": str(target), "bytes": size, "sha256": digest.hexdigest(), "downloaded": True}
+        except Exception as exc:
+            last_error = exc
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+            if isinstance(exc, HTTPError) and exc.code == 429 and attempt < 4:
+                time.sleep(min(30, 2**attempt))
+                continue
+            break
+    return {**ref, "path": str(target), "bytes": None, "sha256": None, "downloaded": False, "error": f"{type(last_error).__name__}: {last_error}"}
 
 
 def parent_hashes(registry: Path | None) -> set[str]:
