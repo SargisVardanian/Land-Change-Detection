@@ -53,6 +53,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-contract-root", type=Path)
     parser.add_argument("--tamms-archive", type=Path)
     parser.add_argument("--tamms-metadata", type=Path)
+    parser.add_argument(
+        "--asset-hash-cache-release",
+        type=Path,
+        help="Reuse a passed physical hash audit only when this release's physical registry has the identical SHA-256.",
+    )
     parser.add_argument("--output-root", type=Path, required=True)
     return parser.parse_args()
 
@@ -389,12 +394,38 @@ def align_tamms_text(
     return aligned
 
 
-def audit_asset_hashes(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+def audit_asset_hashes(
+    items: Iterable[Mapping[str, Any]],
+    *,
+    registry_path: Path | None = None,
+    cache_release: Path | None = None,
+) -> dict[str, Any]:
+    item_rows = list(items)
+    frame_count = sum(len(item.get("frames", [])) for item in item_rows)
+    if registry_path is not None and cache_release is not None:
+        cache_path = cache_release / "audits/physical_asset_hash_audit.json"
+        cache_registry_path = cache_release / "registries/physical_items.jsonl"
+        if cache_path.is_file() and cache_registry_path.is_file() and registry_path.is_file():
+            registry_sha256 = sha256_file(registry_path)
+            cache_registry_sha256 = sha256_file(cache_registry_path)
+            cached = read_json(cache_path)
+            if (
+                registry_sha256 == cache_registry_sha256
+                and bool(cached.get("passed"))
+                and int(cached.get("frames_checked", -1)) == frame_count
+            ):
+                return {
+                    **cached,
+                    "physical_registry_sha256": registry_sha256,
+                    "cache_reused": True,
+                    "cache_source_release": str(cache_release),
+                    "cache_source_audit": str(cache_path),
+                }
     checked = 0
     missing: list[dict[str, Any]] = []
     mismatches: list[dict[str, Any]] = []
     by_source: dict[str, dict[str, int]] = collections.defaultdict(lambda: {"checked": 0, "missing": 0, "mismatches": 0})
-    for item in items:
+    for item in item_rows:
         source = str(item.get("source"))
         for frame in item.get("frames", []):
             path = Path(str(frame.get("path") or ""))
@@ -424,6 +455,8 @@ def audit_asset_hashes(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
         "missing_examples": missing[:20],
         "mismatch_examples": mismatches[:20],
         "by_source": dict(sorted(by_source.items())),
+        "physical_registry_sha256": sha256_file(registry_path) if registry_path is not None and registry_path.is_file() else None,
+        "cache_reused": False,
         "passed": not missing and not mismatches,
     }
 
@@ -911,7 +944,11 @@ def main() -> int:
     write_json(release_path / "source_reports/acquired_archive_inventory.json", archive_inventory)
     write_json(release_path / "audits/rscc_ai_audit_status.json", ai_audit_status)
     write_json(release_path / "audits/source_balance_audit.json", source_balance)
-    asset_hash_audit = audit_asset_hashes(items)
+    asset_hash_audit = audit_asset_hashes(
+        items,
+        registry_path=release_path / "registries/physical_items.jsonl",
+        cache_release=args.asset_hash_cache_release,
+    )
     write_json(release_path / "audits/physical_asset_hash_audit.json", asset_hash_audit)
     if not asset_hash_audit["passed"]:
         raise SystemExit(f"physical asset hash audit failed: {asset_hash_audit}")
