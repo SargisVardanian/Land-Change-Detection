@@ -32,7 +32,7 @@
   },
   "limitations": [
     "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
-    "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
+    "The Model Agent declared contract is available, but its observed branch HEAD is dirty and differs from the declared model_status.json code_sha; no model files were modified.",
     "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
     "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
     "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
@@ -79,8 +79,8 @@
     "maximum_frames": 16,
     "minimum_frames": 2,
     "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
-    "observed_head_sha": "06cf33c0b065f0f2b7142c20f9f0ddfebb7fdc91",
-    "observed_worktree_dirty": false,
+    "observed_head_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+    "observed_worktree_dirty": true,
     "open_request_ids": [
       "M2D-20260804-001",
       "M2D-20260804-002"
