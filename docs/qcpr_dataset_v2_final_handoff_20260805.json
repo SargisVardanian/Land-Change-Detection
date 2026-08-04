@@ -1,0 +1,983 @@
+{
+  "acceptance_gates": {
+    "cross_source_overlap": true,
+    "cross_split_leakage": true,
+    "exact_nonempty_train_dev_test": true,
+    "localized_verified_nonempty": true,
+    "long_series_temporally_annotated": false,
+    "mask_free_integrity": true,
+    "physical_asset_hash": true,
+    "release_contract_validator": true,
+    "semantic_multi_positive": true
+  },
+  "acquired_archives": [
+    {
+      "bytes": 23559661,
+      "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/Forest-Change/Forest-Change-dataset.zip",
+      "sha256": "424931a075f00f8cf21d4d2f622df688de559494844df4876b59bde13d3d855d",
+      "source": "Forest-Change",
+      "status": "ACQUIRED_PILOT_ARCHIVE"
+    },
+    {
+      "bytes": 282142720,
+      "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/TAMMs/waste_disposal.tar",
+      "sha256": "2dc7038f2cb206e93b1cf4c1e177be8548994ad4ce9c61e0a64aa6f41a51fe94",
+      "source": "TAMMs",
+      "status": "PILOT_ARCHIVE_ONLY_FULL_ARCHIVE_NOT_ACQUIRED"
+    }
+  ],
+  "audits": {
+    "checksum": true,
+    "cross_source": true,
+    "cross_split": true,
+    "final_acceptance": "HOLD_DATA_QUALITY_GATES_REMAIN",
+    "mask_free": true,
+    "physical_hash": true,
+    "release_contract": true
+  },
+  "base_branch": "codex/qcpr-dataset-v2-stage2",
+  "base_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
+  "blocked_downloads": [
+    "RSRCC: 15,700/19,006 physical assets missing after HTTP 429; no promotion",
+    "TAMMs: full 37,003-sequence archive not acquired; 489-sequence pilot only",
+    "Dubai-CC, DynamicEarthNet, SpaceNet-7 and TERRA-CD official archives not acquired or not pinned"
+  ],
+  "branch": "codex/qcpr-dataset-v2-final",
+  "branch_head_at_generation": "dc33c89aa801e8c7f125290fbe3d80719291f743",
+  "decision": "DATA_QUALITY_HOLD",
+  "generated_date": "2026-08-05",
+  "license_table": [
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "ChangeChat-87k",
+      "state": "ACCESS_REQUIRED",
+      "training_enabled": false
+    },
+    {
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "source": "DUBAI-CC",
+      "state": "OFFICIAL_LINK_FOUND_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    {
+      "license": "CC_BY_SA_4.0",
+      "license_status": "CC_BY_SA_4.0_OFFICIAL_RECORD_ARCHIVE_NOT_ACQUIRED",
+      "source": "DynamicEarthNet",
+      "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    {
+      "license": "MIT",
+      "license_status": "MIT_DATASET_CARD_WITH_ACADEMIC_REUSE_NOTE",
+      "source": "Forest-Change",
+      "state": "PHYSICAL_READY_TEXT_HOLD",
+      "training_enabled": false
+    },
+    {
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "source": "GlobalGeoTree",
+      "state": "NOT_REQUESTED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "Hi-UCD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "SOURCE_TERMS_RECORDED_DATASET_REDISTRIBUTION_REVIEW_REQUIRED",
+      "source": "LEVIR-MCI",
+      "state": "TRAINING_ENABLED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "NWPU-Captions",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
+      "training_enabled": false
+    },
+    {
+      "license": "CC_BY_NC_4.0_RESEARCH_ONLY_DO_NOT_DISTRIBUTE",
+      "license_status": "CC_BY_NC_4.0_MASK_DERIVED_RESEARCH_ONLY",
+      "source": "QAG-360K",
+      "state": "NOT_REQUESTED",
+      "training_enabled": false
+    },
+    {
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "source": "RS5M",
+      "state": "NOT_REQUESTED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "RSCC",
+      "state": "ACCESS_REQUIRED",
+      "training_enabled": false
+    },
+    {
+      "license": "SOURCE_TERMS_RECORDED",
+      "license_status": "SOURCE_METADATA_AND_XBD_TERMS_RECORDED_REVIEW_REQUIRED",
+      "source": "RSCC-EBD",
+      "state": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "RSICD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "RSITMD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
+      "training_enabled": false
+    },
+    {
+      "license": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+      "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+      "source": "RSRCC",
+      "state": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "S2Looking",
+      "state": "PILOT_LOADER_VALIDATED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "SOURCE_TERMS_RECORDED_DATASET_REDISTRIBUTION_REVIEW_REQUIRED",
+      "source": "SECOND-CC",
+      "state": "TRAINING_ENABLED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "SYSU-CD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
+      "training_enabled": false
+    },
+    {
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "source": "SkyScript",
+      "state": "NOT_REQUESTED",
+      "training_enabled": false
+    },
+    {
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "source": "SpaceNet-7",
+      "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    {
+      "license": null,
+      "license_status": "REVIEW_REQUIRED",
+      "source": "Synthetic-RCD-SECOND",
+      "state": "DOWNLOAD_PARTIAL",
+      "training_enabled": false
+    },
+    {
+      "license": "APACHE_METADATA_FMOV_TERMS",
+      "license_status": "APACHE_METADATA_FMOV_TERMS_AND_NONCOMMERCIAL_ANNOTATION_RESTRICTION",
+      "source": "TAMMs",
+      "state": "PHYSICAL_ONLY_TEXT_HOLD",
+      "training_enabled": false
+    },
+    {
+      "license": "DATA_LICENSE_NOT_PINNED",
+      "license_status": "OFFICIAL_REPO_NO_RELEASE_ASSET_DATA_LICENSE_REVIEW_REQUIRED",
+      "source": "TERRA-CD",
+      "state": "OFFICIAL_REPO_NO_RELEASE_ASSET",
+      "training_enabled": false
+    }
+  ],
+  "manifest_sha256": {
+    "manifests/direction_development.jsonl": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3",
+    "manifests/direction_test.jsonl": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4",
+    "manifests/direction_train.jsonl": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243",
+    "manifests/exact_development.jsonl": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf",
+    "manifests/exact_test.jsonl": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec",
+    "manifests/exact_train.jsonl": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85",
+    "manifests/localized_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/localized_test.jsonl": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3",
+    "manifests/localized_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/long_series_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/long_series_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/long_series_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/semantic_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/semantic_test.jsonl": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6",
+    "manifests/semantic_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/stable_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/stable_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/stable_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "model_agent": {
+    "dataset_handoff_records": [
+      {
+        "capability": "dataset_contract_state_and_exact_core",
+        "dataset_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+        "limitations": [
+          "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
+          "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
+          "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
+          "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
+          "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
+          "No P1/P2/training submission was performed"
+        ],
+        "manifest_paths": [
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_train.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_test.jsonl"
+        ],
+        "manifest_sha256": [
+          {
+            "path": "manifests/exact_train.jsonl",
+            "sha256": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85"
+          },
+          {
+            "path": "manifests/exact_development.jsonl",
+            "sha256": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf"
+          },
+          {
+            "path": "manifests/exact_test.jsonl",
+            "sha256": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec"
+          }
+        ],
+        "related_request_id": "M2D-20260804-001",
+        "release_sha": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
+        "request_id": "D2M-20260805-001",
+        "status": "PARTIAL"
+      },
+      {
+        "capability": "six_retrieval_views_with_explicit_readiness",
+        "dataset_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+        "limitations": [
+          "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
+          "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
+          "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
+          "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
+          "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
+          "No P1/P2/training submission was performed"
+        ],
+        "manifest_paths": [
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/direction_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/direction_test.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/direction_train.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_test.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_train.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/localized_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/localized_test.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/localized_train.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/long_series_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/long_series_test.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/long_series_train.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/semantic_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/semantic_test.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/semantic_train.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/stable_development.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/stable_test.jsonl",
+          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/stable_train.jsonl"
+        ],
+        "manifest_sha256": [
+          {
+            "path": "manifests/direction_development.jsonl",
+            "sha256": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3"
+          },
+          {
+            "path": "manifests/direction_test.jsonl",
+            "sha256": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4"
+          },
+          {
+            "path": "manifests/direction_train.jsonl",
+            "sha256": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243"
+          },
+          {
+            "path": "manifests/exact_development.jsonl",
+            "sha256": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf"
+          },
+          {
+            "path": "manifests/exact_test.jsonl",
+            "sha256": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec"
+          },
+          {
+            "path": "manifests/exact_train.jsonl",
+            "sha256": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85"
+          },
+          {
+            "path": "manifests/localized_development.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/localized_test.jsonl",
+            "sha256": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3"
+          },
+          {
+            "path": "manifests/localized_train.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/long_series_development.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/long_series_test.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/long_series_train.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/semantic_development.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/semantic_test.jsonl",
+            "sha256": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6"
+          },
+          {
+            "path": "manifests/semantic_train.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/stable_development.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/stable_test.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          {
+            "path": "manifests/stable_train.jsonl",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        ],
+        "related_request_id": "M2D-20260804-002",
+        "release_sha": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
+        "request_id": "D2M-20260805-002",
+        "status": "PARTIAL"
+      }
+    ],
+    "declared_status": {
+      "agent": "model",
+      "branch": "codex/qcpr-model-v3-temporal-retrieval",
+      "code_sha": "a047bff262839bdd7401905206d626f227a38048",
+      "cpu_gate": {
+        "compileall": "PASS",
+        "full_pytest": "608 passed, 3 skipped",
+        "pyright": "0 errors, 0 warnings",
+        "shell_syntax": "PASS"
+      },
+      "dataset_contract_status": "DATASET_CONTRACT_MISSING",
+      "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+      "dataset_release_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+      "h100_smoke": {
+        "checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee",
+        "evidence_gradient_min": 3.686707714223303e-05,
+        "exit_code": "0:0",
+        "full_rankings_sha256": "6e7142ceb5b8485795681feebbb16eed7edf6a3014139a87783735ffddc99784",
+        "job_id": "207556",
+        "logical_score_matrix": [
+          4,
+          4
+        ],
+        "node": "gpu02",
+        "peak_cuda_memory": "NOT_CAPTURED_BY_SMOKE_SCRIPT",
+        "post_smoke_cpu_hardening": "freeze_backbones_and_parameter_group_counts",
+        "state": "COMPLETED",
+        "steps": 16,
+        "validated_code_sha": "5eab23719aa78515383befd97145c49ffe5fc714"
+      },
+      "historical_artifacts_modified": false,
+      "main_training_allowed": false,
+      "notes": [
+        "Dataset Agent shared status/capabilities files were absent at the verified base.",
+        "No semantic, localized or long-series view is assumed available.",
+        "Only CPU implementation and one bounded model smoke are in scope.",
+        "Job 207555 was an infrastructure/code-contract failure caused by reusing an autograd graph; it is not a scientific result and was not promoted.",
+        "P1 common-gallery artifacts are complete but show no verified retrieval improvement over frozen B1."
+      ],
+      "owner": "model",
+      "p2_allowed": false,
+      "readiness": {
+        "B1_CONTROL": "VERIFIED",
+        "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+        "MODEL_V3_MECHANISM": "NOT_RUN",
+        "MODEL_V3_SMOKE": "PASS",
+        "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
+        "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+        "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
+      },
+      "status": "MODEL_V3_SMOKE_PASSED"
+    },
+    "observed_head_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+    "observed_worktree_clean": false,
+    "open_requests": [
+      "M2D-20260804-001",
+      "M2D-20260804-002"
+    ],
+    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0"
+  },
+  "official_sources": [
+    {
+      "blocker": "official metadata maps only partially to conflict-filtered LEVIR-MCI; full audited mapping required",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/changechat87k_metadata",
+      "roles": [
+        "localized_instruction"
+      ],
+      "sha256": null,
+      "source_dataset": "ChangeChat-87k",
+      "state": "ACCESS_REQUIRED"
+    },
+    {
+      "blocker": "official archive/access not acquired; one obsolete URL is insufficient to classify source unavailable",
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "official_locations": [
+        "https://service.tib.eu/ldmservice/dataset/dubai-cc--a-dataset-for-remote-sensing-change-captioning"
+      ],
+      "physical_pair_count": 500,
+      "roles": [
+        "external_exact_evaluation"
+      ],
+      "source_dataset": "DUBAI-CC",
+      "state": "OFFICIAL_LINK_FOUND_ARCHIVE_NOT_ACQUIRED",
+      "text_count": 2500,
+      "training_enabled": false
+    },
+    {
+      "blocker": "official physical archive not acquired; 75-AOI claim remains source audit context",
+      "license": "CC_BY_SA_4.0",
+      "license_status": "CC_BY_SA_4.0_OFFICIAL_RECORD_ARCHIVE_NOT_ACQUIRED",
+      "official_locations": [
+        "https://mediatum.ub.tum.de/1650201",
+        "https://dataserv.ub.tum.de/index.php/s/m1650201"
+      ],
+      "physical_sequence_count": 75,
+      "roles": [
+        "long_series",
+        "land_cover_evaluation"
+      ],
+      "source_dataset": "DynamicEarthNet",
+      "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "text_count": null,
+      "training_enabled": false
+    },
+    {
+      "blocker": "scene-disjoint proposal and caption provenance acceptance pending",
+      "license": "MIT",
+      "license_status": "MIT_DATASET_CARD_WITH_ACADEMIC_REUSE_NOTE",
+      "official_locations": [
+        "https://huggingface.co/datasets/JimmyBrocko/Forest-Change"
+      ],
+      "physical_pair_count": 334,
+      "roles": [
+        "temporal_retrieval",
+        "dense_evaluation"
+      ],
+      "source_dataset": "Forest-Change",
+      "state": "PHYSICAL_READY_TEXT_HOLD",
+      "text_count": 1670,
+      "training_enabled": false
+    },
+    {
+      "blocker": "SPECIALIZED_EVALUATION_ONLY; no temporal retrieval integration",
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "official_locations": [],
+      "physical_pair_count": null,
+      "roles": [
+        "specialized_evaluation_only"
+      ],
+      "source_dataset": "GlobalGeoTree",
+      "state": "NOT_REQUESTED",
+      "text_count": null,
+      "training_enabled": false
+    },
+    {
+      "blocker": "corrected 2025 release not present on cluster",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/Hi-UCD",
+      "roles": [
+        "temporal_retrieval",
+        "dense_evaluation"
+      ],
+      "sha256": null,
+      "source_dataset": "Hi-UCD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE"
+    },
+    {
+      "blocker": null,
+      "bytes": 2772765888,
+      "file_count": 10,
+      "license_status": "SOURCE_TERMS_RECORDED_DATASET_REDISTRIBUTION_REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/LEVIR-MCI",
+      "roles": [
+        "temporal_retrieval",
+        "dense_evaluation"
+      ],
+      "sha256": null,
+      "source_code_or_repo_license": "official repository/source terms; dataset archive terms are separate",
+      "source_dataset": "LEVIR-MCI",
+      "state": "TRAINING_ENABLED"
+    },
+    {
+      "blocker": "auxiliary source not present",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/NWPU-Captions",
+      "roles": [
+        "static_scene_language"
+      ],
+      "sha256": null,
+      "source_dataset": "NWPU-Captions",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE"
+    },
+    {
+      "blocker": "metadata-only; parent physical identity and license audit required",
+      "license": "CC_BY_NC_4.0_RESEARCH_ONLY_DO_NOT_DISTRIBUTE",
+      "license_status": "CC_BY_NC_4.0_MASK_DERIVED_RESEARCH_ONLY",
+      "official_locations": [
+        "https://github.com/like413/VisTA",
+        "https://drive.google.com/drive/folders/1EiOJNr8bde7apUQwqoN6cjXWKxIz7QdI?usp=sharing"
+      ],
+      "physical_pair_count": null,
+      "roles": [
+        "pretraining_only"
+      ],
+      "source_dataset": "QAG-360K",
+      "state": "NOT_REQUESTED",
+      "text_count": null,
+      "training_enabled": false
+    },
+    {
+      "blocker": "PRETRAINING_ONLY; no temporal retrieval integration",
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "official_locations": [],
+      "physical_pair_count": null,
+      "roles": [
+        "pretraining_only"
+      ],
+      "source_dataset": "RS5M",
+      "state": "NOT_REQUESTED",
+      "text_count": null,
+      "training_enabled": false
+    },
+    {
+      "blocker": "official imagery/access not present on cluster",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSCC",
+      "roles": [
+        "temporal_retrieval"
+      ],
+      "sha256": null,
+      "source_dataset": "RSCC",
+      "state": "ACCESS_REQUIRED"
+    },
+    {
+      "blocker": "18,215 physical pairs; verified training text is zero; independent human review required",
+      "license": "SOURCE_TERMS_RECORDED",
+      "license_status": "SOURCE_METADATA_AND_XBD_TERMS_RECORDED_REVIEW_REQUIRED",
+      "official_locations": [],
+      "physical_pair_count": 18215,
+      "roles": [
+        "temporal_retrieval"
+      ],
+      "source_dataset": "RSCC-EBD",
+      "state": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+      "text_count": 0,
+      "training_enabled": false,
+      "verified_text_count": 0
+    },
+    {
+      "blocker": "auxiliary source not present",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSICD",
+      "roles": [
+        "static_scene_language"
+      ],
+      "sha256": null,
+      "source_dataset": "RSICD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE"
+    },
+    {
+      "blocker": "auxiliary source not present",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSITMD",
+      "roles": [
+        "static_scene_language"
+      ],
+      "sha256": null,
+      "source_dataset": "RSITMD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE"
+    },
+    {
+      "blocker": "3,306/19,006 unique physical assets available; 15,700 missing after HTTP 429; parent overlap is 0 on the available comparison; full acquisition and human review remain incomplete",
+      "license": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+      "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+      "official_locations": [
+        "https://huggingface.co/datasets/google/RSRCC",
+        "https://github.com/google-research/remote-sensing/"
+      ],
+      "physical_pair_count": null,
+      "roles": [
+        "localized_evaluation"
+      ],
+      "source_dataset": "RSRCC",
+      "state": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "text_count": null,
+      "training_enabled": false
+    },
+    {
+      "blocker": "no verified natural temporal captions",
+      "bytes": 21960796987,
+      "file_count": 25006,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/S2Looking",
+      "roles": [
+        "grounding",
+        "dense_evaluation"
+      ],
+      "sha256": null,
+      "source_dataset": "S2Looking",
+      "state": "PILOT_LOADER_VALIDATED"
+    },
+    {
+      "blocker": null,
+      "bytes": 4449384915,
+      "file_count": 43421,
+      "license_status": "SOURCE_TERMS_RECORDED_DATASET_REDISTRIBUTION_REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/SECOND-CC-extracted",
+      "roles": [
+        "temporal_retrieval"
+      ],
+      "sha256": null,
+      "source_code_or_repo_license": "official repository/source terms; dataset archive terms are separate",
+      "source_dataset": "SECOND-CC",
+      "state": "TRAINING_ENABLED"
+    },
+    {
+      "blocker": "official release not present on cluster",
+      "bytes": 0,
+      "file_count": 0,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/SYSU-CD",
+      "roles": [
+        "temporal_retrieval",
+        "dense_evaluation"
+      ],
+      "sha256": null,
+      "source_dataset": "SYSU-CD",
+      "state": "OFFICIAL_ARTIFACT_UNAVAILABLE"
+    },
+    {
+      "blocker": "PRETRAINING_ONLY; no temporal retrieval integration",
+      "bytes": 0,
+      "file_count": 0,
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "official_locations": [],
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/SkyScript",
+      "roles": [
+        "pretraining_only"
+      ],
+      "sha256": null,
+      "source_dataset": "SkyScript",
+      "state": "NOT_REQUESTED"
+    },
+    {
+      "blocker": "official AWS physical archive not acquired; 101-AOI claim remains source audit context",
+      "license": "NOT_PINNED",
+      "license_status": "REVIEW_REQUIRED",
+      "official_locations": [],
+      "physical_sequence_count": 101,
+      "roles": [
+        "long_series",
+        "urban_development_evaluation"
+      ],
+      "source_dataset": "SpaceNet-7",
+      "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "text_count": null,
+      "training_enabled": false
+    },
+    {
+      "blocker": "original SECOND-A mapping and archive hashes not yet proven",
+      "bytes": 16952184819,
+      "file_count": 63,
+      "license_status": "REVIEW_REQUIRED",
+      "raw_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/synthetic_rcd_second",
+      "roles": [
+        "dense_evaluation",
+        "temporal_retrieval"
+      ],
+      "sha256": null,
+      "source_dataset": "Synthetic-RCD-SECOND",
+      "state": "DOWNLOAD_PARTIAL"
+    },
+    {
+      "blocker": "489 physical sequences acquired from one archive subset; full 37,003-sequence archive not acquired; generated text unverified",
+      "frame_count": 1956,
+      "license": "APACHE_METADATA_FMOV_TERMS",
+      "license_status": "APACHE_METADATA_FMOV_TERMS_AND_NONCOMMERCIAL_ANNOTATION_RESTRICTION",
+      "official_locations": [
+        "https://huggingface.co/datasets/IceInPot/TAMMs"
+      ],
+      "physical_sequence_count": 489,
+      "roles": [
+        "long_series"
+      ],
+      "source_dataset": "TAMMs",
+      "state": "PHYSICAL_ONLY_TEXT_HOLD",
+      "text_count": 200,
+      "training_enabled": false,
+      "verified_text_count": 0
+    },
+    {
+      "blocker": "official physical archive and temporal contract not acquired",
+      "license": "DATA_LICENSE_NOT_PINNED",
+      "license_status": "OFFICIAL_REPO_NO_RELEASE_ASSET_DATA_LICENSE_REVIEW_REQUIRED",
+      "official_locations": [
+        "https://github.com/omkarsoak/TERRA-CD",
+        "https://arxiv.org/abs/2605.14651"
+      ],
+      "physical_pair_count": null,
+      "roles": [
+        "semantic_transition_evaluation"
+      ],
+      "source_dataset": "TERRA-CD",
+      "state": "OFFICIAL_REPO_NO_RELEASE_ASSET",
+      "text_count": null,
+      "training_enabled": false
+    }
+  ],
+  "physical": {
+    "by_item_type": {
+      "pair": 32059,
+      "sequence": 489
+    },
+    "by_source": {
+      "levir_mci": 8143,
+      "rscc_ebd": 18215,
+      "s2looking": 1000,
+      "second_cc": 4701,
+      "tamms": 489
+    },
+    "frames": 66074,
+    "items": 32548,
+    "sequences": 489
+  },
+  "queries": {
+    "by_scope": {
+      "direction": 19015,
+      "exact": 43839,
+      "localized": 2000,
+      "semantic": 1598
+    },
+    "by_verification": {
+      "derived_eval": 3598,
+      "human": 62854
+    },
+    "count": 66452,
+    "training_enabled": 61080
+  },
+  "readiness": {
+    "direction": "EXACT_CONDITIONAL",
+    "exact": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
+    "forest": "PHYSICAL_READY_TEXT_HOLD",
+    "localized": "EVAL_ONLY",
+    "long_series": "PILOT_PHYSICAL_ONLY_TEXT_HOLD",
+    "rscc": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+    "rsrcc": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+    "semantic": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
+    "stable": "EMPTY_GENERIC_NO_CHANGE_EXCLUDED",
+    "tamms": "PHYSICAL_ONLY_TEXT_HOLD"
+  },
+  "release": {
+    "p1_submitted": false,
+    "p2_submitted": false,
+    "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804",
+    "release_code_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+    "release_name": "qcpr_dataset_v2_final_97bee86_20260804",
+    "release_sha256": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
+    "release_state": "DATA_QUALITY_HOLD",
+    "sha256sums_entries": 60,
+    "training_submitted": false
+  },
+  "remote": {
+    "disk": {
+      "free_bytes": 81346181799936,
+      "total_bytes": 300000000000000,
+      "use_percent": 72.88,
+      "used_bytes": 218653818200064
+    },
+    "host": "172.26.30.252",
+    "project_root": "/mnt/weka/svardanyan/rs_change_project",
+    "user": "svardanyan",
+    "worktree": "/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-dataset-v2-final"
+  },
+  "remote_stage2_check": "FAILED_PUBLICKEY_PERMISSION_DENIED",
+  "reusable_lesson": "Physical acquisition, metadata, and generated text are separate evidence classes. Promote only pinned assets with hashes and explicit parent-overlap audits; reuse a physical hash cache only when the physical registry SHA is identical; keep generated or mask-derived text evaluation-only until human promotion.",
+  "rsrcc_physical_audit": {
+    "asset_manifest": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_stage2_rsrcc_physical_audit_6e360ef_20260804/rsrcc_physical_asset_manifest.jsonl",
+    "available_asset_count": 3306,
+    "download_error_examples": [
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET",
+      "MISSING_LOCAL_ASSET"
+    ],
+    "downloaded_asset_count": 0,
+    "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+    "metadata_row_count": 126131,
+    "metadata_row_counts": {
+      "test": 21999,
+      "train": 87016,
+      "val": 17116
+    },
+    "missing_asset_count": 15700,
+    "official_repository": "https://huggingface.co/datasets/google/RSRCC",
+    "parent_frame_hash_count": 65014,
+    "parent_registry": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_2799ab8_20260804/registries/physical_items.jsonl",
+    "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
+    "schema_version": "qcpr-rsrcc-physical-asset-audit-v1",
+    "shared_parent_frame_hash_count": 0,
+    "shared_parent_frame_hash_examples": [],
+    "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+    "text_provenance": "generated_language_annotations; evaluation_only; not mask_free_training text",
+    "training_enabled": false,
+    "unique_asset_count": 19006,
+    "unique_physical_pair_filename_tuples": 9503
+  },
+  "schema_version": "qcpr-dataset-v2-final-handoff-v1",
+  "tamms_download_plan": {
+    "available_disk_bytes_at_plan": 81381923790848,
+    "current_archive_bytes": 282142720,
+    "current_archive_exists": true,
+    "current_archive_member_count": 4402,
+    "current_archive_sequence_count": 489,
+    "current_archive_sha256": "2dc7038f2cb206e93b1cf4c1e177be8548994ad4ce9c61e0a64aa6f41a51fe94",
+    "full_archive_expected_bytes": null,
+    "full_archive_size_status": "NOT_PUBLISHED_BY_DATASET_CARD",
+    "license_status": "RESEARCH_ONLY_FMOV_TERMS_AND_NONCOMMERCIAL_ANNOTATION_REVIEW_REQUIRED",
+    "metadata_exists": true,
+    "metadata_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/TAMMs/tamms_data.json",
+    "metadata_sequence_count": 37003,
+    "requested_archive_path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/TAMMs/waste_disposal.tar",
+    "schema_version": "qcpr-tamms-download-plan-v1",
+    "source": "TAMMs",
+    "source_url": "https://huggingface.co/datasets/IceInPot/TAMMs",
+    "status": "PILOT_ARCHIVE_ONLY_FULL_ARCHIVE_NOT_ACQUIRED",
+    "stop_conditions": [
+      "stop before extraction if source terms do not permit the intended use",
+      "stop if official archive checksum or source revision cannot be pinned",
+      "stop if extracted frame hashes or parent-scene identities are incomplete",
+      "stop before training promotion while all captions remain generated_unverified"
+    ]
+  },
+  "test_evidence": {
+    "compileall": "PASS",
+    "full_pytest": "NOT_RUN: remote runtime lacks torch; initial pytest collection failed on torch imports",
+    "git_diff_check": "PASS",
+    "pyright": "UNAVAILABLE",
+    "ruff": "UNAVAILABLE",
+    "shell_syntax": "PASS",
+    "targeted_dataset_pytest": "26 passed"
+  },
+  "training_prohibition": {
+    "p1": false,
+    "p2_long_series": false,
+    "p2_real": false,
+    "p2_semantic": false,
+    "training_authorized": false
+  },
+  "unresolved_human_review": [
+    "RSCC-EBD: expected advisory AI audit is MISSING_INPUT and two-distinct-reviewer human promotion is incomplete",
+    "Forest-Change: official split leaks components; scene-disjoint/caption provenance acceptance and human review remain incomplete",
+    "TAMMs: 489 physical sequences only; full inventory/license/fMoW terms and generated text review remain incomplete",
+    "Semantic primary gold: train/development semantic physical partitions and human verification are not available in this release",
+    "Long-series: no candidate has explicit query_temporal_extent, relevant_frame_range, and temporal_direction; generated text is excluded",
+    "RSRCC: physical acquisition is incomplete; available assets, missing assets, parent overlap, and full acquisition/human review remain incomplete (see source_reports/rsrcc_source_audit.json)",
+    "Dubai-CC, DynamicEarthNet, SpaceNet-7, and TERRA-CD: official archive/license acquisition or release asset checks remain open"
+  ],
+  "views": {
+    "direction": {
+      "development": 2184,
+      "test": 479,
+      "train": 16352
+    },
+    "exact": {
+      "development": 5065,
+      "test": 1245,
+      "train": 37529
+    },
+    "localized": {
+      "development": 0,
+      "test": 2000,
+      "train": 0
+    },
+    "long_series": {
+      "development": 0,
+      "test": 0,
+      "train": 0
+    },
+    "semantic": {
+      "development": 0,
+      "test": 1598,
+      "train": 0
+    },
+    "stable": {
+      "development": 0,
+      "test": 0,
+      "train": 0
+    }
+  },
+  "worktree_clean": true
+}
