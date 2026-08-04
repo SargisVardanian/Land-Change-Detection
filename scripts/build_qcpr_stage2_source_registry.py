@@ -18,9 +18,9 @@ def inventory(path: Path) -> dict[str, Any]:
     files = sorted(p for p in path.rglob("*") if p.is_file()) if path.exists() else []
     return {"path":str(path),"exists":path.exists(),"file_count":len(files),"bytes":sum(p.stat().st_size for p in files),"files":[{"path":str(p),"bytes":p.stat().st_size} for p in files[:256]],"file_sample_truncated":len(files)>256}
 
-def source(name: str, official: list[str], raw: Path, roles: list[str], license_name: str, state: str, *, blocker: str|None=None, version: str|None=None, pair_count: int|None=None, caption_count: int|None=None, loader_validation: dict[str,Any]|None=None) -> dict[str,Any]:
+def source(name: str, official: list[str], raw: Path, roles: list[str], license_name: str, state: str, *, blocker: str|None=None, version: str|None=None, pair_count: int|None=None, caption_count: int|None=None, loader_validation: dict[str,Any]|None=None, notes: list[str]|None=None) -> dict[str,Any]:
     if state not in STATES: raise ValueError(state)
-    return {"source_dataset":name,"official_locations":official,"version_or_revision":version,"license":license_name,"raw_inventory":inventory(raw),"state":state,"roles":roles,"physical_pair_count":pair_count,"text_count":caption_count,"dense_label_count":None,"official_split":None,"sensor":None,"native_dimensions":None,"gsd":None,"temporal_metadata":None,"accessibility":"blocked" if blocker else "available","blocker":blocker,"loader_validation":loader_validation or {"passed":False,"artifact":None}}
+    return {"source_dataset":name,"official_locations":official,"version_or_revision":version,"license":license_name,"raw_inventory":inventory(raw),"state":state,"roles":roles,"physical_pair_count":pair_count,"text_count":caption_count,"dense_label_count":None,"official_split":None,"sensor":None,"native_dimensions":None,"gsd":None,"temporal_metadata":None,"accessibility":"blocked" if blocker else "available","blocker":blocker,"notes":notes or [],"loader_validation":loader_validation or {"passed":False,"artifact":None}}
 
 def main() -> int:
     p=argparse.ArgumentParser()
@@ -39,6 +39,93 @@ def main() -> int:
       source("Hi-UCD",["https://github.com/Daisy-7/Hi-UCD-S","official request form in README"],hiucd,["temporal_generated_caption_candidate","dense_evaluation"],"academic-only per official README","ACCESS_REQUIRED",blocker="corrected 2025-11-01 archive is request-gated and absent",version="repository metadata only"),
       source("S2Looking",["current audited release"],raw/"S2Looking",["grounding","dense_evaluation"],"see current release","MANIFESTED",blocker="derived queries are not independently reviewed semantic multi-positives",version="current audited release",pair_count=5000,caption_count=10000),
     ]
+    rows.extend([
+      source(
+        "Forest-Change",
+        ["https://huggingface.co/datasets/JimmyBrocko/Forest-Change"],
+        raw / "Forest-Change",
+        ["non_disaster_temporal", "forest_vegetation", "dense_evaluation"],
+        "source terms require redistribution audit",
+        "EXTRACTED",
+        blocker="official split has 22 cross-split image components; captions are mixed-provenance and unverified",
+        version="pilot revision e8b25bf09c85ec85633d1b1b554f7bb23e47724d",
+        pair_count=334,
+        caption_count=1670,
+        notes=["scene-disjoint proposal exists but is not released", "training_enabled=false"],
+      ),
+      source(
+        "DUBAI-CC",
+        ["https://service.tib.eu/ldmservice/dataset/dubai-cc%E2%80%93a-dataset-for-remote-sensing-change-captioning"],
+        raw / "DUBAI-CC",
+        ["external_exact_benchmark", "change_captioning"],
+        "paper/source terms; verify before acquisition",
+        "ACCESS_REQUIRED",
+        blocker="official TIB endpoint was unavailable during the cluster audit; no archive acquired",
+        version="official release not locally pinned",
+        pair_count=500,
+        caption_count=2500,
+        notes=["reported counts are not locally verified"],
+      ),
+      source(
+        "TAMMs",
+        ["https://huggingface.co/datasets/IceInPot/TAMMs"],
+        raw / "TAMMs",
+        ["long_series_retrieval_candidate", "temporal_query_generation"],
+        "Apache-2.0 metadata; base fMoW terms require audit",
+        "EXTRACTED",
+        blocker="pilot has no official/event-disjoint split and generated text is unverified",
+        version="pilot revision 2fbb79418e121514fc9f382f503e92f07aaf2481",
+        pair_count=100,
+        caption_count=200,
+        notes=["pilot only; 4 frames per sequence", "training_enabled=false"],
+      ),
+      source(
+        "DynamicEarthNet",
+        ["https://mediatum.ub.tum.de/1650201"],
+        raw / "DynamicEarthNet",
+        ["long_series_physical", "temporal_query_generation"],
+        "official terms required",
+        "ACCESS_REQUIRED",
+        blocker="metadata-only; official physical archive is not locally acquired",
+        version="metadata audit only",
+        notes=["do not create T1=T2 pairs", "query generation requires independent verification"],
+      ),
+      source(
+        "SpaceNet-7",
+        ["https://spacenet.ai/datasets/"],
+        raw / "SpaceNet-7",
+        ["long_series_physical", "urban_temporal_query_generation"],
+        "official challenge terms required",
+        "ACCESS_REQUIRED",
+        blocker="metadata-only; official sequence archive is not locally acquired",
+        version="metadata audit only",
+        notes=["monthly sequence source; event/geography split required"],
+      ),
+      source(
+        "TERRA-CD",
+        ["https://github.com/omkarsoak/TERRA-CD"],
+        raw / "TERRA-CD",
+        ["non_disaster_temporal", "land_cover_transition", "dense_evaluation"],
+        "CC-BY-4.0 as declared by repository; verify archive",
+        "ACCESS_REQUIRED",
+        blocker="official physical archive is not locally acquired; no verified text",
+        version="repository metadata only",
+        pair_count=5221,
+        notes=["candidate for structured transition caption generation"],
+      ),
+      source(
+        "RSRCC",
+        ["https://huggingface.co/datasets/google/RSRCC"],
+        raw / "RSRCC",
+        ["semantic_retrieval", "localized_queries", "qa_evaluation"],
+        "official dataset terms required",
+        "ACCESS_REQUIRED",
+        blocker="official source/parent-image overlap and mask-derived provenance audit incomplete",
+        version="metadata audit only",
+        caption_count=126131,
+        notes=["do not route QA automatically into exact retrieval", "localized use requires parent-image audit"],
+      ),
+    ])
     for name in ("RSICD","NWPU-Captions","RSITMD"):
         rows.append(source(name,["official source required before acquisition"],raw/name,["static_scene_language"],"unverified","NOT_REQUESTED",blocker="static auxiliary acquisition deferred until temporal pilot is complete"))
     sha=subprocess.run(["git","rev-parse","HEAD"],cwd=a.repo,check=True,text=True,capture_output=True).stdout.strip()
