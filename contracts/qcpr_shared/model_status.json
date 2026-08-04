@@ -2,7 +2,7 @@
   "owner": "model",
   "agent": "model",
   "status": "MODEL_V3_SMOKE_PASSED",
-  "code_sha": "c0218584e53fb3d5b7b65308ca5339b9dd85e1c9",
+  "code_sha": "a047bff262839bdd7401905206d626f227a38048",
   "branch": "codex/qcpr-model-v3-temporal-retrieval",
   "dataset_contract_status": "DATASET_CONTRACT_MISSING",
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",

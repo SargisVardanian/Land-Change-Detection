@@ -1,7 +1,7 @@
 {
   "status": "MODEL_V3_SMOKE_PASS",
   "code_sha": "5eab23719aa78515383befd97145c49ffe5fc714",
-  "final_code_sha": "c0218584e53fb3d5b7b65308ca5339b9dd85e1c9",
+  "final_code_sha": "a047bff262839bdd7401905206d626f227a38048",
   "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_model_v3_h100_smoke_5eab237_20260804",
   "job_id": "207556",
   "slurm": {"state": "COMPLETED", "exit_code": "0:0", "node": "gpu02", "elapsed": "00:00:13", "gres": "gpu:h100:1", "host_memory": "64G"},
