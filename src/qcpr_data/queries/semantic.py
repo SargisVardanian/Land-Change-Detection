@@ -89,10 +89,9 @@ def build_semantic_eval_queries(
             row = entry["row"]
             item_id = entry["item_id"]
             grades = {
-                positive_id: int(group["items"][positive_id]["grade"])
+                positive_id: _row_grade(row, positive_id, self_item=positive_id == item_id)
                 for positive_id in positive_ids
             }
-            grades[item_id] = max(grades[item_id], _row_grade(row, item_id, self_item=True))
             query_id = str(row.get("query_id") or f"{entry['source_key']}:semantic:{group_id}")
             if query_id in seen_query_ids:
                 query_id = f"{query_id}:row{entry['row_index']}"

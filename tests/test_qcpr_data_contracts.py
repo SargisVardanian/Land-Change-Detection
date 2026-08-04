@@ -125,7 +125,10 @@ def test_semantic_queries_are_multi_positive_and_grouped_by_split() -> None:
     )
     assert len(rows) == 2
     assert all(row["positive_item_ids"] == ["x:1", "x:2"] for row in rows)
-    assert all(row["graded_relevance"] == {"x:1": 3, "x:2": 3} for row in rows)
+    assert {row["source_item_id"]: row["graded_relevance"] for row in rows} == {
+        "x:1": {"x:1": 3, "x:2": 2},
+        "x:2": {"x:1": 2, "x:2": 3},
+    }
 
 
 def test_long_series_requires_explicit_temporal_annotation() -> None:
