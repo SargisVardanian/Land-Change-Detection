@@ -11,6 +11,7 @@ INITIAL=${INITIAL_CHECKPOINT:?set INITIAL_CHECKPOINT to the immutable B1 screen 
 EXPECTED_SHA=${EXPECTED_SHA:?set EXPECTED_SHA to the immutable Stage-2 code SHA}
 RUN_ROOT=${RUN_ROOT:?set RUN_ROOT to a new immutable P1 run root}
 AUTHORIZE=${P1_AUTHORIZE:-NO}
+PREFLIGHT_ONLY=${P1_PREFLIGHT_ONLY:-NO}
 STEPS=${STEPS:-348}
 SEED=${SEED:-20260802}
 TRAIN_MANIFEST=$RELEASE/manifests/retrieval_exact_train_v2.jsonl
@@ -56,8 +57,8 @@ for name in sys.argv[1:]:
     if not rows:
         raise SystemExit(f"empty manifest: {name}")
     for row in rows:
-        if row.get("query_scope") != "exact_pair":
-            raise SystemExit(f"non-exact row in P1 manifest: {name}")
+        if row.get("query_scope") not in {"exact_pair", "generic_no_change"}:
+            raise SystemExit(f"unsupported query scope in P1 manifest: {name}")
         if row.get("dataset_name") not in {"levir_mci","second_cc"}:
             raise SystemExit(f"unexpected source in P1 manifest: {row.get('dataset_name')}")
         if not row.get("canonical_pair_id") or not row.get("caption_id"):
@@ -78,6 +79,11 @@ for name in sys.argv[1:]:
     print(f"{Path(name).name}:rows={len(rows)}:pairs={len({r['canonical_pair_id'] for r in rows})}")
 PY
 )
+
+if [[ "$PREFLIGHT_ONLY" == YES ]]; then
+  printf '{"preflight":"PASS","steps":%s,"p2_submitted":false,"manifest_audit":%s}\n' "$STEPS" "$(printf '%s' "$MANIFEST_AUDIT" | "$PY" -c 'import json,sys; print(json.dumps(sys.stdin.read().splitlines()))')"
+  exit 0
+fi
 
 mkdir -p "$RUN_ROOT"
 COMMON=(
