@@ -218,11 +218,17 @@ class TemporalAdapter(nn.Module):
         batch, time_count, n, _ = native_tokens.shape
         if coordinates.shape != (batch, n, 2):
             raise ValueError("coordinates must be [B,N,2]")
-        if frame_mask is None:
-            frame_mask = torch.ones((batch, time_count), dtype=torch.bool, device=native_tokens.device)
-        if token_mask is None:
-            token_mask = torch.ones((batch, time_count, n), dtype=torch.bool, device=native_tokens.device)
-        if frame_mask.shape != (batch, time_count) or token_mask.shape != (batch, time_count, n):
+        frame_mask_value: Tensor = (
+            frame_mask
+            if frame_mask is not None
+            else torch.ones((batch, time_count), dtype=torch.bool, device=native_tokens.device)
+        )
+        token_mask_value: Tensor = (
+            token_mask
+            if token_mask is not None
+            else torch.ones((batch, time_count, n), dtype=torch.bool, device=native_tokens.device)
+        )
+        if frame_mask_value.shape != (batch, time_count) or token_mask_value.shape != (batch, time_count, n):
             raise ValueError("temporal masks have invalid shapes")
         x = self.input_projection(native_tokens)
         x = x + self.position_scale * self.position(
@@ -234,9 +240,9 @@ class TemporalAdapter(nn.Module):
             gsd=temporal.gsd,
             metadata_missing=temporal.metadata_missing,
         )
-        x = x * token_mask.unsqueeze(-1).to(x.dtype)
-        frame_cls = masked_mean(x, token_mask & frame_mask.unsqueeze(-1), dim=2)
-        sequence_cls = masked_mean(frame_cls, frame_mask, dim=1)
+        x = x * token_mask_value.unsqueeze(-1).to(x.dtype)
+        frame_cls = masked_mean(x, token_mask_value & frame_mask_value.unsqueeze(-1), dim=2)
+        sequence_cls = masked_mean(frame_cls, frame_mask_value, dim=1)
         change_tokens = self.change_seed.expand(batch, -1, -1)
         for block in self.blocks:
             x, sequence_cls, frame_cls, change_tokens = block(
@@ -245,8 +251,8 @@ class TemporalAdapter(nn.Module):
                 frame_cls,
                 change_tokens,
                 coordinates,
-                frame_mask,
-                token_mask,
+                frame_mask_value,
+                token_mask_value,
             )
         x = self.output_norm(x)
         result = TemporalOutput(
@@ -255,8 +261,8 @@ class TemporalAdapter(nn.Module):
             change_tokens=self.output_norm(change_tokens),
             dense_tokens=x,
             coordinates=coordinates,
-            frame_mask=frame_mask,
-            token_mask=token_mask,
+            frame_mask=frame_mask_value,
+            token_mask=token_mask_value,
             temporal=temporal,
         )
         result.validate()

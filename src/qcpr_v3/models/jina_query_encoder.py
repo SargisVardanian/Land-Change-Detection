@@ -86,16 +86,21 @@ class JinaQueryEncoder(nn.Module):
 
     def forward(self, tokens: Tensor | list[str], mask: Tensor | None = None) -> QueryFeatures:
         if isinstance(tokens, (list, tuple)):
-            tokens, mask = self._read_base(list(tokens))
-        if mask is None:
+            token_tensor, mask_tensor = self._read_base(list(tokens))
+        else:
+            token_tensor = tokens
+            mask_tensor = mask
+        if not isinstance(token_tensor, Tensor):
+            raise TypeError("tokens must be a tensor or a list of strings")
+        if mask_tensor is None:
             raise ValueError("text mask is required")
-        if tokens.ndim != 3 or mask.shape != tokens.shape[:2]:
+        if token_tensor.ndim != 3 or mask_tensor.shape != token_tensor.shape[:2]:
             raise ValueError("tokens must be [B,L,D] and mask [B,L]")
-        mask = mask.to(dtype=torch.bool, device=tokens.device)
-        x = self.input_projection(tokens)
-        delta = self.adapter(self.adapter_norm(x), src_key_padding_mask=~mask)
+        mask_tensor = mask_tensor.to(dtype=torch.bool, device=token_tensor.device)
+        x = self.input_projection(token_tensor)
+        delta = self.adapter(self.adapter_norm(x), src_key_padding_mask=~mask_tensor)
         x = x + self.adapter_residual_scale * delta
-        cls = F.normalize(self.output_projection(masked_mean(x, mask)), dim=-1)
-        result = QueryFeatures(cls, x, mask)
+        cls = F.normalize(self.output_projection(masked_mean(x, mask_tensor)), dim=-1)
+        result = QueryFeatures(cls, x, mask_tensor)
         result.validate()
         return result

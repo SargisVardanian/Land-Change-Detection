@@ -1,14 +1,19 @@
 {
-  "include": ["src/qcpr_v3"],
+  "include": [
+    "src/qcpr_v3"
+  ],
   "executionEnvironments": [
     {
       "root": "src/qcpr_v3",
-      "extraPaths": ["src"]
+      "extraPaths": [
+        "src"
+      ]
     }
   ],
   "reportMissingImports": "none",
   "reportPrivateImportUsage": "none",
-  "reportOptionalMemberAccess": "warning",
-  "reportArgumentType": "warning",
-  "reportRedeclaration": "error"
+  "reportOptionalMemberAccess": "error",
+  "reportArgumentType": "error",
+  "reportRedeclaration": "error",
+  "reportGeneralTypeIssues": "error"
 }

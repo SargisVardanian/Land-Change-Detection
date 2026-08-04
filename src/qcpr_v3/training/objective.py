@@ -44,17 +44,20 @@ class UnifiedListwiseLoss(nn.Module):
     def forward(self, scores: Tensor, grades: Tensor, valid_mask: Tensor | None = None) -> LossOutput:
         if scores.ndim != 2 or grades.shape != scores.shape:
             raise ValueError("scores and grades must share [Q,P] shape")
-        if valid_mask is None:
-            valid_mask = torch.ones_like(grades, dtype=torch.bool)
-        if valid_mask.shape != scores.shape:
+        valid_mask_value: Tensor = (
+            valid_mask
+            if valid_mask is not None
+            else torch.ones_like(grades, dtype=torch.bool)
+        )
+        if valid_mask_value.shape != scores.shape:
             raise ValueError("valid_mask must match scores")
-        positive = (grades > 0) & valid_mask
+        positive = (grades > 0) & valid_mask_value
         query_has_positive = positive.any(dim=1)
         if not bool(query_has_positive.all()):
             missing = int((~query_has_positive).sum())
             raise ValueError(f"{missing} queries have no valid positive")
         scaled = scores / self.temperature
-        denominator_logits = scaled.masked_fill(~valid_mask, torch.finfo(scaled.dtype).min)
+        denominator_logits = scaled.masked_fill(~valid_mask_value, torch.finfo(scaled.dtype).min)
         grade_weights = cast(Tensor, self.grade_weights)
         weights = grade_weights.to(device=grades.device)[grades.clamp(0, 3)]
         numerator_logits = (scaled + torch.log(weights.clamp_min(torch.finfo(scaled.dtype).tiny))).masked_fill(~positive, torch.finfo(scaled.dtype).min)
@@ -66,5 +69,5 @@ class UnifiedListwiseLoss(nn.Module):
             positive_count=int(positive.sum()),
             valid_query_count=int(query_has_positive.sum()),
             mean_positive_score=positive_scores.mean(),
-            mean_all_score=scores[valid_mask].mean(),
+            mean_all_score=scores[valid_mask_value].mean(),
         )

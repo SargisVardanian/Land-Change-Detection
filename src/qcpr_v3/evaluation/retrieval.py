@@ -8,11 +8,35 @@ import torch
 from torch import Tensor
 
 
+class RetrievalMetrics(dict[str, float]):
+    """Metric mapping with read-only legacy aliases.
+
+    Serialized mappings contain only the explicit protocol names. The aliases
+    exist solely so older in-repository callers can migrate without silently
+    changing a numerical result.
+    """
+
+    _legacy = {
+        "mrr": "mrr_full",
+        "mean_average_precision": "map_full",
+    }
+
+    def __missing__(self, key: str) -> float:
+        target = self._legacy.get(key)
+        if target is None or target not in self:
+            raise KeyError(key)
+        return self[target]
+
+
+def _validate_k(k: int) -> None:
+    if int(k) < 1:
+        raise ValueError("k must be positive")
+
+
 def rank_scores(scores: Tensor) -> Tensor:
     if scores.ndim != 2:
         raise ValueError("scores must be [Q,P]")
     return scores.argsort(dim=-1, descending=True, stable=True)
-
 
 
 def _validate_relevance(scores: Tensor, relevant: Tensor) -> None:
@@ -23,6 +47,7 @@ def _validate_relevance(scores: Tensor, relevant: Tensor) -> None:
 
 
 def _topk_relevance(order: Tensor, relevant: Tensor, k: int) -> Tensor:
+    _validate_k(k)
     clipped = min(int(k), order.shape[1])
     return relevant.gather(1, order[:, :clipped])
 
@@ -35,11 +60,13 @@ def _first_relevant_rank(order: Tensor, relevant: Tensor) -> Tensor:
 
 
 def hit_rate_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
+    """Hit@K: one if any relevant item occurs in Top-K."""
     _validate_relevance(scores, relevant)
     return float(_topk_relevance(rank_scores(scores), relevant, k).any(dim=1).float().mean())
 
 
 def recall_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
+    """Recall@K: relevant items retrieved divided by all relevant items."""
     _validate_relevance(scores, relevant)
     top = _topk_relevance(rank_scores(scores), relevant, k).sum(dim=1).float()
     total = relevant.sum(dim=1).float()
@@ -48,14 +75,23 @@ def recall_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
 
 def precision_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
     _validate_relevance(scores, relevant)
+    _validate_k(k)
     top = _topk_relevance(rank_scores(scores), relevant, k).sum(dim=1).float()
     return float((top / min(int(k), scores.shape[1])).mean())
 
 
 def mrr_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
     _validate_relevance(scores, relevant)
+    _validate_k(k)
     ranks = _first_relevant_rank(rank_scores(scores), relevant)
     return float(torch.where(ranks <= int(k), 1.0 / ranks.float(), torch.zeros_like(ranks, dtype=torch.float32)).mean())
+
+
+def mrr_full(scores: Tensor, relevant: Tensor) -> float:
+    """Full-gallery reciprocal rank of the first relevant item."""
+    _validate_relevance(scores, relevant)
+    ranks = _first_relevant_rank(rank_scores(scores), relevant)
+    return float((1.0 / ranks.float()).mean())
 
 
 def mean_average_precision(scores: Tensor, relevant: Tensor) -> float:
@@ -68,7 +104,21 @@ def mean_average_precision(scores: Tensor, relevant: Tensor) -> float:
     return float(average_precision.mean())
 
 
+def map_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
+    """Mean AP truncated to Top-K, with the full relevant count denominator."""
+    _validate_relevance(scores, relevant)
+    _validate_k(k)
+    order = rank_scores(scores)
+    clipped = min(int(k), scores.shape[1])
+    ordered = relevant.gather(1, order[:, :clipped])
+    positions = torch.arange(1, clipped + 1, device=scores.device, dtype=torch.float32).view(1, -1)
+    precision = ordered.cumsum(dim=1).float() / positions
+    average_precision = (precision * ordered.float()).sum(dim=1) / relevant.sum(dim=1).float().clamp_min(1.0)
+    return float(average_precision.mean())
+
+
 def ndcg_at_k(scores: Tensor, graded_relevance: Tensor, k: int) -> float:
+    _validate_k(k)
     if scores.shape != graded_relevance.shape:
         raise ValueError("scores and graded_relevance must share [Q,P]")
     order = rank_scores(scores)
@@ -81,31 +131,49 @@ def ndcg_at_k(scores: Tensor, graded_relevance: Tensor, k: int) -> float:
     return float((dcg / idcg.clamp_min(1e-8)).mean())
 
 
-def retrieval_metrics(scores: Tensor, relevant: Tensor, ks: Iterable[int] = (1, 5, 10, 50, 100, 500)) -> dict[str, float]:
+def candidate_hit_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
+    """Explicit candidate Hit@K; never aliases multi-positive Recall@K."""
+    return hit_rate_at_k(scores, relevant, k)
+
+
+def multi_positive_recall_at_k(scores: Tensor, relevant: Tensor, k: int) -> float:
+    """Explicit multi-positive Recall@K."""
+    return recall_at_k(scores, relevant, k)
+
+
+def retrieval_metrics(
+    scores: Tensor,
+    relevant: Tensor,
+    ks: Iterable[int] = (1, 5, 10, 50, 100, 500),
+) -> RetrievalMetrics:
     _validate_relevance(scores, relevant)
     order = rank_scores(scores)
     ranks = _first_relevant_rank(order, relevant)
-    result: dict[str, float] = {
-        "mrr": float((1.0 / ranks.float()).mean()),
-        "mean_rank": float(ranks.float().mean()),
-        "median_rank": float(ranks.median()),
-        "mean_average_precision": mean_average_precision(scores, relevant),
-    }
+    result = RetrievalMetrics(
+        {
+            "mrr_full": mrr_full(scores, relevant),
+            "mean_rank": float(ranks.float().mean()),
+            "median_rank": float(ranks.median()),
+            "map_full": mean_average_precision(scores, relevant),
+        }
+    )
     for k in ks:
-        result[f"hit_rate_at_{k}"] = hit_rate_at_k(scores, relevant, int(k))
-        result[f"recall_at_{k}"] = recall_at_k(scores, relevant, int(k))
-        result[f"precision_at_{k}"] = precision_at_k(scores, relevant, int(k))
-        result[f"mrr_at_{k}"] = mrr_at_k(scores, relevant, int(k))
-        result[f"ndcg_at_{k}"] = ndcg_at_k(scores, relevant.to(dtype=torch.float32), int(k))
+        clipped_k = int(k)
+        result[f"candidate_hit_at_{clipped_k}"] = candidate_hit_at_k(scores, relevant, clipped_k)
+        result[f"multi_positive_recall_at_{clipped_k}"] = multi_positive_recall_at_k(scores, relevant, clipped_k)
+        result[f"precision_at_{clipped_k}"] = precision_at_k(scores, relevant, clipped_k)
+        result[f"mrr_at_{clipped_k}"] = mrr_at_k(scores, relevant, clipped_k)
+        result[f"map_at_{clipped_k}"] = map_at_k(scores, relevant, clipped_k)
+        result[f"ndcg_at_{clipped_k}"] = ndcg_at_k(scores, relevant.to(dtype=torch.float32), clipped_k)
     return result
 
 
-def pair_to_text_metrics(scores: Tensor, relevant: Tensor, ks: Iterable[int] = (1, 5, 10, 50, 100)) -> dict[str, float]:
+def pair_to_text_metrics(
+    scores: Tensor,
+    relevant: Tensor,
+    ks: Iterable[int] = (1, 5, 10, 50, 100),
+) -> RetrievalMetrics:
     """Evaluate the reverse direction using the same explicit relevance contract."""
     if scores.ndim != 2 or relevant.shape != scores.shape:
         raise ValueError("scores and relevant must share [queries, items]")
     return retrieval_metrics(scores.transpose(0, 1), relevant.transpose(0, 1), ks=ks)
-
-
-def candidate_recall(scores: Tensor, relevant: Tensor, k: int) -> float:
-    return hit_rate_at_k(scores, relevant, k)

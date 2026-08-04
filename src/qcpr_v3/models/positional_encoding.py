@@ -62,9 +62,10 @@ class SpatialTemporalEncoding(nn.Module):
         if gsd is None:
             gsd_feature = torch.zeros((batch, time_count, n, 1), device=timestamps.device, dtype=timestamps.dtype)
         else:
-            if gsd.ndim == 2:
-                gsd = gsd.unsqueeze(-1)
-            gsd_feature = torch.log1p(gsd.clamp_min(0.0)).unsqueeze(2).expand(-1, -1, n, -1)
+            gsd_tensor: Tensor = gsd
+            if gsd_tensor.ndim == 2:
+                gsd_tensor = gsd_tensor.unsqueeze(-1)
+            gsd_feature = torch.log1p(gsd_tensor.clamp_min(0.0)).unsqueeze(2).expand(-1, -1, n, -1)
         if metadata_missing is None:
             missing = torch.zeros((batch, time_count, 1), device=timestamps.device, dtype=timestamps.dtype)
         else:
