@@ -694,9 +694,11 @@ def rsrcc_source_audit(project_root: Path) -> dict[str, Any]:
     cross_split_pairs = sum(1 for splits in pair_splits.values() if len(splits) > 1)
     repository_root = root / "repository"
     image_count = sum(1 for path in repository_root.rglob("*") if path.is_file() and path.suffix.casefold() in {".png", ".jpg", ".jpeg"}) if repository_root.is_dir() else 0
+    physical_audit_paths = sorted(project_root.glob("runs/qcpr_stage2_rsrcc_physical_audit_*/rsrcc_physical_asset_audit.json"))
+    physical_audit = read_json(physical_audit_paths[-1]) if physical_audit_paths else None
     return {
         "schema_version": "qcpr-rsrcc-source-audit-v1",
-        "status": "METADATA_ACQUIRED_PHYSICAL_ASSET_AUDIT_PENDING" if image_count == 0 else "PHYSICAL_ASSETS_ACQUIRED_PARENT_OVERLAP_AUDIT_PENDING",
+        "status": str(physical_audit.get("status")) if physical_audit else ("METADATA_ACQUIRED_PHYSICAL_ASSET_AUDIT_PENDING" if image_count == 0 else "PHYSICAL_ASSETS_ACQUIRED_PARENT_OVERLAP_AUDIT_PENDING"),
         "official_locations": ["https://huggingface.co/datasets/google/RSRCC", "https://github.com/google-research/remote-sensing/"],
         "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
         "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
@@ -712,7 +714,8 @@ def rsrcc_source_audit(project_root: Path) -> dict[str, Any]:
         "text_count": text_count,
         "text_provenance": "generated_language_annotations_from_official_dataset_card; evaluation_only",
         "repository_image_file_count": image_count,
-        "parent_overlap_audit": "PENDING_PHYSICAL_IMAGE_ACQUISITION_AND_HASH_COMPARISON",
+        "parent_overlap_audit": physical_audit.get("status") if physical_audit else "PENDING_PHYSICAL_IMAGE_ACQUISITION_AND_HASH_COMPARISON",
+        "physical_asset_audit": physical_audit,
         "training_enabled": False,
         "download_observation": "Unauthenticated HF physical-asset dry-run encountered HTTP 429; metadata remains the only acquired RSRCC artifact.",
     }
