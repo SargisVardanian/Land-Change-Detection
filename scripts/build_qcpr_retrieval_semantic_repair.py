@@ -155,6 +155,23 @@ def item_source(item: Mapping[str, Any]) -> str:
     return str(item.get("source") or item.get("provenance", {}).get("source_dataset") or "unknown")
 
 
+def resolve_item_id(value: Any, items: Mapping[str, Mapping[str, Any]]) -> str:
+    """Resolve source-review aliases to the canonical physical item ID."""
+
+    raw = str(value or "")
+    if raw in items:
+        return raw
+    if raw.startswith("tamms:"):
+        suffix = raw.split(":", 2)[-1]
+        candidates = [
+            item_id for item_id in items
+            if item_id.startswith("tamms:") and item_id.split(":", 2)[-1] == suffix
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+    return raw
+
+
 def item_record(item: Mapping[str, Any], source_key: str) -> dict[str, Any] | None:
     if not item:
         return None
@@ -814,6 +831,7 @@ def main() -> int:
         and row.get("change_status") == "changed"
         and row.get("semantic_signature")
         and str(row.get("source_item_id") or "") in items
+        and bool((row.get("attributes") or {}).get("has_specific_visual_claim"))
         and row.get("verification") in {"human", "human_rewritten", "independently_source_verified", "derived_not_human_reviewed"}
     ]
     semantic_members: dict[tuple[str, str], dict[str, dict[str, Any]]] = collections.defaultdict(dict)
@@ -837,14 +855,17 @@ def main() -> int:
                 sim = attribute_similarity(qattrs, candidate_row.get("attributes") or {})
                 qgrades[candidate_item] = 3 if candidate_item == query_item else int(sim["grade"])
             grades[query_item] = qgrades
+            positive_ids = sorted(candidate_item for candidate_item, grade in qgrades.items() if int(grade) >= 1)
+            if len(positive_ids) < 2:
+                continue
             semantic_queries.append({
                 "query_id": f"{query_item}:semantic_repaired:{group_id}:{query_row.get('source_caption_id')}",
                 "text": query_row.get("text", ""),
                 "query_scope": "semantic",
                 "purpose": "semantic_multi_positive",
                 "source_item_id": query_item,
-                "positive_item_ids": item_ids,
-                "graded_relevance": qgrades,
+                "positive_item_ids": positive_ids,
+                "graded_relevance": {candidate_item: int(grade) for candidate_item, grade in qgrades.items() if int(grade) >= 1},
                 "temporal_direction": "forward",
                 "localized_relation": None,
                 "verification": contract_verification(query_row.get("verification")),
@@ -895,6 +916,8 @@ def main() -> int:
     for row in stable_semantic_rows:
         stable_semantic_by_key[(split_name(row.get("split")), ",".join(sorted(row.get("stable_anchors", []))))].append(row)
     for (split, anchor_signature), members in sorted(stable_semantic_by_key.items()):
+        if len(members) < 2:
+            continue
         ids = sorted(str(row.get("source_item_id")) for row in members)
         group_id = "semantic:stable_anchors:" + hashlib.sha256(anchor_signature.encode()).hexdigest()[:20]
         for row in members:
@@ -1037,8 +1060,11 @@ def main() -> int:
     tamm_packet = read_jsonl(current_release / "source_reports/human_review_packets/tamms_human_review_packet.jsonl")
     tamm_rows = []
     for index, row in enumerate(tamm_packet):
-        sequence_id = str(row.get("sequence_id") or "")
+        raw_sequence_id = str(row.get("sequence_id") or "")
+        sequence_id = resolve_item_id(raw_sequence_id, items)
         item = items.get(sequence_id, {})
+        if not item:
+            continue
         split = split_name(item.get("split"))
         if split == "unknown":
             split = ["train", "development", "test"][index % 3]
@@ -1063,6 +1089,7 @@ def main() -> int:
             "temporal_annotations": {"onset": None, "duration": None, "gradual_or_abrupt": None, "relevant_frame_range": None},
             "provenance": {
                 "source": "TAMMs",
+                "original_sequence_id": raw_sequence_id,
                 "review_id": row.get("review_id"),
                 "text_provenance": row.get("text_provenance"),
                 "physical_inventory_preserved": True,
