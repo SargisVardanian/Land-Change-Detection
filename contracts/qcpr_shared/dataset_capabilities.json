@@ -4,16 +4,16 @@
     "DynamicEarthNet": "official physical archive not acquired",
     "Forest-Change": "official pair split leaks connected image components; scene-disjoint caption provenance/human review pending",
     "GlobalGeoTree": "specialized-evaluation-only deferred",
-    "QAG-360K": "parent identity and mask-derived provenance audit incomplete",
+    "QAG-360K": "not requested; parent identity and mask-derived provenance audit are NOT_RUN",
     "RS5M": "pretraining-only deferred",
     "RSCC-EBD": "verified training text is zero; 48-row advisory AI audit is MISSING_INPUT; independent human review incomplete",
-    "RSRCC": "physical acquisition incomplete: 3306/19006 assets available, 15700 missing after HTTP 429; parent overlap 0",
+    "RSRCC": "physical acquisition incomplete: 3306/19006 assets available, 15700 missing after HTTP 429; source-level cross-source overlap remains incomplete",
     "SkyScript": "pretraining-only deferred",
     "SpaceNet-7": "official physical archive not acquired",
     "TAMMs": "489-sequence pilot only; full metadata index has 37,003 sequences and generated text is unverified",
     "TERRA-CD": "official physical archive and data license not pinned"
   },
-  "dataset_head_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+  "dataset_head_sha": "b19cda128330ee8f67ab47dc39b3c81ad7740c7b",
   "direction": {
     "development_queries": 2184,
     "status": "EXACT_CONDITIONAL",
@@ -31,12 +31,12 @@
     "verified": true
   },
   "limitations": [
-    "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
-    "The Model Agent declared contract is available, but its observed branch HEAD is dirty and differs from the declared model_status.json code_sha; no model files were modified.",
+    "This response supersedes prior Dataset Agent handoffs and points to immutable qcpr_dataset_v2_final_b19cda1_20260805.",
+    "The Model Agent declared SHA is 4aaa7649daa0079689b577cf63184ca01c05f4e7, while audit-time observed HEAD is 9d95181c3825c2cc49532d14adf1e628a6e746d3; worktree dirty=False; no model files were modified.",
     "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
     "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
     "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
-    "No P1/P2/training submission was performed"
+    "No P1/P2/training submission was performed."
   ],
   "localized": {
     "evaluation_masks": 2000,
@@ -50,6 +50,7 @@
     "status": "PILOT_PHYSICAL_ONLY_TEXT_HOLD",
     "verified_queries": 0
   },
+  "manifest_count": 18,
   "manifest_sha256": {
     "manifests/direction_development.jsonl": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3",
     "manifests/direction_test.jsonl": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4",
@@ -72,15 +73,17 @@
   },
   "model_contract": {
     "declared_branch": "codex/qcpr-model-v3-temporal-retrieval",
-    "declared_code_sha": "a047bff262839bdd7401905206d626f227a38048",
+    "declared_code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
     "declared_dataset_contract_status": "DATASET_CONTRACT_MISSING",
-    "declared_model_status": "MODEL_V3_SMOKE_PASSED",
+    "declared_model_status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
     "main_training_allowed": false,
     "maximum_frames": 16,
     "minimum_frames": 2,
     "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
-    "observed_head_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
-    "observed_worktree_dirty": true,
+    "observed_branch": "codex/qcpr-model-v3-temporal-retrieval",
+    "observed_declared_sha_mismatch": true,
+    "observed_head_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
+    "observed_worktree_dirty": false,
     "open_request_ids": [
       "M2D-20260804-001",
       "M2D-20260804-002"
@@ -91,11 +94,6 @@
   },
   "physical_registry": {
     "frames": 66074,
-    "item_splits": {
-      "development": 7794,
-      "test": 3768,
-      "train": 20986
-    },
     "items": 32548,
     "source_counts": {
       "levir_mci": 8143,
@@ -119,10 +117,32 @@
       "human": 62854
     }
   },
-  "release_code_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804",
-  "release_sha256": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
+  "release_code_sha": "b19cda128330ee8f67ab47dc39b3c81ad7740c7b",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_b19cda1_20260805",
+  "release_sha256": "74dc404f1d152cad516835d4febb6fcac2381f110f09365ff268dc7fdcddd81b",
   "release_state": "DATA_QUALITY_HOLD",
+  "reports": {
+    "dubai_source_audit": "source_reports/dubai_source_audit.json",
+    "final_acceptance_audit": "audits/final_acceptance_audit.json",
+    "human_review_packet_status": "source_reports/human_review_packet_status.json",
+    "localized_query_capabilities": "source_reports/localized_query_capabilities.json",
+    "long_series_source_audit": "source_reports/long_series_source_audit.json",
+    "qag360k_overlap_audit": "source_reports/qag360k_overlap_audit.json",
+    "rsrcc_overlap_audit": "source_reports/rsrcc_overlap_audit.json",
+    "static_pretraining_decision": "source_reports/static_pretraining_decision.json",
+    "validate_qcpr_release_contract": "audits/validate_qcpr_release_contract.json"
+  },
+  "required_report_artifacts": [
+    "source_reports/rsrcc_overlap_audit.json",
+    "source_reports/qag360k_overlap_audit.json",
+    "source_reports/localized_query_capabilities.json",
+    "source_reports/long_series_source_audit.json",
+    "source_reports/dubai_source_audit.json",
+    "source_reports/static_pretraining_decision.json",
+    "source_reports/human_review_packet_status.json",
+    "audits/final_acceptance_audit.json",
+    "audits/validate_qcpr_release_contract.json"
+  ],
   "schema_version": "qcpr-dataset-capabilities-v1",
   "semantic": {
     "development_queries": 0,

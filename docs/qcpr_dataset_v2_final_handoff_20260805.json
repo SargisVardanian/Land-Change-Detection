@@ -3,12 +3,20 @@
     "cross_source_overlap": true,
     "cross_split_leakage": true,
     "exact_nonempty_train_dev_test": true,
-    "localized_verified_nonempty": true,
+    "forest_caption_provenance_resolved": false,
+    "forest_scene_disjoint_split_released": false,
+    "localized_verified_nonempty": false,
     "long_series_temporally_annotated": false,
     "mask_free_integrity": true,
     "physical_asset_hash": true,
     "release_contract_validator": true,
-    "semantic_multi_positive": true
+    "rscc_verified_text": false,
+    "semantic_multi_positive": true,
+    "semantic_nonempty_primary_train_dev_test": false,
+    "tamms_full_inventory": false,
+    "tamms_license_resolved": false,
+    "tamms_sequence_disjoint_split_released": false,
+    "tamms_verified_query_subset": false
   },
   "acquired_archives": [
     {
@@ -27,415 +35,259 @@
     }
   ],
   "audits": {
-    "checksum": true,
-    "cross_source": true,
-    "cross_split": true,
-    "final_acceptance": "HOLD_DATA_QUALITY_GATES_REMAIN",
-    "mask_free": true,
-    "physical_hash": true,
-    "release_contract": true
+    "cross_source_overlap": "audits/cross_source_overlap_audit.json",
+    "cross_split_leakage": "audits/cross_split_leakage_audit.json",
+    "final_acceptance": "audits/final_acceptance_audit.json",
+    "human_review_packets": "source_reports/human_review_packet_status.json",
+    "localized_capabilities": "source_reports/localized_query_capabilities.json",
+    "mask_free": "audits/mask_free_integrity.json",
+    "physical_hash": "audits/physical_asset_hash_audit.json",
+    "qag360k_overlap": "source_reports/qag360k_overlap_audit.json",
+    "release_validator": "audits/validate_qcpr_release_contract.json",
+    "rsrcc_overlap": "source_reports/rsrcc_overlap_audit.json"
   },
   "base_branch": "codex/qcpr-dataset-v2-stage2",
   "base_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
   "blocked_downloads": [
-    "RSRCC: 15,700/19,006 physical assets missing after HTTP 429; no promotion",
-    "TAMMs: full 37,003-sequence archive not acquired; 489-sequence pilot only",
-    "Dubai-CC, DynamicEarthNet, SpaceNet-7 and TERRA-CD official archives not acquired or not pinned"
+    "RSRCC remaining 15,700 assets: unauthenticated official download attempt returned HTTP 429",
+    "TAMMs full 37,003-sequence archive: full archive size/official checksum not published or acquired",
+    "Dubai-CC official archive/license/dimensions/splits not locally acquired or pinned",
+    "DynamicEarthNet, SpaceNet-7 and TERRA-CD official physical artifacts remain unacquired or unlicensed"
   ],
   "branch": "codex/qcpr-dataset-v2-final",
-  "branch_head_at_generation": "dc33c89aa801e8c7f125290fbe3d80719291f743",
+  "branch_head_at_generation": "b19cda128330ee8f67ab47dc39b3c81ad7740c7b",
   "decision": "DATA_QUALITY_HOLD",
   "generated_date": "2026-08-05",
   "license_table": [
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "ChangeChat-87k",
       "state": "ACCESS_REQUIRED",
       "training_enabled": false
     },
     {
-      "license": "NOT_PINNED",
       "license_status": "REVIEW_REQUIRED",
       "source": "DUBAI-CC",
       "state": "OFFICIAL_LINK_FOUND_ARCHIVE_NOT_ACQUIRED",
       "training_enabled": false
     },
     {
-      "license": "CC_BY_SA_4.0",
       "license_status": "CC_BY_SA_4.0_OFFICIAL_RECORD_ARCHIVE_NOT_ACQUIRED",
       "source": "DynamicEarthNet",
       "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
       "training_enabled": false
     },
     {
-      "license": "MIT",
       "license_status": "MIT_DATASET_CARD_WITH_ACADEMIC_REUSE_NOTE",
       "source": "Forest-Change",
       "state": "PHYSICAL_READY_TEXT_HOLD",
       "training_enabled": false
     },
     {
-      "license": "NOT_PINNED",
       "license_status": "REVIEW_REQUIRED",
       "source": "GlobalGeoTree",
       "state": "NOT_REQUESTED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "Hi-UCD",
       "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "SOURCE_TERMS_RECORDED_DATASET_REDISTRIBUTION_REVIEW_REQUIRED",
       "source": "LEVIR-MCI",
       "state": "TRAINING_ENABLED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "NWPU-Captions",
       "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
       "training_enabled": false
     },
     {
-      "license": "CC_BY_NC_4.0_RESEARCH_ONLY_DO_NOT_DISTRIBUTE",
       "license_status": "CC_BY_NC_4.0_MASK_DERIVED_RESEARCH_ONLY",
       "source": "QAG-360K",
       "state": "NOT_REQUESTED",
       "training_enabled": false
     },
     {
-      "license": "NOT_PINNED",
       "license_status": "REVIEW_REQUIRED",
       "source": "RS5M",
       "state": "NOT_REQUESTED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "RSCC",
       "state": "ACCESS_REQUIRED",
       "training_enabled": false
     },
     {
-      "license": "SOURCE_TERMS_RECORDED",
       "license_status": "SOURCE_METADATA_AND_XBD_TERMS_RECORDED_REVIEW_REQUIRED",
       "source": "RSCC-EBD",
       "state": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "RSICD",
       "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "RSITMD",
       "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
       "training_enabled": false
     },
     {
-      "license": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
       "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
       "source": "RSRCC",
-      "state": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "state": "METADATA_ACQUIRED_PHYSICAL_ASSET_AUDIT_PENDING",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "S2Looking",
       "state": "PILOT_LOADER_VALIDATED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "SOURCE_TERMS_RECORDED_DATASET_REDISTRIBUTION_REVIEW_REQUIRED",
       "source": "SECOND-CC",
       "state": "TRAINING_ENABLED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "SYSU-CD",
       "state": "OFFICIAL_ARTIFACT_UNAVAILABLE",
       "training_enabled": false
     },
     {
-      "license": "NOT_PINNED",
       "license_status": "REVIEW_REQUIRED",
       "source": "SkyScript",
       "state": "NOT_REQUESTED",
       "training_enabled": false
     },
     {
-      "license": "NOT_PINNED",
       "license_status": "REVIEW_REQUIRED",
       "source": "SpaceNet-7",
       "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
       "training_enabled": false
     },
     {
-      "license": null,
       "license_status": "REVIEW_REQUIRED",
       "source": "Synthetic-RCD-SECOND",
       "state": "DOWNLOAD_PARTIAL",
       "training_enabled": false
     },
     {
-      "license": "APACHE_METADATA_FMOV_TERMS",
       "license_status": "APACHE_METADATA_FMOV_TERMS_AND_NONCOMMERCIAL_ANNOTATION_RESTRICTION",
       "source": "TAMMs",
       "state": "PHYSICAL_ONLY_TEXT_HOLD",
       "training_enabled": false
     },
     {
-      "license": "DATA_LICENSE_NOT_PINNED",
       "license_status": "OFFICIAL_REPO_NO_RELEASE_ASSET_DATA_LICENSE_REVIEW_REQUIRED",
       "source": "TERRA-CD",
       "state": "OFFICIAL_REPO_NO_RELEASE_ASSET",
       "training_enabled": false
     }
   ],
-  "manifest_sha256": {
-    "manifests/direction_development.jsonl": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3",
-    "manifests/direction_test.jsonl": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4",
-    "manifests/direction_train.jsonl": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243",
-    "manifests/exact_development.jsonl": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf",
-    "manifests/exact_test.jsonl": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec",
-    "manifests/exact_train.jsonl": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85",
-    "manifests/localized_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/localized_test.jsonl": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3",
-    "manifests/localized_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/semantic_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/semantic_test.jsonl": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6",
-    "manifests/semantic_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/stable_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/stable_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/stable_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-  },
-  "model_agent": {
-    "dataset_handoff_records": [
-      {
-        "capability": "dataset_contract_state_and_exact_core",
-        "dataset_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
-        "limitations": [
-          "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
-          "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
-          "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
-          "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
-          "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
-          "No P1/P2/training submission was performed"
-        ],
-        "manifest_paths": [
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_train.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_test.jsonl"
-        ],
-        "manifest_sha256": [
-          {
-            "path": "manifests/exact_train.jsonl",
-            "sha256": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85"
-          },
-          {
-            "path": "manifests/exact_development.jsonl",
-            "sha256": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf"
-          },
-          {
-            "path": "manifests/exact_test.jsonl",
-            "sha256": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec"
-          }
-        ],
-        "related_request_id": "M2D-20260804-001",
-        "release_sha": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
-        "request_id": "D2M-20260805-001",
-        "status": "PARTIAL"
-      },
-      {
-        "capability": "six_retrieval_views_with_explicit_readiness",
-        "dataset_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
-        "limitations": [
-          "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
-          "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
-          "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
-          "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
-          "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
-          "No P1/P2/training submission was performed"
-        ],
-        "manifest_paths": [
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/direction_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/direction_test.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/direction_train.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_test.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/exact_train.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/localized_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/localized_test.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/localized_train.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/long_series_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/long_series_test.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/long_series_train.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/semantic_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/semantic_test.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/semantic_train.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/stable_development.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/stable_test.jsonl",
-          "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804/manifests/stable_train.jsonl"
-        ],
-        "manifest_sha256": [
-          {
-            "path": "manifests/direction_development.jsonl",
-            "sha256": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3"
-          },
-          {
-            "path": "manifests/direction_test.jsonl",
-            "sha256": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4"
-          },
-          {
-            "path": "manifests/direction_train.jsonl",
-            "sha256": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243"
-          },
-          {
-            "path": "manifests/exact_development.jsonl",
-            "sha256": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf"
-          },
-          {
-            "path": "manifests/exact_test.jsonl",
-            "sha256": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec"
-          },
-          {
-            "path": "manifests/exact_train.jsonl",
-            "sha256": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85"
-          },
-          {
-            "path": "manifests/localized_development.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/localized_test.jsonl",
-            "sha256": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3"
-          },
-          {
-            "path": "manifests/localized_train.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/long_series_development.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/long_series_test.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/long_series_train.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/semantic_development.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/semantic_test.jsonl",
-            "sha256": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6"
-          },
-          {
-            "path": "manifests/semantic_train.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/stable_development.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/stable_test.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          },
-          {
-            "path": "manifests/stable_train.jsonl",
-            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-          }
-        ],
-        "related_request_id": "M2D-20260804-002",
-        "release_sha": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
-        "request_id": "D2M-20260805-002",
-        "status": "PARTIAL"
-      }
-    ],
-    "declared_status": {
-      "agent": "model",
-      "branch": "codex/qcpr-model-v3-temporal-retrieval",
-      "code_sha": "a047bff262839bdd7401905206d626f227a38048",
-      "cpu_gate": {
-        "compileall": "PASS",
-        "full_pytest": "608 passed, 3 skipped",
-        "pyright": "0 errors, 0 warnings",
-        "shell_syntax": "PASS"
-      },
-      "dataset_contract_status": "DATASET_CONTRACT_MISSING",
-      "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
-      "dataset_release_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
-      "h100_smoke": {
-        "checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee",
-        "evidence_gradient_min": 3.686707714223303e-05,
-        "exit_code": "0:0",
-        "full_rankings_sha256": "6e7142ceb5b8485795681feebbb16eed7edf6a3014139a87783735ffddc99784",
-        "job_id": "207556",
-        "logical_score_matrix": [
-          4,
-          4
-        ],
-        "node": "gpu02",
-        "peak_cuda_memory": "NOT_CAPTURED_BY_SMOKE_SCRIPT",
-        "post_smoke_cpu_hardening": "freeze_backbones_and_parameter_group_counts",
-        "state": "COMPLETED",
-        "steps": 16,
-        "validated_code_sha": "5eab23719aa78515383befd97145c49ffe5fc714"
-      },
-      "historical_artifacts_modified": false,
-      "main_training_allowed": false,
-      "notes": [
-        "Dataset Agent shared status/capabilities files were absent at the verified base.",
-        "No semantic, localized or long-series view is assumed available.",
-        "Only CPU implementation and one bounded model smoke are in scope.",
-        "Job 207555 was an infrastructure/code-contract failure caused by reusing an autograd graph; it is not a scientific result and was not promoted.",
-        "P1 common-gallery artifacts are complete but show no verified retrieval improvement over frozen B1."
-      ],
-      "owner": "model",
-      "p2_allowed": false,
-      "readiness": {
-        "B1_CONTROL": "VERIFIED",
-        "MODEL_V3_MAIN": "NOT_AUTHORIZED",
-        "MODEL_V3_MECHANISM": "NOT_RUN",
-        "MODEL_V3_SMOKE": "PASS",
-        "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
-        "P2_REAL": "BLOCKED_DATASET_CONTRACT",
-        "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
-      },
-      "status": "MODEL_V3_SMOKE_PASSED"
+  "manifest_sha256": [
+    {
+      "path": "manifests/direction_development.jsonl",
+      "sha256": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3"
     },
-    "observed_head_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
-    "observed_worktree_clean": false,
+    {
+      "path": "manifests/direction_test.jsonl",
+      "sha256": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4"
+    },
+    {
+      "path": "manifests/direction_train.jsonl",
+      "sha256": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243"
+    },
+    {
+      "path": "manifests/exact_development.jsonl",
+      "sha256": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf"
+    },
+    {
+      "path": "manifests/exact_test.jsonl",
+      "sha256": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec"
+    },
+    {
+      "path": "manifests/exact_train.jsonl",
+      "sha256": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85"
+    },
+    {
+      "path": "manifests/localized_development.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/localized_test.jsonl",
+      "sha256": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3"
+    },
+    {
+      "path": "manifests/localized_train.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/long_series_development.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/long_series_test.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/long_series_train.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/semantic_development.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/semantic_test.jsonl",
+      "sha256": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6"
+    },
+    {
+      "path": "manifests/semantic_train.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/stable_development.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/stable_test.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "manifests/stable_train.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "model_agent": {
+    "dataset_contract_status": "DATASET_CONTRACT_MISSING",
+    "declared_branch": "codex/qcpr-model-v3-temporal-retrieval",
+    "declared_code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+    "main_training_allowed": false,
+    "observed_branch": "codex/qcpr-model-v3-temporal-retrieval",
+    "observed_declared_sha_mismatch": true,
+    "observed_head_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
+    "observed_worktree_dirty": false,
     "open_requests": [
       "M2D-20260804-001",
       "M2D-20260804-002"
     ],
-    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0"
+    "p2_allowed": false,
+    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
+    "status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC"
   },
   "official_sources": [
     {
@@ -644,7 +496,7 @@
       "state": "OFFICIAL_ARTIFACT_UNAVAILABLE"
     },
     {
-      "blocker": "3,306/19,006 unique physical assets available; 15,700 missing after HTTP 429; parent overlap is 0 on the available comparison; full acquisition and human review remain incomplete",
+      "blocker": "parent overlap and mask-derived provenance audit incomplete",
       "license": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
       "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
       "official_locations": [
@@ -656,7 +508,7 @@
         "localized_evaluation"
       ],
       "source_dataset": "RSRCC",
-      "state": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "state": "METADATA_ACQUIRED_PHYSICAL_ASSET_AUDIT_PENDING",
       "text_count": null,
       "training_enabled": false
     },
@@ -783,10 +635,6 @@
     }
   ],
   "physical": {
-    "by_item_type": {
-      "pair": 32059,
-      "sequence": 489
-    },
     "by_source": {
       "levir_mci": 8143,
       "rscc_ebd": 18215,
@@ -794,9 +642,12 @@
       "second_cc": 4701,
       "tamms": 489
     },
+    "count": 32548,
     "frames": 66074,
-    "items": 32548,
-    "sequences": 489
+    "item_types": {
+      "pair": 32059,
+      "sequence": 489
+    }
   },
   "queries": {
     "by_scope": {
@@ -810,14 +661,19 @@
       "human": 62854
     },
     "count": 66452,
-    "training_enabled": 61080
+    "training_enabled_count": 61080,
+    "training_source_counts": {
+      "levir_mci": 29581,
+      "second_cc": 31499
+    }
   },
   "readiness": {
     "direction": "EXACT_CONDITIONAL",
     "exact": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
     "forest": "PHYSICAL_READY_TEXT_HOLD",
     "localized": "EVAL_ONLY",
-    "long_series": "PILOT_PHYSICAL_ONLY_TEXT_HOLD",
+    "long_series": "PHYSICAL_ONLY_NO_VALID_QUERY_METADATA_HOLD",
+    "overall": "DATA_QUALITY_HOLD",
     "rscc": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
     "rsrcc": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
     "semantic": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
@@ -825,80 +681,186 @@
     "tamms": "PHYSICAL_ONLY_TEXT_HOLD"
   },
   "release": {
-    "p1_submitted": false,
-    "p2_submitted": false,
-    "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804",
-    "release_code_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
-    "release_name": "qcpr_dataset_v2_final_97bee86_20260804",
-    "release_sha256": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
-    "release_state": "DATA_QUALITY_HOLD",
-    "sha256sums_entries": 60,
-    "training_submitted": false
+    "code_sha": "b19cda128330ee8f67ab47dc39b3c81ad7740c7b",
+    "name": "qcpr_dataset_v2_final_b19cda1_20260805",
+    "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_b19cda1_20260805",
+    "sha256": "74dc404f1d152cad516835d4febb6fcac2381f110f09365ff268dc7fdcddd81b",
+    "sha256_entries": 70,
+    "state": "DATA_QUALITY_HOLD"
   },
   "remote": {
-    "disk": {
-      "free_bytes": 81346181799936,
-      "total_bytes": 300000000000000,
-      "use_percent": 72.88,
-      "used_bytes": 218653818200064
-    },
-    "host": "172.26.30.252",
-    "project_root": "/mnt/weka/svardanyan/rs_change_project",
-    "user": "svardanyan",
-    "worktree": "/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-dataset-v2-final"
+    "cluster_host": "172.26.30.252",
+    "dataset_worktree": "/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-dataset-v2-final",
+    "disk": "74 TiB free / 273 TiB total; project 847G",
+    "project_root": "/mnt/weka/svardanyan/rs_change_project"
   },
   "remote_stage2_check": "FAILED_PUBLICKEY_PERMISSION_DENIED",
   "reusable_lesson": "Physical acquisition, metadata, and generated text are separate evidence classes. Promote only pinned assets with hashes and explicit parent-overlap audits; reuse a physical hash cache only when the physical registry SHA is identical; keep generated or mask-derived text evaluation-only until human promotion.",
   "rsrcc_physical_audit": {
-    "asset_manifest": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_stage2_rsrcc_physical_audit_6e360ef_20260804/rsrcc_physical_asset_manifest.jsonl",
-    "available_asset_count": 3306,
-    "download_error_examples": [
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET",
-      "MISSING_LOCAL_ASSET"
-    ],
-    "downloaded_asset_count": 0,
-    "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
-    "metadata_row_count": 126131,
-    "metadata_row_counts": {
-      "test": 21999,
-      "train": 87016,
-      "val": 17116
+    "overlap_audit": {
+      "blockers": [
+        "remaining physical assets were not acquired after unauthenticated official download attempts returned HTTP 429",
+        "parent overlap audit cannot be promoted to a complete source-level result while the physical asset set is incomplete",
+        "human verification and license/parent-data review remain open"
+      ],
+      "cross_source_overlap": {
+        "reason": "RSRCC physical assets are incomplete and are not promoted into current-release retrieval items",
+        "shared_physical_frame_count": null,
+        "status": "NOT_COMPLETE_PHYSICAL_ASSET_ACQUISITION_INCOMPLETE"
+      },
+      "download_observation": "Unauthenticated HF physical-asset dry-run encountered HTTP 429; metadata remains the only acquired RSRCC artifact.",
+      "evaluation_only": true,
+      "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+      "metadata": {
+        "files": {
+          "test_metadata.csv": {
+            "bytes": 8613978,
+            "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSRCC/test_metadata.csv",
+            "sha256": "847245aaf469398c534a925da588c4e0db4a2b625e4499e213c302fa876d45d6"
+          },
+          "train_metadata.csv": {
+            "bytes": 33954632,
+            "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSRCC/train_metadata.csv",
+            "sha256": "5d3bc55d5edd5d9a40736aa18c9dfe3c65600f72363a7812ab2230570cf04634"
+          },
+          "val_metadata.csv": {
+            "bytes": 6700080,
+            "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSRCC/val_metadata.csv",
+            "sha256": "83d0512d7ff636bf766ea343b9e1a59f26e6d1b87b4df27f1d5d2872c456f5d9"
+          }
+        },
+        "row_count": 126131,
+        "row_counts": {
+          "test": 21999,
+          "train": 87016,
+          "val": 17116
+        },
+        "text_count": 126131
+      },
+      "official_locations": [
+        "https://huggingface.co/datasets/google/RSRCC",
+        "https://github.com/google-research/remote-sensing/"
+      ],
+      "parent_identity": {
+        "cross_split_physical_pair_count": 0,
+        "identity_namespace_policy": "RSRCC parent identities remain source-namespaced; no parent image is promoted as a new current-release item",
+        "parent_frame_hash_count": 65014,
+        "parent_registry": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_2799ab8_20260804/registries/physical_items.jsonl",
+        "shared_parent_frame_hash_count": 0
+      },
+      "physical_assets": {
+        "audit_manifest": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_stage2_rsrcc_physical_audit_6e360ef_20260804/rsrcc_physical_asset_manifest.jsonl",
+        "available_asset_count": 3306,
+        "missing_asset_count": 15700,
+        "promoted_to_current_release": 0,
+        "unique_asset_count": 19006,
+        "unique_physical_pair_filename_tuples": 9503
+      },
+      "query_provenance": {
+        "mask_derived_or_region_derived": true,
+        "primary_mask_free_training_use": false,
+        "promoted_query_count": 0,
+        "text_provenance": "generated_language_annotations_from_official_dataset_card; evaluation_only"
+      },
+      "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
+      "schema_version": "qcpr-rsrcc-overlap-audit-v1",
+      "source": "RSRCC",
+      "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "training_enabled": false
     },
-    "missing_asset_count": 15700,
-    "official_repository": "https://huggingface.co/datasets/google/RSRCC",
-    "parent_frame_hash_count": 65014,
-    "parent_registry": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_2799ab8_20260804/registries/physical_items.jsonl",
-    "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
-    "schema_version": "qcpr-rsrcc-physical-asset-audit-v1",
-    "shared_parent_frame_hash_count": 0,
-    "shared_parent_frame_hash_examples": [],
-    "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
-    "text_provenance": "generated_language_annotations; evaluation_only; not mask_free_training text",
-    "training_enabled": false,
-    "unique_asset_count": 19006,
-    "unique_physical_pair_filename_tuples": 9503
+    "source_audit": {
+      "cross_split_physical_pair_count": 0,
+      "download_observation": "Unauthenticated HF physical-asset dry-run encountered HTTP 429; metadata remains the only acquired RSRCC artifact.",
+      "duplicate_metadata_rows": 116628,
+      "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+      "metadata_files": {
+        "test_metadata.csv": {
+          "bytes": 8613978,
+          "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSRCC/test_metadata.csv",
+          "sha256": "847245aaf469398c534a925da588c4e0db4a2b625e4499e213c302fa876d45d6"
+        },
+        "train_metadata.csv": {
+          "bytes": 33954632,
+          "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSRCC/train_metadata.csv",
+          "sha256": "5d3bc55d5edd5d9a40736aa18c9dfe3c65600f72363a7812ab2230570cf04634"
+        },
+        "val_metadata.csv": {
+          "bytes": 6700080,
+          "path": "/mnt/weka/svardanyan/rs_change_project/datasets/raw/RSRCC/val_metadata.csv",
+          "sha256": "83d0512d7ff636bf766ea343b9e1a59f26e6d1b87b4df27f1d5d2872c456f5d9"
+        }
+      },
+      "metadata_row_count": 126131,
+      "official_locations": [
+        "https://huggingface.co/datasets/google/RSRCC",
+        "https://github.com/google-research/remote-sensing/"
+      ],
+      "parent_overlap_audit": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "physical_asset_audit": {
+        "asset_manifest": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_stage2_rsrcc_physical_audit_6e360ef_20260804/rsrcc_physical_asset_manifest.jsonl",
+        "available_asset_count": 3306,
+        "download_error_examples": [
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET",
+          "MISSING_LOCAL_ASSET"
+        ],
+        "downloaded_asset_count": 0,
+        "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+        "metadata_row_count": 126131,
+        "metadata_row_counts": {
+          "test": 21999,
+          "train": 87016,
+          "val": 17116
+        },
+        "missing_asset_count": 15700,
+        "official_repository": "https://huggingface.co/datasets/google/RSRCC",
+        "parent_frame_hash_count": 65014,
+        "parent_registry": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_2799ab8_20260804/registries/physical_items.jsonl",
+        "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
+        "schema_version": "qcpr-rsrcc-physical-asset-audit-v1",
+        "shared_parent_frame_hash_count": 0,
+        "shared_parent_frame_hash_examples": [],
+        "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+        "text_provenance": "generated_language_annotations; evaluation_only; not mask_free_training text",
+        "training_enabled": false,
+        "unique_asset_count": 19006,
+        "unique_physical_pair_filename_tuples": 9503
+      },
+      "repository_image_file_count": 3306,
+      "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
+      "row_counts": {
+        "test": 21999,
+        "train": 87016,
+        "val": 17116
+      },
+      "schema_version": "qcpr-rsrcc-source-audit-v1",
+      "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "text_count": 126131,
+      "text_provenance": "generated_language_annotations_from_official_dataset_card; evaluation_only",
+      "training_enabled": false,
+      "unique_physical_pair_filename_tuples": 9503
+    }
   },
   "schema_version": "qcpr-dataset-v2-final-handoff-v1",
   "tamms_download_plan": {
-    "available_disk_bytes_at_plan": 81381923790848,
+    "available_disk_bytes_at_plan": 81337133731840,
     "current_archive_bytes": 282142720,
     "current_archive_exists": true,
     "current_archive_member_count": 4402,
@@ -924,12 +886,13 @@
   },
   "test_evidence": {
     "compileall": "PASS",
-    "full_pytest": "NOT_RUN: remote runtime lacks torch; initial pytest collection failed on torch imports",
-    "git_diff_check": "PASS",
-    "pyright": "UNAVAILABLE",
-    "ruff": "UNAVAILABLE",
+    "cross_split_and_cross_source": "PASS; 0 shared images/reversed pairs/scene splits/cross-source promoted-frame overlaps",
+    "full_pytest": "NOT_RUN on cluster: /opt/conda runtime lacks torch",
+    "mask_free": "PASS; 18 manifests, 66,452 rows, 0 violations",
+    "physical_hash_audit": "PASS; 66,074 frames, 0 missing/mismatch",
+    "release_contract_validator": "PASS; 18 manifests, 32,548 physical items, 66,074 frames, 66,452 queries, decode sample 256",
     "shell_syntax": "PASS",
-    "targeted_dataset_pytest": "26 passed"
+    "targeted_dataset_pytest": "26 passed in isolated pytest runtime"
   },
   "training_prohibition": {
     "p1": false,
@@ -939,13 +902,10 @@
     "training_authorized": false
   },
   "unresolved_human_review": [
-    "RSCC-EBD: expected advisory AI audit is MISSING_INPUT and two-distinct-reviewer human promotion is incomplete",
-    "Forest-Change: official split leaks components; scene-disjoint/caption provenance acceptance and human review remain incomplete",
-    "TAMMs: 489 physical sequences only; full inventory/license/fMoW terms and generated text review remain incomplete",
-    "Semantic primary gold: train/development semantic physical partitions and human verification are not available in this release",
-    "Long-series: no candidate has explicit query_temporal_extent, relevant_frame_range, and temporal_direction; generated text is excluded",
-    "RSRCC: physical acquisition is incomplete; available assets, missing assets, parent overlap, and full acquisition/human review remain incomplete (see source_reports/rsrcc_source_audit.json)",
-    "Dubai-CC, DynamicEarthNet, SpaceNet-7, and TERRA-CD: official archive/license acquisition or release asset checks remain open"
+    "TAMMs generated captions have no independent factual review",
+    "Forest caption provenance and scene-disjoint release acceptance remain unresolved",
+    "RSRCC physical acquisition and parent identity review are incomplete",
+    "RSCC-EBD two-reviewer agreement/adjudication is pending"
   ],
   "views": {
     "direction": {
@@ -979,5 +939,6 @@
       "train": 0
     }
   },
-  "worktree_clean": true
+  "worktree_clean": false,
+  "worktree_state_at_generation": "DIRTY_INTENTIONAL_CONTRACT_AND_HANDOFF_EDITS"
 }
