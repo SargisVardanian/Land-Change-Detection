@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import torch
 from torch import Tensor, nn
@@ -54,7 +55,8 @@ class UnifiedListwiseLoss(nn.Module):
             raise ValueError(f"{missing} queries have no valid positive")
         scaled = scores / self.temperature
         denominator_logits = scaled.masked_fill(~valid_mask, torch.finfo(scaled.dtype).min)
-        weights = self.grade_weights.to(device=grades.device)[grades.clamp(0, 3)]
+        grade_weights = cast(Tensor, self.grade_weights)
+        weights = grade_weights.to(device=grades.device)[grades.clamp(0, 3)]
         numerator_logits = (scaled + torch.log(weights.clamp_min(torch.finfo(scaled.dtype).tiny))).masked_fill(~positive, torch.finfo(scaled.dtype).min)
         loss_per_query = torch.logsumexp(denominator_logits, dim=1) - torch.logsumexp(numerator_logits, dim=1)
         loss = loss_per_query[query_has_positive].mean()

@@ -116,6 +116,10 @@ class QCPRConfig:
     def validate(self) -> None:
         if self.retrieval_dim != 512:
             raise ConfigError("retrieval_dim is fixed to 512")
+        if self.temporal.hidden_dim != self.retrieval_dim:
+            raise ConfigError("temporal.hidden_dim must equal retrieval_dim")
+        if self.text.hidden_dim != self.retrieval_dim:
+            raise ConfigError("text.hidden_dim must equal retrieval_dim")
         self.temporal.validate()
         self.text.validate()
         self.evidence.validate()

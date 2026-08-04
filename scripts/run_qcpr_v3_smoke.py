@@ -15,10 +15,10 @@ from typing import Any
 import numpy as np
 import torch
 
-from qcpr_v3.config import default_config
+from qcpr_v3.config import config_dict, default_config
 from qcpr_v3.data.contracts import TemporalMetadata
 from qcpr_v3.diagnostics.evidence import evidence_gradient_diagnostics
-from qcpr_v3.evaluation.retrieval import retrieval_metrics
+from qcpr_v3.evaluation.retrieval import rank_scores, retrieval_metrics
 from qcpr_v3.models import QCPRV3Model
 from qcpr_v3.training.checkpointing import save_checkpoint
 from qcpr_v3.training.exposure import ExposureAccounting, record_step
@@ -85,12 +85,13 @@ def main() -> None:
         result = train_step(model, query, visual, grades, objective=objective, optimizer=optimizer)
         if not torch.isfinite(result.scores).all() or not torch.isfinite(result.loss.loss):
             raise FloatingPointError("non-finite smoke score or loss")
-        metrics_history.append({"step": step + 1, "loss": float(result.loss.loss), "evidence_gradient_norm": result.evidence_gradient_norm})
+        metrics_history.append({"step": step + 1, "loss": float(result.loss.loss.detach()), "evidence_gradient_norm": result.evidence_gradient_norm})
 
     model.eval()
     with torch.no_grad():
         final = model.score(query, visual)
         metrics = retrieval_metrics(final.scores, grades.bool(), ks=(1, 2, 4))
+        ranking_order = rank_scores(final.scores).cpu()
     checkpoint = args.run_root / "checkpoint.pt"
     save_checkpoint(
         checkpoint,
@@ -100,8 +101,16 @@ def main() -> None:
         metadata={"code_sha": args.expected_sha, "data_release": args.data_release, "status": "SMOKE"},
     )
     checkpoint_digest = file_sha256(checkpoint)
+    full_rankings = args.run_root / "full_rankings.pt"
+    torch.save(final.scores.detach().cpu(), full_rankings)
+    rankings_top100 = args.run_root / "rankings_top100.jsonl"
+    with rankings_top100.open("w") as handle:
+        for query_index, ordered in enumerate(ranking_order.tolist()):
+            handle.write(json.dumps({"query_id": f"query-{query_index}", "ranked_item_ids": [f"pair-{index}" for index in ordered[:100]]}) + "\n")
+    ranking_digest = file_sha256(full_rankings)
+    (args.run_root / "checkpoint.sha256").write_text(checkpoint_digest + "\n")
     (args.run_root / "code_state.json").write_text(json.dumps({"expected_sha": args.expected_sha, "python": os.sys.executable, "status": "SMOKE"}, indent=2) + "\n")
-    (args.run_root / "config_resolved.json").write_text(json.dumps({"config": "default", "steps": args.steps}, indent=2) + "\n")
+    (args.run_root / "config_resolved.json").write_text(json.dumps({"config": config_dict(config), "steps": args.steps}, indent=2, sort_keys=True) + "\n")
     (args.run_root / "environment.json").write_text(json.dumps({"python": platform.python_version(), "torch": torch.__version__, "device": str(device)}, indent=2) + "\n")
     (args.run_root / "model_contract.json").write_text(json.dumps({"architecture_id": config.architecture_id, "sequence_cls": [pair_count, 512], "dense_tokens": [pair_count, time_count, token_count, 512], "evidence_map": [query_count, pair_count, time_count, token_count], "parameter_counts": model.parameter_counts()}, indent=2) + "\n")
     (args.run_root / "parameter_groups.json").write_text(json.dumps({"all": sum(p.numel() for p in model.parameters() if p.requires_grad)}, indent=2) + "\n")
@@ -109,6 +118,7 @@ def main() -> None:
     (args.run_root / "exposure_accounting.json").write_text(json.dumps(accounting.as_dict(), indent=2) + "\n")
     (args.run_root / "metrics.jsonl").write_text("\n".join(json.dumps(row) for row in metrics_history) + "\n")
     (args.run_root / "evaluation_metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
+    (args.run_root / "retrieval_integrity_audit.json").write_text(json.dumps({"ranking_shape": list(final.scores.shape), "ranking_sha256": ranking_digest, "query_ids_sha256": hashlib.sha256("\n".join(f"query-{i}" for i in range(query_count)).encode()).hexdigest(), "gallery_ids_sha256": hashlib.sha256("\n".join(f"pair-{i}" for i in range(pair_count)).encode()).hexdigest()}, indent=2) + "\n")
     (args.run_root / "embedding_diagnostics.json").write_text(json.dumps({"sequence_cls_norm_mean": float(visual.sequence_cls.norm(dim=-1).mean()), "text_cls_norm_mean": float(query.text_cls.norm(dim=-1).mean())}, indent=2) + "\n")
     (args.run_root / "gradient_diagnostics.json").write_text(json.dumps(evidence_gradient_diagnostics(model), indent=2) + "\n")
     (args.run_root / "evidence_diagnostics.json").write_text(json.dumps({"weights_shape": list(final.evidence_weights.shape) if final.evidence_weights is not None else None, "nonzero": bool(final.evidence_weights is not None and (final.evidence_weights > 0).any())}, indent=2) + "\n")

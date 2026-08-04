@@ -42,6 +42,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline-root", type=Path, required=True)
     parser.add_argument("--p1-root", type=Path, required=True)
+    parser.add_argument("--p1-control-root", type=Path)
     parser.add_argument("--comparison-json", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
@@ -61,8 +62,9 @@ def main() -> None:
     comparison = None
     if args.comparison_json and args.comparison_json.exists():
         comparison = read_json(args.comparison_json)
-    p1_control = args.p1_root.parent / "qcpr_stage2_p1_control_47a628f_20260804" / "p1"
-    feature_cache_meta = p1_control / "feature_cache" / "development" / "cache_meta.json"
+    feature_cache_meta = None
+    if args.p1_control_root is not None:
+        feature_cache_meta = args.p1_control_root / "feature_cache" / "development" / "cache_meta.json"
     report: dict[str, Any] = {
         "status": "PASS_ARTIFACT_AUDIT",
         "comparison_status": "COMPLETE_ARTIFACT" if comparison is not None else "INCOMPLETE_ARTIFACT",
@@ -72,8 +74,8 @@ def main() -> None:
         "comparison": comparison,
         "artifact_inventory": artifacts,
         "feature_cache": {
-            "metadata_exists": feature_cache_meta.exists(),
-            "metadata_sha256": sha256(feature_cache_meta) if feature_cache_meta.exists() else None,
+            "metadata_exists": feature_cache_meta is not None and feature_cache_meta.exists(),
+            "metadata_sha256": sha256(feature_cache_meta) if feature_cache_meta is not None and feature_cache_meta.exists() else None,
             "interpretation": "P1 used a frozen feature cache; no backbone adaptation is demonstrated by these artifacts.",
         },
         "diagnostic_limits": {

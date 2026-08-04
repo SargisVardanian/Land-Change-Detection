@@ -9,7 +9,8 @@ from torch import Tensor
 def reverse_temporal_tokens(tokens: Tensor) -> Tensor:
     if tokens.ndim < 2:
         raise ValueError("tokens must have a temporal dimension")
-    return tokens.flip(dims=(1,))
+    temporal_dim = 0 if tokens.ndim == 2 else 1
+    return tokens.flip(dims=(temporal_dim,))
 
 
 def pad_temporal_tokens(sequences: list[Tensor], pad_value: float = 0.0) -> tuple[Tensor, Tensor]:

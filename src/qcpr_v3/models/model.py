@@ -11,7 +11,7 @@ from torch.nn import functional as F
 
 from ..config.schema import QCPRConfig, validate_config
 from ..data.contracts import TemporalMetadata
-from .evidence_bottleneck import EvidenceBottleneck, PairwiseEvidenceOutput
+from .evidence_bottleneck import EvidenceBottleneck, EvidenceOutput, PairwiseEvidenceOutput
 from .jina_query_encoder import JinaQueryEncoder, QueryFeatures
 from .relevance_model import RelevanceOutput, UnifiedRelevanceModel
 from .temporal_adapter import TemporalAdapter, TemporalOutput
@@ -137,12 +137,57 @@ class QCPRV3Model(nn.Module):
     def rerank(self, query: QueryFeatures, visual: TemporalOutput, *, top_k: int = 50) -> tuple[Tensor, ModelScoreOutput]:
         if top_k < 1:
             raise ValueError("top_k must be positive")
+        if query.text_cls.shape[0] != 1:
+            raise ValueError("rerank currently requires one query at a time")
         stage_one = self.ann_scores(query, visual)
         k = min(top_k, visual.sequence_cls.shape[0])
-        candidate_scores, candidate_indices = stage_one.topk(k, dim=-1)
+        _, candidate_indices = stage_one.topk(k, dim=-1)
         selected = _select_visual(visual, candidate_indices)
-        selected_scores = self.score(query, selected)
+        selected_scores = self.score_topk(query, selected)
         return candidate_indices, selected_scores
+
+    def score_topk(self, query: QueryFeatures, visual: TemporalOutput) -> ModelScoreOutput:
+        """Exact token-to-patch evidence score for one query and selected items."""
+        if query.text_cls.shape[0] != 1:
+            raise ValueError("score_topk requires one query at a time")
+        query.validate()
+        visual.validate()
+        text_cls = F.normalize(query.text_cls, dim=-1)
+        sequence_cls = F.normalize(visual.sequence_cls, dim=-1)
+        global_logit = text_cls @ sequence_cls.transpose(0, 1)
+        change = F.normalize(visual.change_tokens, dim=-1)
+        slot_logits = torch.einsum("qd,pkd->qpk", text_cls, change)
+        slot_logit = torch.logsumexp(slot_logits, dim=-1) - torch.log(
+            torch.tensor(float(change.shape[1]), device=slot_logits.device, dtype=slot_logits.dtype)
+        )
+        token_mask = visual.token_mask & visual.frame_mask.unsqueeze(-1)
+        exact: EvidenceOutput = self.evidence_bottleneck(
+            query.text_tokens.expand(visual.dense_tokens.shape[0], -1, -1),
+            query.text_mask.expand(visual.dense_tokens.shape[0], -1),
+            visual.dense_tokens,
+            token_mask,
+        )
+        evidence_vector = F.normalize(exact.evidence_vector, dim=-1)
+        evidence_logit = (text_cls[:, None, :] * evidence_vector[None, :, :]).sum(dim=-1)
+        if exact.token_similarity is None:
+            raise RuntimeError("exact evidence output did not retain token similarities")
+        late_feature = exact.token_similarity.amax(dim=-1).mean(dim=1).mean(dim=-1).unsqueeze(0)
+        pairwise_evidence = PairwiseEvidenceOutput(
+            evidence_vector.unsqueeze(0),
+            exact.relevance_logits.unsqueeze(0),
+            exact.relevance_weights.unsqueeze(0),
+            late_feature,
+        )
+        relevance = self.relevance_model(
+            global_logit,
+            evidence_logit,
+            slot_logit,
+            late_feature,
+            text_cls,
+            sequence_cls,
+            evidence_vector.unsqueeze(0),
+        )
+        return ModelScoreOutput(relevance.score, relevance, pairwise_evidence)
 
     def parameter_counts(self) -> dict[str, int]:
         all_count = sum(parameter.numel() for parameter in self.parameters())

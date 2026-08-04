@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 import torch
 from torch import Tensor, nn
@@ -74,7 +75,8 @@ class TemporalBlock(nn.Module):
         indices: list[list[int]] = []
         for point_index, point in enumerate(coordinates):
             choices: list[int] = []
-            for offset in self.offsets.to(coordinates):
+            offsets = cast(Tensor, self.offsets)
+            for offset in offsets.to(coordinates):
                 target = point + offset
                 distances = (coordinates - target).abs().sum(dim=-1)
                 best = int(distances.argmin())
@@ -196,6 +198,7 @@ class TemporalAdapter(nn.Module):
             frame_vocab=max_frames,
         )
         self.change_seed = nn.Parameter(torch.zeros(1, change_slots, hidden_dim))
+        self.position_scale = nn.Parameter(torch.tensor(1e-3))
         self.blocks = nn.ModuleList(
             TemporalBlock(hidden_dim, heads, ff_ratio, dropout, layer_scale_init, local_radius)
             for _ in range(blocks)
@@ -222,7 +225,7 @@ class TemporalAdapter(nn.Module):
         if frame_mask.shape != (batch, time_count) or token_mask.shape != (batch, time_count, n):
             raise ValueError("temporal masks have invalid shapes")
         x = self.input_projection(native_tokens)
-        x = x + self.position(
+        x = x + self.position_scale * self.position(
             coordinates,
             temporal.timestamps,
             temporal.frame_ids,

@@ -19,6 +19,7 @@ pages/__pycache__/
 scripts/__pycache__/
 src/land_change_detection.egg-info/
 src/land_change_detection/**/__pycache__/
+src/qcpr_v3/**/__pycache__/
 tests/.tmp_train_logic/
 tests/__pycache__/
 2211.15660v3.pdf

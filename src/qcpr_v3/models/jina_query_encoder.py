@@ -93,8 +93,8 @@ class JinaQueryEncoder(nn.Module):
             raise ValueError("tokens must be [B,L,D] and mask [B,L]")
         mask = mask.to(dtype=torch.bool, device=tokens.device)
         x = self.input_projection(tokens)
-        delta = self.adapter(x, src_key_padding_mask=~mask)
-        x = self.adapter_norm(x + self.adapter_residual_scale * delta)
+        delta = self.adapter(self.adapter_norm(x), src_key_padding_mask=~mask)
+        x = x + self.adapter_residual_scale * delta
         cls = F.normalize(self.output_projection(masked_mean(x, mask)), dim=-1)
         result = QueryFeatures(cls, x, mask)
         result.validate()

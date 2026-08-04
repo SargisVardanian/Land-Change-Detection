@@ -37,8 +37,11 @@ class UnifiedRelevanceModel(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
-        nn.init.zeros_(self.residual[-1].weight)
-        nn.init.zeros_(self.residual[-1].bias)
+        output_layer = self.residual[-1]
+        if not isinstance(output_layer, nn.Linear):
+            raise TypeError("residual head must end in Linear")
+        nn.init.zeros_(output_layer.weight)
+        nn.init.zeros_(output_layer.bias)
 
     def forward(
         self,
