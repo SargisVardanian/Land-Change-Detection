@@ -1,4 +1,7 @@
-from land_change_detection.training.hierarchical_source_sampler import HierarchicalSamplingConfig, HierarchicalSourceSampler
+from land_change_detection.training.hierarchical_source_sampler import (
+    HierarchicalSamplingConfig,
+    HierarchicalSourceSampler,
+)
 
 
 def _rows():
@@ -28,3 +31,38 @@ def test_schedule_hash_is_deterministic():
     left = HierarchicalSourceSampler(_rows(), cfg).sample_epoch(4)
     right = HierarchicalSourceSampler(_rows(), cfg).sample_epoch(4)
     assert HierarchicalSourceSampler.schedule_sha256(left) == HierarchicalSourceSampler.schedule_sha256(right)
+
+
+
+def test_event_identity_does_not_create_disaster_domain():
+    rows = [
+        {
+            "canonical_pair_id": "forest-0",
+            "source_dataset": "Forest-Change",
+            "source_event_id": "scene-0",
+            "change_type": "vegetation_loss",
+        }
+    ]
+    sampler = HierarchicalSourceSampler(
+        rows,
+        HierarchicalSamplingConfig(batch_size=1, max_event_fraction=1.0, max_source_fraction=1.0),
+    )
+    assert sampler.rows[0]["_event"] == "scene-0"
+    assert sampler.rows[0]["_domain"] == "non_disaster"
+
+
+def test_explicit_domain_overrides_source_policy():
+    rows = [
+        {
+            "canonical_pair_id": "reviewed-0",
+            "source_dataset": "Forest-Change",
+            "source_event_id": "scene-0",
+            "domain": "disaster",
+            "change_type": "fire_damage",
+        }
+    ]
+    sampler = HierarchicalSourceSampler(
+        rows,
+        HierarchicalSamplingConfig(batch_size=1, max_event_fraction=1.0, max_source_fraction=1.0),
+    )
+    assert sampler.rows[0]["_domain"] == "disaster"

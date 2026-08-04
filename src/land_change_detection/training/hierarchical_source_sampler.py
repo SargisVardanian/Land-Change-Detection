@@ -24,10 +24,26 @@ def _source(row: dict[str, Any]) -> str:
 
 
 def _domain(row: dict[str, Any]) -> str:
-    explicit = row.get("domain") or row.get("disaster_domain")
-    if explicit:
+    """Return a source/domain label without using event identity as a shortcut.
+
+    ``source_event_id`` and ``event_id`` are provenance and split-grouping
+    fields. They are present for many non-disaster scene collections too, so
+    their presence must never imply a disaster domain. A row may provide an
+    explicit domain; otherwise only the conservative source registry below is
+    allowed to assign the disaster label.
+    """
+    explicit = row.get("domain")
+    if explicit not in (None, ""):
         return str(explicit)
-    return "disaster" if row.get("source_event_id") or "event_id" in row else "non_disaster"
+    source = _source(row).strip().lower().replace("_", "-")
+    disaster_sources = {
+        "rscc-ebd",
+        "rscc",
+        "rsrcc",
+        "disasterm3",
+        "xbd",
+    }
+    return "disaster" if source in disaster_sources else "non_disaster"
 
 
 def _event(row: dict[str, Any]) -> str:
