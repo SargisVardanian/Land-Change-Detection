@@ -1,44 +1,91 @@
 {
-  "schema_version": "qcpr-dataset-status-v1",
-  "status": "DATA_QUALITY_HOLD",
   "branch": "codex/qcpr-dataset-v2-final",
-  "dataset_head_sha": "440d14cf90e003254804412ebeaae4a278c09e95",
-  "release_code_sha": "440d14cf90e003254804412ebeaae4a278c09e95",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_440d14c_20260804",
-  "training_submitted": false,
+  "dataset_head_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+  "limitations": [
+    "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
+    "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
+    "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
+    "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
+    "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
+    "No P1/P2/training submission was performed"
+  ],
+  "model_contract": {
+    "declared_branch": "codex/qcpr-model-v3-temporal-retrieval",
+    "declared_code_sha": "a047bff262839bdd7401905206d626f227a38048",
+    "declared_dataset_contract_status": "DATASET_CONTRACT_MISSING",
+    "declared_model_status": "MODEL_V3_SMOKE_PASSED",
+    "main_training_allowed": false,
+    "maximum_frames": 16,
+    "minimum_frames": 2,
+    "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
+    "observed_head_sha": "06cf33c0b065f0f2b7142c20f9f0ddfebb7fdc91",
+    "observed_worktree_dirty": false,
+    "open_request_ids": [
+      "M2D-20260804-001",
+      "M2D-20260804-002"
+    ],
+    "p2_allowed": false,
+    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
+    "status": "MODEL_CONTRACT_AVAILABLE_WITH_OBSERVED_HEAD_MISMATCH"
+  },
+  "open_model_request_ids": [
+    "M2D-20260804-001",
+    "M2D-20260804-002"
+  ],
+  "p1_submitted": false,
   "p2_authorized": false,
+  "physical_registry": {
+    "frames": 66074,
+    "items": 32548,
+    "source_counts": {
+      "levir_mci": 8143,
+      "rscc_ebd": 18215,
+      "s2looking": 1000,
+      "second_cc": 4701,
+      "tamms": 489
+    }
+  },
+  "query_registry": {
+    "queries": 66452,
+    "scope_counts": {
+      "direction": 19015,
+      "exact": 43839,
+      "localized": 2000,
+      "semantic": 1598
+    },
+    "training_enabled": 61080,
+    "verification_counts": {
+      "derived_eval": 3598,
+      "human": 62854
+    }
+  },
+  "release_code_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804",
+  "release_sha256": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
+  "rscc_ai_audit_status": "MISSING_INPUT",
+  "rsrcc_physical_asset_status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+  "schema_version": "qcpr-dataset-status-v1",
+  "source_base_commit": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
+  "status": "DATA_QUALITY_HOLD",
+  "tamms_physical_inventory": {
+    "frames": 1956,
+    "full_metadata_sequences": 37003,
+    "sequences": 489,
+    "training_enabled": false,
+    "verified_queries": 0
+  },
+  "training_authorized": false,
+  "training_submitted": false,
   "views": {
+    "direction": "EXACT_CONDITIONAL",
     "exact": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
-    "semantic": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
+    "forest": "PHYSICAL_READY_TEXT_HOLD",
     "localized": "EVAL_ONLY",
     "long_series": "PILOT_PHYSICAL_ONLY_TEXT_HOLD",
     "rscc": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
-    "forest": "PHYSICAL_READY_TEXT_HOLD",
+    "rsrcc": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+    "semantic": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
+    "stable": "EMPTY_GENERIC_NO_CHANGE_EXCLUDED",
     "tamms": "PHYSICAL_ONLY_TEXT_HOLD"
-  },
-  "model_contract": {
-    "status": "MODEL_CONTRACT_AVAILABLE",
-    "branch": "codex/qcpr-model-v3-temporal-retrieval",
-    "code_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
-    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
-    "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
-    "open_request_ids": ["M2D-20260804-001", "M2D-20260804-002"]
-  },
-  "release_sha256": "e638e73a12e7d53057f4ece0956386faebe48079ba1bf65578c24536f064b2d0",
-  "rscc_ai_audit_status": "MISSING_INPUT",
-  "tamms_physical_inventory": {
-    "sequences": 489,
-    "frames": 1956,
-    "full_metadata_sequences": 37003,
-    "verified_queries": 0,
-    "training_enabled": false
-  },
-  "limitations": [
-    "RSCC-EBD has no completed independent human text review",
-    "primary semantic train/development/test gold manifests remain empty",
-    "localized and long-series records are evaluation/pilot only",
-    "Forest-Change official split is not used because image components cross splits",
-    "TAMMs full 37,003-sequence archive is not acquired; available archive covers 489 waste_disposal sequences",
-    "Model Agent contract is available but its two M2D requests remain open"
-  ]
+  }
 }

@@ -1,68 +1,54 @@
 {
-  "schema_version": "qcpr-dataset-capabilities-v1",
-  "dataset_head_sha": "440d14cf90e003254804412ebeaae4a278c09e95",
-  "release_code_sha": "440d14cf90e003254804412ebeaae4a278c09e95",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_440d14c_20260804",
-  "release_sha256": "e638e73a12e7d53057f4ece0956386faebe48079ba1bf65578c24536f064b2d0",
-  "exact": {
-    "train_items": 10916,
-    "development_items": 1539,
-    "test_items": 389,
-    "train_queries": 37529,
-    "development_queries": 5065,
-    "test_queries": 1245,
-    "verified": true
-  },
-  "semantic": {
-    "train_queries": 0,
-    "development_queries": 0,
-    "test_queries": 1598,
-    "groups": 2,
-    "grade_2_3_groups": 2,
-    "status": "HOLD"
-  },
-  "localized": {
-    "queries": 2000,
-    "evaluation_masks": 2000,
-    "verified_training_queries": 0,
-    "status": "EVAL_ONLY"
-  },
-  "long_series": {
-    "sequences": 489,
-    "pilot_verified_text_sequences": 0,
-    "verified_queries": 0,
-    "status": "PILOT_PHYSICAL_ONLY_TEXT_HOLD"
-  },
-  "direction": {
-    "train_queries": 16352,
-    "development_queries": 2184,
-    "test_queries": 479,
-    "status": "EXACT_CONDITIONAL"
-  },
-  "stable": {
-    "train_queries": 0,
-    "development_queries": 0,
-    "test_queries": 0,
-    "status": "EMPTY_GENERIC_NO_CHANGE_EXCLUDED"
-  },
-  "sources": {
-    "LEVIR-MCI": {"physical_items": 8143, "status": "EXACT_CONDITIONAL_READY"},
-    "SECOND-CC": {"physical_items": 4701, "status": "EXACT_CONDITIONAL_READY"},
-    "RSCC-EBD": {"physical_items": 18215, "verified_text_rows": 0, "status": "PHYSICAL_ONLY"},
-    "S2Looking": {"physical_items": 1000, "evaluation_queries": 3598, "status": "EVALUATION_ONLY"},
-    "TAMMs": {"sequences": 489, "frames": 1956, "full_metadata_sequences": 37003, "verified_queries": 0, "status": "PHYSICAL_ONLY_TEXT_HOLD"}
-  },
   "blocked_sources": {
-    "Forest-Change": "scene-disjoint proposal/caption provenance not released",
     "DUBAI-CC": "official archive/access not acquired",
     "DynamicEarthNet": "official physical archive not acquired",
+    "Forest-Change": "official pair split leaks connected image components; scene-disjoint caption provenance/human review pending",
+    "GlobalGeoTree": "specialized-evaluation-only deferred",
+    "QAG-360K": "parent identity and mask-derived provenance audit incomplete",
+    "RS5M": "pretraining-only deferred",
+    "RSCC-EBD": "verified training text is zero; 48-row advisory AI audit is MISSING_INPUT; independent human review incomplete",
+    "RSRCC": "physical acquisition incomplete: 3306/19006 assets available, 15700 missing after HTTP 429; parent overlap 0",
+    "SkyScript": "pretraining-only deferred",
     "SpaceNet-7": "official physical archive not acquired",
-    "TERRA-CD": "official physical archive not acquired",
-    "RSRCC": "parent overlap and mask-derived provenance audit incomplete",
-    "QAG-360K": "parent physical identity and license audit incomplete",
-    "RS5M": "pretraining-only source deferred",
-    "SkyScript": "pretraining-only source deferred",
-    "GlobalGeoTree": "specialized-evaluation-only source deferred"
+    "TAMMs": "489-sequence pilot only; full metadata index has 37,003 sequences and generated text is unverified",
+    "TERRA-CD": "official physical archive and data license not pinned"
+  },
+  "dataset_head_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+  "direction": {
+    "development_queries": 2184,
+    "status": "EXACT_CONDITIONAL",
+    "test_queries": 479,
+    "train_queries": 16352
+  },
+  "exact": {
+    "development_items": 1539,
+    "development_queries": 5065,
+    "status": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
+    "test_items": 389,
+    "test_queries": 1245,
+    "train_items": 10916,
+    "train_queries": 37529,
+    "verified": true
+  },
+  "limitations": [
+    "This response supersedes prior Dataset Agent handoffs and points to the immutable 97bee86 release.",
+    "The Model Agent declared contract is available, but its observed clean branch HEAD differs from the declared model_status.json code_sha; no model files were modified.",
+    "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
+    "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
+    "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
+    "No P1/P2/training submission was performed"
+  ],
+  "localized": {
+    "evaluation_masks": 2000,
+    "queries": 2000,
+    "status": "EVAL_ONLY",
+    "verified_training_queries": 0
+  },
+  "long_series": {
+    "pilot_verified_text_sequences": 0,
+    "sequences": 489,
+    "status": "PILOT_PHYSICAL_ONLY_TEXT_HOLD",
+    "verified_queries": 0
   },
   "manifest_sha256": {
     "manifests/direction_development.jsonl": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3",
@@ -72,26 +58,152 @@
     "manifests/exact_test.jsonl": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec",
     "manifests/exact_train.jsonl": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85",
     "manifests/localized_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/localized_test.jsonl": "c3dbc760f160d007d81ced41e24b87aad87bef1c12fad9f49104a3d6977f383f",
+    "manifests/localized_test.jsonl": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3",
     "manifests/localized_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_development.jsonl": "39cc8acc99a9160f3280e620631ade364522bc3ac7d27d536c459a8f4fe478f2",
-    "manifests/long_series_test.jsonl": "b7362d95134cbd4c5381f897b6464cd799f290081e38a85f308f66e6d5750dc3",
-    "manifests/long_series_train.jsonl": "34337abf1d4accf7138c8c94ae8e0f666746f5ba92a559fd02abb89e40df9f9e",
+    "manifests/long_series_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/long_series_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/long_series_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "manifests/semantic_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/semantic_test.jsonl": "1afcf3cfe2e674a35047fb4ccff6bd992f28e5ec0425dd302f30d79f070de204",
+    "manifests/semantic_test.jsonl": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6",
     "manifests/semantic_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "manifests/stable_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "manifests/stable_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "manifests/stable_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
   },
   "model_contract": {
-    "status": "MODEL_CONTRACT_AVAILABLE",
-    "branch": "codex/qcpr-model-v3-temporal-retrieval",
-    "code_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
-    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
-    "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
-    "open_request_ids": ["M2D-20260804-001", "M2D-20260804-002"],
+    "declared_branch": "codex/qcpr-model-v3-temporal-retrieval",
+    "declared_code_sha": "a047bff262839bdd7401905206d626f227a38048",
+    "declared_dataset_contract_status": "DATASET_CONTRACT_MISSING",
+    "declared_model_status": "MODEL_V3_SMOKE_PASSED",
     "main_training_allowed": false,
-    "p2_allowed": false
-  }
+    "maximum_frames": 16,
+    "minimum_frames": 2,
+    "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
+    "observed_head_sha": "06cf33c0b065f0f2b7142c20f9f0ddfebb7fdc91",
+    "observed_worktree_dirty": false,
+    "open_request_ids": [
+      "M2D-20260804-001",
+      "M2D-20260804-002"
+    ],
+    "p2_allowed": false,
+    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
+    "status": "MODEL_CONTRACT_AVAILABLE_WITH_OBSERVED_HEAD_MISMATCH"
+  },
+  "physical_registry": {
+    "frames": 66074,
+    "item_splits": {
+      "development": 7794,
+      "test": 3768,
+      "train": 20986
+    },
+    "items": 32548,
+    "source_counts": {
+      "levir_mci": 8143,
+      "rscc_ebd": 18215,
+      "s2looking": 1000,
+      "second_cc": 4701,
+      "tamms": 489
+    }
+  },
+  "query_registry": {
+    "queries": 66452,
+    "scope_counts": {
+      "direction": 19015,
+      "exact": 43839,
+      "localized": 2000,
+      "semantic": 1598
+    },
+    "training_enabled": 61080,
+    "verification_counts": {
+      "derived_eval": 3598,
+      "human": 62854
+    }
+  },
+  "release_code_sha": "97bee86b3e137460c419078c76bd6cd46b94c768",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_97bee86_20260804",
+  "release_sha256": "eb3a2e14b5467eec4da3323b06bb71de43a8a2576ca8ded380806b7503951442",
+  "release_state": "DATA_QUALITY_HOLD",
+  "schema_version": "qcpr-dataset-capabilities-v1",
+  "semantic": {
+    "development_queries": 0,
+    "grade_2_3_groups": 2,
+    "groups": 2,
+    "status": "HOLD",
+    "test_queries": 1598,
+    "train_queries": 0
+  },
+  "sources": {
+    "DUBAI-CC": {
+      "caption_records": 2500,
+      "physical_pairs": 500,
+      "status": "OFFICIAL_LINK_FOUND_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    "DynamicEarthNet": {
+      "physical_sequences": 75,
+      "status": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    "Forest-Change": {
+      "caption_records": 1670,
+      "dense_labels": 334,
+      "physical_pairs": 334,
+      "status": "PHYSICAL_READY_TEXT_HOLD",
+      "training_enabled": false
+    },
+    "LEVIR-MCI": {
+      "physical_items": 8143,
+      "status": "EXACT_CONDITIONAL_READY"
+    },
+    "QAG-360K": {
+      "status": "NOT_REQUESTED_MASK_DERIVED_RESEARCH_ONLY",
+      "training_enabled": false
+    },
+    "RSCC-EBD": {
+      "physical_items": 18215,
+      "status": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+      "verified_text_rows": 0
+    },
+    "RSRCC": {
+      "available_assets": 3306,
+      "metadata_rows": 126131,
+      "missing_assets": 15700,
+      "parent_overlap": 0,
+      "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "training_enabled": false,
+      "unique_assets": 19006
+    },
+    "S2Looking": {
+      "evaluation_queries": 3598,
+      "physical_items": 1000,
+      "status": "EVALUATION_ONLY"
+    },
+    "SECOND-CC": {
+      "physical_items": 4701,
+      "status": "EXACT_CONDITIONAL_READY"
+    },
+    "SpaceNet-7": {
+      "physical_sequences": 101,
+      "status": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    "TAMMs": {
+      "frames": 1956,
+      "full_metadata_sequences": 37003,
+      "sequences": 489,
+      "status": "PHYSICAL_ONLY_TEXT_HOLD",
+      "verified_queries": 0
+    },
+    "TERRA-CD": {
+      "status": "OFFICIAL_REPO_NO_RELEASE_ASSET",
+      "training_enabled": false
+    }
+  },
+  "stable": {
+    "development_queries": 0,
+    "status": "EMPTY_GENERIC_NO_CHANGE_EXCLUDED",
+    "test_queries": 0,
+    "train_queries": 0
+  },
+  "training_authorized": false
 }
