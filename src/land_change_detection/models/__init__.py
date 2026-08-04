@@ -11,6 +11,7 @@ from .retrieval_heads import RetrievalProjectionHead
 from .text_conditioned_mask_decoder import TextConditionedMaskDecoder, TextConditionedMaskDecoderConfig
 from .unichange_v2_retrieval import UniChangeV2RetrievalModel, UniChangeV2RetrievalOutput
 from .unichange_model import UniChangeConfig, UniChangeModel, UniChangeOutput
+from .qcpr_hrg import HRGRetrievalOutput, HRGVisualEncoding, QCPRHRGConfig, QCPRHierarchicalRetriever
 
 __all__ = [
     "EventDecoder",
@@ -33,4 +34,8 @@ __all__ = [
     "UniChangeModel",
     "UniChangeOutput",
     "build_semantic_change_model",
+    "HRGRetrievalOutput",
+    "HRGVisualEncoding",
+    "QCPRHRGConfig",
+    "QCPRHierarchicalRetriever",
 ]
