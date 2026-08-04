@@ -134,7 +134,6 @@ class DeepResidualPairAdapter(nn.Module):
     def forward(self,native:Tensor,metadata:dict[str,Any]|None=None)->PairEncoding:
         if native.ndim!=3 or native.shape[-1]!=self.cfg.visual_dim:
             raise ValueError(f"native dense tokens must be [B,N,{self.cfg.visual_dim}]")
-        native=native.detach()
         adapted=self.adapt_tokens(native)
         pair=self.pair_token.expand(native.shape[0],-1,-1)
         for block in self.pair_blocks: pair,_=block(pair,adapted)

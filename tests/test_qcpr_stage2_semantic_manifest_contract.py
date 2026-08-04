@@ -1,0 +1,138 @@
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+def _write_jsonl(path: Path, rows: list[dict]) -> None:
+    path.write_text(
+        "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+
+
+def test_stage2_builder_rejects_unstructured_rscc_event_candidates(tmp_path: Path) -> None:
+    pairs = [
+        {
+            "canonical_pair_id": f"rscc_ebd:event:pair-{index}",
+            "split": split,
+            "t1_path": f"/tmp/{index}-t1.png",
+            "t2_path": f"/tmp/{index}-t2.png",
+        }
+        for index, split in enumerate(("train", "train", "development"))
+    ]
+    qvq = [
+        {
+            "canonical_pair_id": pair["canonical_pair_id"],
+            "split": pair["split"],
+            "source_event_id": "event-a",
+            "captions": [f"detailed caption {index}"],
+        }
+        for index, pair in enumerate(pairs)
+    ]
+    pair_registry = tmp_path / "pairs.jsonl"
+    caption_registry = tmp_path / "captions.jsonl"
+    qvq_path = tmp_path / "qvq.jsonl"
+    _write_jsonl(pair_registry, pairs)
+    _write_jsonl(caption_registry, [])
+    _write_jsonl(qvq_path, qvq)
+    output = tmp_path / "semantic"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_qcpr_stage2_semantic_manifests.py",
+            "--caption-registry",
+            str(caption_registry),
+            "--pair-registry",
+            str(pair_registry),
+            "--rscc-qvq",
+            str(qvq_path),
+            "--output-dir",
+            str(output),
+        ],
+        check=True,
+    )
+    rows = [
+        json.loads(line)
+        for line in (output / "retrieval_semantic_train_v2.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert rows == []
+    group_rows = [
+        json.loads(line)
+        for line in (output / "semantic_group_registry.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert group_rows == []
+    summary = json.loads((output / "semantic_view_audit.json").read_text(encoding="utf-8"))
+    assert summary["unstructured_rscc_rows_excluded"] == 3
+    assert summary["event_only_rscc_groups"] == 0
+    assert summary["event_ids_used_for_semantics"] is False
+    excluded = [
+        json.loads(line)
+        for line in (output / "unstructured_candidates_excluded.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert len(excluded) == 3
+
+
+def test_automated_verified_pilot_is_audit_only(tmp_path: Path) -> None:
+    source = tmp_path / "verified.jsonl"
+    rows = [
+        {
+            "canonical_pair_id": f"rscc_ebd:event:item-{index}",
+            "split": split,
+            "source_event_id": "event-a",
+            "semantic_group_id": "rscc_ebd:event:event-a",
+            "captions": [f"caption {index}"],
+            "verification_status": "automated_frozen_siglip2_verified",
+        }
+        for index, split in enumerate(("train", "train", "development"))
+    ]
+    _write_jsonl(source, rows)
+    output = tmp_path / "automated"
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/build_rscc_automated_verified_semantic_pilot.py",
+            "--input",
+            str(source),
+            "--output-dir",
+            str(output),
+        ],
+        check=True,
+    )
+    generated = [
+        json.loads(line)
+        for line in (output / "retrieval_semantic_automated_verified_train.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert generated == []
+    group_rows = [
+        json.loads(line)
+        for line in (output / "semantic_group_registry.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip()
+    ]
+    assert group_rows == []
+    audit = json.loads(
+        (output / "automated_verified_semantic_pilot_audit.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert audit["multi_positive_rows"] == 0
+    assert audit["single_positive_rows"] == 0
+    assert audit["audit_candidate_count"] == 3
+    assert audit["event_ids_used_for_semantics"] is False
