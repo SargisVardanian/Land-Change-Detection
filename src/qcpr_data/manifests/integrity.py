@@ -71,6 +71,7 @@ def audit_release(root: Path) -> dict[str, Any]:
     item_rows = read_jsonl(physical_path)
     item_errors = validate_physical_records(item_rows)
     item_ids = {str(row.get("item_id")) for row in item_rows}
+    item_map = {str(row.get("item_id")): row for row in item_rows}
     query_rows: list[dict[str, Any]] = []
     mask_hits: list[dict[str, Any]] = []
     query_errors: list[str] = []
@@ -80,7 +81,10 @@ def audit_release(root: Path) -> dict[str, Any]:
             query_rows.append(row)
             for hit in forbidden_key_hits(row):
                 mask_hits.append({"manifest": str(path.relative_to(root)), "row": index, **hit})
-            query_errors.extend(f"{path.name}:{index}: {message}" for message in validate_query_record(QueryRecord.from_dict(row), item_ids))
+            query_errors.extend(
+                f"{path.name}:{index}: {message}"
+                for message in validate_query_record(QueryRecord.from_dict(row), item_ids, items=item_map)
+            )
     duplicate_query_ids = [query_id for query_id, count in Counter(str(row.get("query_id")) for row in query_rows).items() if count > 1]
     leakage = audit_split_leakage(item_rows)
     events = validate_event_disjoint(item_rows)

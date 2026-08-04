@@ -474,19 +474,19 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
     names = {str(row.get("source_dataset")) for row in rows}
     additions = {
         "DUBAI-CC": {
-            "official_locations": [],
+            "official_locations": ["https://service.tib.eu/ldmservice/dataset/dubai-cc--a-dataset-for-remote-sensing-change-captioning"],
             "license": "NOT_PINNED",
             "license_status": "REVIEW_REQUIRED",
-            "state": "ACCESS_BLOCKED",
+            "state": "OFFICIAL_LINK_FOUND_ARCHIVE_NOT_ACQUIRED",
             "roles": ["external_exact_evaluation"],
             "blocker": "official archive/access not acquired; one obsolete URL is insufficient to classify source unavailable",
             "physical_pair_count": 500,
             "text_count": 2500,
         },
         "DynamicEarthNet": {
-            "official_locations": [],
-            "license": "NOT_PINNED",
-            "license_status": "REVIEW_REQUIRED",
+            "official_locations": ["https://mediatum.ub.tum.de/1650201", "https://dataserv.ub.tum.de/index.php/s/m1650201"],
+            "license": "CC_BY_SA_4.0",
+            "license_status": "CC_BY_SA_4.0_OFFICIAL_RECORD_ARCHIVE_NOT_ACQUIRED",
             "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
             "roles": ["long_series", "land_cover_evaluation"],
             "blocker": "official physical archive not acquired; 75-AOI claim remains source audit context",
@@ -505,9 +505,9 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
             "training_enabled": False,
         },
         "QAG-360K": {
-            "official_locations": [],
-            "license": "NOT_PINNED",
-            "license_status": "REVIEW_REQUIRED",
+            "official_locations": ["https://github.com/like413/VisTA", "https://drive.google.com/drive/folders/1EiOJNr8bde7apUQwqoN6cjXWKxIz7QdI?usp=sharing"],
+            "license": "CC_BY_NC_4.0_RESEARCH_ONLY_DO_NOT_DISTRIBUTE",
+            "license_status": "CC_BY_NC_4.0_MASK_DERIVED_RESEARCH_ONLY",
             "state": "NOT_REQUESTED",
             "roles": ["pretraining_only"],
             "blocker": "metadata-only; parent physical identity and license audit required",
@@ -536,14 +536,15 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
             "text_count": 0,
         },
         "RSRCC": {
-            "official_locations": [],
-            "license": "NOT_PINNED",
-            "license_status": "REVIEW_REQUIRED",
-            "state": "NOT_REQUESTED",
+            "official_locations": ["https://huggingface.co/datasets/google/RSRCC", "https://github.com/google-research/remote-sensing/"],
+            "license": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+            "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+            "state": "METADATA_ACQUIRED_PHYSICAL_ASSET_AUDIT_PENDING",
             "roles": ["localized_evaluation"],
             "blocker": "parent overlap and mask-derived provenance audit incomplete",
             "physical_pair_count": None,
             "text_count": None,
+            "training_enabled": False,
         },
         "SpaceNet-7": {
             "official_locations": [],
@@ -579,10 +580,10 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
             "training_enabled": False,
         },
         "TERRA-CD": {
-            "official_locations": [],
-            "license": "NOT_PINNED",
-            "license_status": "REVIEW_REQUIRED",
-            "state": "OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+            "official_locations": ["https://github.com/omkarsoak/TERRA-CD", "https://arxiv.org/abs/2605.14651"],
+            "license": "DATA_LICENSE_NOT_PINNED",
+            "license_status": "OFFICIAL_REPO_NO_RELEASE_ASSET_DATA_LICENSE_REVIEW_REQUIRED",
+            "state": "OFFICIAL_REPO_NO_RELEASE_ASSET",
             "roles": ["semantic_transition_evaluation"],
             "blocker": "official physical archive and temporal contract not acquired",
             "physical_pair_count": None,
@@ -602,6 +603,16 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
     for name, addition in additions.items():
         if name not in names:
             rows.append({"source_dataset": name, "training_enabled": False, **addition})
+            continue
+        for row in rows:
+            if str(row.get("source_dataset")) != name:
+                continue
+            for key, value in addition.items():
+                if key == "official_locations":
+                    existing = [str(location) for location in row.get(key, []) or []]
+                    row[key] = sorted(set(existing).union(str(location) for location in value or []))
+                elif value is not None:
+                    row[key] = value
     for row in rows:
         name = str(row.get("source_dataset"))
         if name in {"LEVIR-MCI", "SECOND-CC"}:
@@ -618,16 +629,76 @@ def source_rows(source_registry_path: Path) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: str(row.get("source_dataset")))
 
 
+def rsrcc_source_audit(project_root: Path) -> dict[str, Any]:
+    """Record pinned RSRCC metadata facts without promoting generated text."""
+
+    root = project_root / "datasets/raw/RSRCC"
+    metadata_paths = sorted(root.glob("*_metadata.csv"))
+    if not metadata_paths:
+        return {
+            "schema_version": "qcpr-rsrcc-source-audit-v1",
+            "status": "MISSING_INPUT",
+            "official_location": "https://huggingface.co/datasets/google/RSRCC",
+            "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
+            "training_enabled": False,
+        }
+    pair_splits: dict[tuple[str, str], set[str]] = collections.defaultdict(set)
+    row_counts: dict[str, int] = {}
+    text_count = 0
+    for path in metadata_paths:
+        split = path.name.removesuffix("_metadata.csv")
+        count = 0
+        with path.open(encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                count += 1
+                text_count += bool(str(row.get("text") or "").strip())
+                pair = (str(row.get("before_file_name") or ""), str(row.get("after_file_name") or ""))
+                if all(pair):
+                    pair_splits[pair].add(split)
+        row_counts[split] = count
+    duplicate_rows = sum(count for count in row_counts.values()) - len(pair_splits)
+    cross_split_pairs = sum(1 for splits in pair_splits.values() if len(splits) > 1)
+    repository_root = root / "repository"
+    image_count = sum(1 for path in repository_root.rglob("*") if path.is_file() and path.suffix.casefold() in {".png", ".jpg", ".jpeg"}) if repository_root.is_dir() else 0
+    return {
+        "schema_version": "qcpr-rsrcc-source-audit-v1",
+        "status": "METADATA_ACQUIRED_PHYSICAL_ASSET_AUDIT_PENDING" if image_count == 0 else "PHYSICAL_ASSETS_ACQUIRED_PARENT_OVERLAP_AUDIT_PENDING",
+        "official_locations": ["https://huggingface.co/datasets/google/RSRCC", "https://github.com/google-research/remote-sensing/"],
+        "revision": "7898de7bfd08bc404d9a92e1caaa9dce91b0c3ea",
+        "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+        "metadata_files": {
+            path.name: {"path": str(path), "bytes": path.stat().st_size, "sha256": sha256_file(path)}
+            for path in metadata_paths
+        },
+        "row_counts": dict(sorted(row_counts.items())),
+        "metadata_row_count": sum(row_counts.values()),
+        "unique_physical_pair_filename_tuples": len(pair_splits),
+        "duplicate_metadata_rows": duplicate_rows,
+        "cross_split_physical_pair_count": cross_split_pairs,
+        "text_count": text_count,
+        "text_provenance": "generated_language_annotations_from_official_dataset_card; evaluation_only",
+        "repository_image_file_count": image_count,
+        "parent_overlap_audit": "PENDING_PHYSICAL_IMAGE_ACQUISITION_AND_HASH_COMPARISON",
+        "training_enabled": False,
+        "download_observation": "Unauthenticated HF physical-asset dry-run encountered HTTP 429; metadata remains the only acquired RSRCC artifact.",
+    }
+
+
 def build_semantic_groups(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = {}
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
-        group_id = str(row.get("provenance", {}).get("semantic_group_id") or "")
-        if not group_id:
+        base_group_id = str(row.get("provenance", {}).get("semantic_group_id") or "")
+        split = str(row.get("split") or "")
+        if not base_group_id:
             continue
+        group_id = (base_group_id, split)
         group = grouped.setdefault(
             group_id,
             {
-                "group_id": group_id,
+                "group_id": f"{base_group_id}:{split}",
+                "source_group_id": base_group_id,
+                "split": split,
                 "item_ids": [],
                 "grades": {},
                 "event_ids_are_provenance_only": True,
@@ -692,6 +763,7 @@ def main() -> int:
     model_snapshot = model_contract_snapshot(args.model_contract_root)
     tamms_plan = tamms_download_plan(args)
     ai_audit_status = rscc_ai_audit_status(args.project_root)
+    rsrcc_audit = rsrcc_source_audit(args.project_root)
     archive_inventory = acquired_archive_inventory(args.project_root, tamms_plan)
 
     pair_rows = read_jsonl(args.pair_registry)
@@ -717,8 +789,8 @@ def main() -> int:
 
     semantic_source_rows = read_jsonl(args.semantic_manifest)
     semantic = build_semantic_eval_queries(semantic_source_rows, item_by_source_id)
-    # The official structured relation source is kept as evaluation-only test data.
-    semantic = [dict(row, split="test") for row in semantic]
+    # The official structured relation source is evaluation-only; preserve the
+    # physical item split instead of silently rewriting it to test.
 
     tamms_text = align_tamms_text(read_jsonl(args.tamms_text), tamms_by_id)
     long_series = build_long_series_queries(tamms_text, tamms_by_id)
@@ -747,7 +819,7 @@ def main() -> int:
         "DATASET_TAMMS": "PHYSICAL_ONLY_TEXT_HOLD",
         "DATASET_LOCALIZED": "EVAL_ONLY",
         "DATASET_SEMANTIC": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
-        "DATASET_LONG_SERIES": "PILOT_GENERATED_TEXT_HOLD",
+        "DATASET_LONG_SERIES": "PHYSICAL_ONLY_NO_VALID_QUERY_METADATA_HOLD" if not long_series else "PILOT_GENERATED_TEXT_HOLD",
         "exact_compatibility": {
             "source_pair_counts": {"LEVIR-MCI": 8143, "SECOND-CC": 4701},
             "source_validation_holdout_fraction": 0.2,
@@ -767,6 +839,11 @@ def main() -> int:
             "SECOND-CC": "https://github.com/ChangeCapsInRS/SecondCC",
             "Forest-Change": "https://huggingface.co/datasets/JimmyBrocko/Forest-Change",
             "TAMMs": "https://huggingface.co/datasets/IceInPot/TAMMs",
+            "DynamicEarthNet": "https://mediatum.ub.tum.de/1650201",
+            "RSRCC": "https://huggingface.co/datasets/google/RSRCC",
+            "QAG-360K": "https://github.com/like413/VisTA",
+            "TERRA-CD": "https://github.com/omkarsoak/TERRA-CD",
+            "DUBAI-CC": "https://service.tib.eu/ldmservice/dataset/dubai-cc--a-dataset-for-remote-sensing-change-captioning",
         },
     }
     audits = {
@@ -777,6 +854,7 @@ def main() -> int:
         "human_review": {"RSCC": "not complete", "Forest": "not complete", "TAMMs": "not complete"},
         "model_contract": model_snapshot,
         "rscc_ai_audit": ai_audit_status,
+        "rsrcc_source_audit": rsrcc_audit,
         "tamms_download_plan": tamms_plan,
         "acquired_archive_inventory": archive_inventory,
         "source_balance": source_balance,
@@ -795,6 +873,7 @@ def main() -> int:
         "input_artifacts_are_immutable": True,
         "model_contract": model_snapshot,
         "rscc_ai_audit_status": ai_audit_status["status"],
+        "rsrcc_source_audit_status": rsrcc_audit["status"],
         "tamms_download_status": tamms_plan["status"],
         "source_balance": source_balance,
     }
@@ -816,6 +895,7 @@ def main() -> int:
     )
     copy_forest_hold(release_path, args.forest_pilot_dir)
     write_json(release_path / "source_reports/tamms_download_plan.json", tamms_plan)
+    write_json(release_path / "source_reports/rsrcc_source_audit.json", rsrcc_audit)
     write_json(
         release_path / "source_reports/official_source_audit.json",
         {

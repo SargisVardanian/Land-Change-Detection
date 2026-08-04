@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -66,20 +67,56 @@ def validate_physical_item(item: PhysicalItem) -> list[str]:
         errors.append(f"unsupported split={item.split!r}")
     if not item.physical_group_id or not item.scene_id:
         errors.append("physical_group_id/scene_id must be non-empty")
-    if len(item.frames) < 2:
-        errors.append("a physical pair/sequence requires at least two frames")
+    if item.item_type == "pair" and len(item.frames) != 2:
+        errors.append("a physical pair must contain exactly two frames")
+    if item.item_type == "sequence" and len(item.frames) < 3:
+        errors.append("a physical sequence must contain at least three frames")
     frame_ids = [frame.frame_id for frame in item.frames]
     if len(frame_ids) != len(set(frame_ids)):
         errors.append("frame_id values must be unique within an item")
     for frame in item.frames:
-        if not frame.path or len(frame.sha256) != 64:
+        if not frame.path or not re.fullmatch(r"[0-9a-fA-F]{64}", frame.sha256):
             errors.append(f"invalid frame path/hash for {frame.frame_id!r}")
         if not frame.timestamp:
             errors.append(f"missing timestamp for {frame.frame_id!r}")
+    timestamps = [frame.timestamp for frame in item.frames]
+    if len(timestamps) != len(set(timestamps)):
+        errors.append("frame timestamps must be unique within an item")
     return errors
 
 
-def validate_query_record(query: QueryRecord, item_ids: set[str] | None = None) -> list[str]:
+def _valid_temporal_extent(value: Any) -> bool:
+    if not isinstance(value, Mapping):
+        return False
+    start = value.get("start") or value.get("start_timestamp") or value.get("from")
+    end = value.get("end") or value.get("end_timestamp") or value.get("to")
+    return bool(str(start or "").strip()) and bool(str(end or "").strip())
+
+
+def _valid_frame_range(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        start = value.get("start")
+        if start is None:
+            start = value.get("start_frame")
+        if start is None:
+            start = value.get("first")
+        end = value.get("end")
+        if end is None:
+            end = value.get("end_frame")
+        if end is None:
+            end = value.get("last")
+        return start is not None and end is not None
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
+        return len(value) >= 2
+    return False
+
+
+def validate_query_record(
+    query: QueryRecord,
+    item_ids: set[str] | None = None,
+    *,
+    items: Mapping[str, Mapping[str, Any]] | None = None,
+) -> list[str]:
     errors: list[str] = []
     if not query.query_id or not query.text.strip():
         errors.append("query_id/text must be non-empty")
@@ -91,14 +128,51 @@ def validate_query_record(query: QueryRecord, item_ids: set[str] | None = None) 
         errors.append(f"unsupported split={query.split!r}")
     if not query.positive_item_ids or query.source_item_id not in query.positive_item_ids:
         errors.append("source_item_id must be one of positive_item_ids")
+    if len(query.positive_item_ids) != len(set(query.positive_item_ids)):
+        errors.append("positive_item_ids must be unique")
+    positive_ids = set(query.positive_item_ids)
+    if set(query.graded_relevance) != positive_ids:
+        errors.append("graded_relevance keys must exactly match positive_item_ids")
+    for item_id, grade in query.graded_relevance.items():
+        if grade not in {1, 2, 3}:
+            errors.append(f"graded relevance for {item_id!r} must be an integer from 1 to 3")
     if query.temporal_direction not in {"forward", "reverse", "none"}:
         errors.append(f"unsupported temporal_direction={query.temporal_direction!r}")
     if query.training_enabled and query.verification not in TRAINING_VERIFICATION:
         errors.append("unverified/generated/derived text cannot be training-enabled")
+    if query.query_scope == "semantic" and len(positive_ids) < 2:
+        errors.append("semantic queries must have at least two positive items")
+    if query.query_scope == "direction" and query.temporal_direction not in {"forward", "reverse"}:
+        errors.append("direction queries require temporal_direction=forward or reverse")
+    if query.query_scope == "localized" and not isinstance(query.localized_relation, Mapping):
+        errors.append("localized queries require localized_relation metadata")
     if item_ids is not None:
-        missing = set(query.positive_item_ids) - item_ids
+        missing = positive_ids - item_ids
         if missing:
             errors.append(f"positive item IDs are missing from physical registry: {sorted(missing)[:3]}")
+    if items is not None:
+        source_item = items.get(query.source_item_id)
+        if source_item is None:
+            errors.append(f"source item ID is missing from physical registry: {query.source_item_id}")
+        positive_items = [items[item_id] for item_id in query.positive_item_ids if item_id in items]
+        if positive_items:
+            splits = {str(item.get("split")) for item in positive_items}
+            if query.split not in splits:
+                errors.append("query split must match its positive physical items")
+            if len(splits) > 1:
+                errors.append("positive physical items must share one split")
+            if query.training_enabled and not all(bool(item.get("training_enabled")) for item in positive_items):
+                errors.append("training-enabled queries require training-enabled positive physical items")
+            if query.query_scope == "long_series":
+                if source_item is None or str(source_item.get("item_type")) != "sequence":
+                    errors.append("long_series queries require a sequence physical item")
+                elif len(source_item.get("frames") or []) < 3:
+                    errors.append("long_series queries require at least three frames")
+                provenance = query.provenance
+                if not _valid_temporal_extent(provenance.get("query_temporal_extent")):
+                    errors.append("long_series queries require query_temporal_extent start/end")
+                if not _valid_frame_range(provenance.get("relevant_frame_range")):
+                    errors.append("long_series queries require relevant_frame_range")
     return errors
 
 

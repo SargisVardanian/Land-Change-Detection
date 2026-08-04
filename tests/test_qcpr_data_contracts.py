@@ -3,6 +3,7 @@ from __future__ import annotations
 from qcpr_data.contracts.schemas import FrameRecord, PhysicalItem, QueryRecord
 from qcpr_data.contracts.validation import ValidationError, assert_mask_free, validate_query_record
 from qcpr_data.identities.overlap import audit_split_leakage
+from qcpr_data.queries.long_series import build_long_series_queries
 from qcpr_data.queries.semantic import build_semantic_eval_queries
 
 
@@ -111,3 +112,62 @@ def test_event_like_semantic_group_is_not_promoted() -> None:
         {"x:1": item()},
     )
     assert rows == []
+
+
+def test_semantic_queries_are_multi_positive_and_grouped_by_split() -> None:
+    rows = build_semantic_eval_queries(
+        [
+            {"canonical_pair_id": "x:1", "query_id": "q1", "text": "new buildings appeared", "semantic_group_id": "appearance"},
+            {"canonical_pair_id": "x:2", "query_id": "q2", "text": "buildings were added", "semantic_group_id": "appearance"},
+        ],
+        {"x:1": item("x:1"), "x:2": item("x:2")},
+    )
+    assert len(rows) == 2
+    assert all(row["positive_item_ids"] == ["x:1", "x:2"] for row in rows)
+    assert all(row["graded_relevance"] == {"x:1": 3, "x:2": 3} for row in rows)
+
+
+def test_long_series_requires_explicit_temporal_annotation() -> None:
+    sequence = item("sequence:1")
+    sequence["item_type"] = "sequence"
+    sequence["frames"].append(
+        {"frame_id": "sequence:1:2", "path": "/tmp/c", "sha256": "c" * 64, "timestamp": "t3", "sensor": None, "gsd": None, "width": None, "height": None}
+    )
+    items = {"sequence:1": sequence}
+    assert build_long_series_queries(
+        [{"sequence_id": "sequence:1", "text": "change", "verification_status": "human"}], items
+    ) == []
+    rows = build_long_series_queries(
+        [
+            {
+                "sequence_id": "sequence:1",
+                "text": "urban expansion progressed",
+                "verification_status": "human",
+                "temporal_direction": "forward",
+                "query_temporal_extent": {"start": "t1", "end": "t3"},
+                "relevant_frame_range": {"start": 0, "end": 2},
+            }
+        ],
+        items,
+    )
+    assert len(rows) == 1
+    assert rows[0]["temporal_direction"] == "forward"
+
+
+def test_item_aware_query_validation_rejects_singleton_semantic() -> None:
+    query = QueryRecord(
+        query_id="semantic-singleton",
+        text="change",
+        query_scope="semantic",
+        source_item_id="x:1",
+        positive_item_ids=("x:1",),
+        graded_relevance={"x:1": 3},
+        temporal_direction="none",
+        localized_relation=None,
+        verification="derived_eval",
+        training_enabled=False,
+        split="train",
+    )
+    assert validate_query_record(query, {"x:1"}, items={"x:1": item("x:1")}) == [
+        "semantic queries must have at least two positive items"
+    ]
