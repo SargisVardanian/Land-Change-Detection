@@ -15,6 +15,8 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tarfile
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -48,6 +50,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tamms-manifest", type=Path, required=True)
     parser.add_argument("--tamms-text", type=Path, required=True)
     parser.add_argument("--forest-pilot-dir", type=Path, required=True)
+    parser.add_argument("--model-contract-root", type=Path)
+    parser.add_argument("--tamms-archive", type=Path)
+    parser.add_argument("--tamms-metadata", type=Path)
     parser.add_argument("--output-root", type=Path, required=True)
     return parser.parse_args()
 
@@ -74,6 +79,122 @@ def read_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"{path} must contain an object")
     return value
+
+
+def model_contract_snapshot(root: Path | None) -> dict[str, Any]:
+    """Read Model-Agent-owned contract evidence without editing it."""
+
+    if root is None:
+        return {"status": "MODEL_CONTRACT_ROOT_NOT_PROVIDED"}
+    status_path = root / "contracts/qcpr_shared/model_status.json"
+    requirements_path = root / "contracts/qcpr_shared/model_requirements.json"
+    request_path = root / "contracts/qcpr_shared/handoff/model_to_dataset.jsonl"
+    missing = [str(path) for path in (status_path, requirements_path, request_path) if not path.is_file()]
+    if missing:
+        return {"status": "MODEL_CONTRACT_INPUT_MISSING", "root": str(root), "missing": missing}
+    status = read_json(status_path)
+    requirements = read_json(requirements_path)
+    requests = read_jsonl(request_path)
+    return {
+        "status": "MODEL_CONTRACT_AVAILABLE",
+        "root": str(root),
+        "branch": status.get("branch"),
+        "code_sha": status.get("code_sha"),
+        "model_status": status.get("status"),
+        "dataset_contract_status": status.get("dataset_contract_status"),
+        "main_training_allowed": bool(status.get("main_training_allowed")),
+        "p2_allowed": bool(status.get("p2_allowed")),
+        "requirements_sha256": sha256_file(requirements_path),
+        "model_to_dataset_sha256": sha256_file(request_path),
+        "open_request_ids": [str(row.get("request_id")) for row in requests if str(row.get("status")) == "OPEN"],
+        "required_item_fields": requirements.get("required_fields", {}).get("item", []),
+        "required_query_fields": requirements.get("required_fields", {}).get("query", []),
+        "query_scopes": requirements.get("query_scopes", []),
+        "primary_training_verification": requirements.get("verification_for_primary_training", []),
+        "minimum_frames": requirements.get("minimum_frames"),
+        "maximum_frames": requirements.get("maximum_frames"),
+    }
+
+
+def tamms_download_plan(args: argparse.Namespace) -> dict[str, Any]:
+    """Record acquisition facts and stop conditions without downloading."""
+
+    archive = args.tamms_archive or args.project_root / "datasets/raw/TAMMs/waste_disposal.tar"
+    metadata = args.tamms_metadata or args.project_root / "datasets/raw/TAMMs/tamms_data.json"
+    archive_exists = archive.is_file()
+    metadata_exists = metadata.is_file()
+    metadata_count: int | None = None
+    if metadata_exists:
+        value = json.loads(metadata.read_text(encoding="utf-8"))
+        metadata_count = len(value) if isinstance(value, list) else None
+    archive_members = 0
+    archive_sequences: set[str] = set()
+    if archive_exists:
+        with tarfile.open(archive) as handle:
+            for member in handle:
+                archive_members += 1
+                parts = Path(member.name).parts
+                if len(parts) >= 2:
+                    archive_sequences.add("/".join(parts[:2]))
+    archive_bytes = archive.stat().st_size if archive_exists else None
+    disk_free = shutil.disk_usage(args.project_root).free
+    return {
+        "schema_version": "qcpr-tamms-download-plan-v1",
+        "source": "TAMMs",
+        "source_url": "https://huggingface.co/datasets/IceInPot/TAMMs",
+        "metadata_path": str(metadata),
+        "metadata_exists": metadata_exists,
+        "metadata_sequence_count": metadata_count,
+        "requested_archive_path": str(archive),
+        "current_archive_exists": archive_exists,
+        "current_archive_bytes": archive_bytes,
+        "current_archive_sha256": sha256_file(archive) if archive_exists else None,
+        "current_archive_member_count": archive_members,
+        "current_archive_sequence_count": len(archive_sequences),
+        "full_archive_expected_bytes": None,
+        "full_archive_size_status": "NOT_PUBLISHED_BY_DATASET_CARD",
+        "available_disk_bytes_at_plan": disk_free,
+        "license_status": "RESEARCH_ONLY_FMOV_TERMS_AND_NONCOMMERCIAL_ANNOTATION_REVIEW_REQUIRED",
+        "status": "PILOT_ARCHIVE_ONLY_FULL_ARCHIVE_NOT_ACQUIRED",
+        "stop_conditions": [
+            "stop before extraction if source terms do not permit the intended use",
+            "stop if official archive checksum or source revision cannot be pinned",
+            "stop if extracted frame hashes or parent-scene identities are incomplete",
+            "stop before training promotion while all captions remain generated_unverified",
+        ],
+    }
+
+
+def rscc_ai_audit_status(project_root: Path) -> dict[str, Any]:
+    expected_path = project_root / "runs/qcpr_stage2_ai_audit_48.jsonl"
+    expected_sha256 = "07863af6c1ee5c38e0e494647f2f29db9db3cdcccf33813f63e1ec6f75b1182e"
+    if not expected_path.is_file():
+        return {
+            "status": "MISSING_INPUT",
+            "path": str(expected_path),
+            "expected_sha256": expected_sha256,
+            "verified": False,
+            "advisory": True,
+            "human_gate_satisfied": False,
+            "training_enabled": False,
+        }
+    actual = sha256_file(expected_path)
+    rows = read_jsonl(expected_path)
+    row_ids = {str(row.get("audit_row_id")) for row in rows}
+    pair_ids = {str(row.get("canonical_pair_id")) for row in rows}
+    return {
+        "status": "AVAILABLE_VALIDATED" if actual == expected_sha256 and len(rows) == 48 and len(row_ids) == 48 and len(pair_ids) == 48 else "AVAILABLE_INVALID",
+        "path": str(expected_path),
+        "expected_sha256": expected_sha256,
+        "actual_sha256": actual,
+        "row_count": len(rows),
+        "unique_audit_row_ids": len(row_ids),
+        "unique_canonical_pair_ids": len(pair_ids),
+        "verified": actual == expected_sha256 and len(rows) == 48 and len(row_ids) == 48 and len(pair_ids) == 48,
+        "advisory": True,
+        "human_gate_satisfied": False,
+        "training_enabled": False,
+    }
 
 
 def build_pair_items(pair_rows: Iterable[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -362,9 +483,13 @@ def main() -> int:
     args = parse_args()
     code_sha = git_value(args.repo, "rev-parse", "HEAD")
     branch = git_value(args.repo, "branch", "--show-current")
-    release_path = args.output_root / f"qcpr_dataset_v2_final_{code_sha[:7]}_{__import__('datetime').date.today():%Y%m%d}"
+    release_path = args.output_root / f"qcpr_dataset_v2_final_{code_sha[:7]}_{date.today():%Y%m%d}"
     if release_path.exists():
         raise SystemExit(f"release path already exists: {release_path}")
+
+    model_snapshot = model_contract_snapshot(args.model_contract_root)
+    tamms_plan = tamms_download_plan(args)
+    ai_audit_status = rscc_ai_audit_status(args.project_root)
 
     pair_rows = read_jsonl(args.pair_registry)
     caption_rows = read_jsonl(args.caption_registry)
@@ -424,7 +549,8 @@ def main() -> int:
             "historical_source_splits_preserved_in_provenance": True,
             "final_counts": {"train_queries": exact_train, "development_queries": exact_development, "test_queries": exact_test},
         },
-        "model_contract": "MISSING_ON_MODEL_BRANCH_AT_FINALIZATION_TIME",
+        "model_contract": model_snapshot["status"],
+        "model_contract_evidence": model_snapshot,
     }
     licenses = {
         "schema_version": "qcpr-license-record-v1",
@@ -443,6 +569,9 @@ def main() -> int:
         "source_decision": "existing Stage-2 decision package retained; no historical HOLD directory modified",
         "physical_hash_verification": "performed on final release audit where files are available",
         "human_review": {"RSCC": "not complete", "Forest": "not complete", "TAMMs": "not complete"},
+        "model_contract": model_snapshot,
+        "rscc_ai_audit": ai_audit_status,
+        "tamms_download_plan": tamms_plan,
     }
     release_metadata = {
         "release_name": release_path.name,
@@ -456,6 +585,9 @@ def main() -> int:
         "p2_submitted": False,
         "view_status": statuses,
         "input_artifacts_are_immutable": True,
+        "model_contract": model_snapshot,
+        "rscc_ai_audit_status": ai_audit_status["status"],
+        "tamms_download_status": tamms_plan["status"],
     }
     release_summary = write_release_layout(
         release_path,
@@ -474,6 +606,19 @@ def main() -> int:
         release_metadata=release_metadata,
     )
     copy_forest_hold(release_path, args.forest_pilot_dir)
+    write_json(release_path / "source_reports/tamms_download_plan.json", tamms_plan)
+    write_json(
+        release_path / "source_reports/official_source_audit.json",
+        {
+            "schema_version": "qcpr-official-source-audit-v1",
+            "sources": source_registry,
+            "web_evidence": licenses["web_evidence"],
+            "blocked_or_deferred": [row for row in source_registry if not row.get("training_enabled", False)],
+            "disclaimer": licenses["disclaimer"],
+        },
+    )
+    write_json(release_path / "source_reports/model_contract_snapshot.json", model_snapshot)
+    write_json(release_path / "audits/rscc_ai_audit_status.json", ai_audit_status)
     asset_hash_audit = audit_asset_hashes(items)
     write_json(release_path / "audits/physical_asset_hash_audit.json", asset_hash_audit)
     if not asset_hash_audit["passed"]:

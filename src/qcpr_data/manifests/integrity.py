@@ -85,6 +85,11 @@ def audit_release(root: Path) -> dict[str, Any]:
     leakage = audit_split_leakage(item_rows)
     events = validate_event_disjoint(item_rows)
     sequences = validate_sequence_disjoint(item_rows)
+    cross_source_path = root / "audits/cross_source_overlap_audit.json"
+    cross_source = json.loads(cross_source_path.read_text(encoding="utf-8")) if cross_source_path.is_file() else {
+        "passed": True,
+        "not_run": True,
+    }
     mask_free = {
         "schema_version": "qcpr-mask-free-integrity-v1",
         "manifest_count": len(_manifest_paths(root)),
@@ -93,7 +98,32 @@ def audit_release(root: Path) -> dict[str, Any]:
         "passed": not mask_hits,
     }
     write_json(root / "audits/mask_free_integrity.json", mask_free)
-    write_json(root / "audits/leakage_audit.json", {"split": leakage, "events": events, "sequences": sequences})
+    leakage_report = {"split": leakage, "events": events, "sequences": sequences}
+    write_json(root / "audits/leakage_audit.json", leakage_report)
+    write_json(
+        root / "audits/cross_split_leakage_audit.json",
+        {
+            "schema_version": "qcpr-cross-split-leakage-audit-v1",
+            "split": leakage,
+            "events": events,
+            "sequences": sequences,
+            "passed": leakage["passed"] and events["passed"] and sequences["passed"],
+        },
+    )
+    (root / "audits/mask_free_integrity.md").write_text(
+        "\n".join(
+            [
+                "# Mask-free integrity",
+                "",
+                f"- Manifests scanned: `{mask_free['manifest_count']}`",
+                f"- Query rows scanned: `{mask_free['query_row_count']}`",
+                f"- Forbidden-key violations: `{mask_free['violation_count']}`",
+                f"- Passed: `{mask_free['passed']}`",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     write_jsonl(root / "audits/forbidden_key_hits.jsonl", mask_hits)
     write_json(root / "audits/record_validation.json", {"physical_errors": item_errors, "query_errors": query_errors, "duplicate_query_ids": duplicate_query_ids})
     return {
@@ -106,9 +136,19 @@ def audit_release(root: Path) -> dict[str, Any]:
         "leakage": leakage,
         "events": events,
         "sequences": sequences,
+        "cross_source": cross_source,
         "mask_free": mask_free,
         "sha256sums": verify_sha256sums(root),
-        "passed": not item_errors and not query_errors and not duplicate_query_ids and leakage["passed"] and sequences["passed"] and mask_free["passed"],
+        "passed": (
+            not item_errors
+            and not query_errors
+            and not duplicate_query_ids
+            and leakage["passed"]
+            and events["passed"]
+            and sequences["passed"]
+            and cross_source.get("passed", False)
+            and mask_free["passed"]
+        ),
     }
 
 

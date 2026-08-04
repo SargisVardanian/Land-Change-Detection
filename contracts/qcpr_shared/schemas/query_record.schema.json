@@ -12,7 +12,7 @@
     "graded_relevance": {"type": "object"},
     "temporal_direction": {"enum": ["forward", "reverse", "none"]},
     "localized_relation": {"type": ["object", "null"]},
-    "verification": {"enum": ["human", "human_rewritten", "human_adjudicated", "generated_unverified", "rule_based_unverified", "derived_eval", "rejected"]},
+    "verification": {"enum": ["human", "human_rewritten", "human_adjudicated", "generated_verified", "generated_unverified", "rule_based_unverified", "derived_eval", "rejected"]},
     "training_enabled": {"type": "boolean"},
     "split": {"enum": ["train", "development", "test"]},
     "provenance": {"type": "object"}

@@ -16,6 +16,7 @@ VERIFICATION_STATES = (
     "human",
     "human_rewritten",
     "human_adjudicated",
+    "generated_verified",
     "generated_unverified",
     "rule_based_unverified",
     "derived_eval",

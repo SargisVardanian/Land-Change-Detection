@@ -6,7 +6,13 @@ from qcpr_data.identities.overlap import audit_split_leakage
 from qcpr_data.queries.semantic import build_semantic_eval_queries
 
 
-def item(item_id: str = "x:1", *, split: str = "train", frame_sha: str = "a" * 64) -> dict:
+def item(
+    item_id: str = "x:1",
+    *,
+    split: str = "train",
+    frame_sha: str = "a" * 64,
+    second_frame_sha: str = "b" * 64,
+) -> dict:
     return PhysicalItem(
         item_id=item_id,
         item_type="pair",
@@ -17,7 +23,7 @@ def item(item_id: str = "x:1", *, split: str = "train", frame_sha: str = "a" * 6
         event_id=None,
         frames=(
             FrameRecord(f"{item_id}:0", "/tmp/a", frame_sha, "t1"),
-            FrameRecord(f"{item_id}:1", "/tmp/b", "b" * 64, "t2"),
+            FrameRecord(f"{item_id}:1", "/tmp/b", second_frame_sha, "t2"),
         ),
         split=split,
         training_enabled=True,
@@ -51,10 +57,52 @@ def test_generated_caption_cannot_be_training_enabled() -> None:
     assert validate_query_record(query) == ["unverified/generated/derived text cannot be training-enabled"]
 
 
+def test_generated_verified_is_a_supported_but_nonpromoted_state() -> None:
+    query = QueryRecord(
+        query_id="q-verified-generated",
+        text="candidate",
+        query_scope="long_series",
+        source_item_id="x",
+        positive_item_ids=("x",),
+        graded_relevance={"x": 2},
+        temporal_direction="forward",
+        localized_relation=None,
+        verification="generated_verified",
+        training_enabled=True,
+        split="train",
+    )
+    assert validate_query_record(query) == ["unverified/generated/derived text cannot be training-enabled"]
+
+
 def test_shared_image_across_splits_fails() -> None:
-    result = audit_split_leakage([item("x:train", frame_sha="a" * 64), item("x:test", split="test", frame_sha="a" * 64)])
+    result = audit_split_leakage(
+        [
+            item("x:train", frame_sha="a" * 64, second_frame_sha="b" * 64),
+            item("x:test", split="test", frame_sha="a" * 64, second_frame_sha="c" * 64),
+        ]
+    )
     assert not result["passed"]
     assert result["shared_image_count"] == 1
+
+
+def test_reversed_pair_across_splits_fails() -> None:
+    forward = item("x:train", frame_sha="a" * 64, second_frame_sha="b" * 64)
+    reverse = item("x:test", split="test", frame_sha="b" * 64, second_frame_sha="a" * 64)
+    result = audit_split_leakage([forward, reverse])
+    assert not result["passed"]
+    assert result["reversed_pair_count"] == 1
+
+
+def test_overlapping_sequence_windows_fail() -> None:
+    first = item("sequence:train", frame_sha="a" * 64, second_frame_sha="b" * 64)
+    second = item("sequence:test", split="test", frame_sha="b" * 64, second_frame_sha="c" * 64)
+    first["item_type"] = "sequence"
+    second["item_type"] = "sequence"
+    from qcpr_data.splits.sequence_disjoint import validate_sequence_disjoint
+
+    result = validate_sequence_disjoint([first, second])
+    assert not result["passed"]
+    assert result["shared_frame_count"] == 1
 
 
 def test_event_like_semantic_group_is_not_promoted() -> None:
