@@ -15,7 +15,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from qcpr_v3.config import config_dict, default_config
+from qcpr_v3.config import config_dict, default_config, validate_config
 from qcpr_v3.data.contracts import TemporalMetadata
 from qcpr_v3.diagnostics.evidence import evidence_gradient_diagnostics
 from qcpr_v3.evaluation.retrieval import rank_scores, retrieval_metrics
@@ -52,7 +52,13 @@ def main() -> None:
     device = torch.device(args.device)
     args.run_root.mkdir(parents=True, exist_ok=True)
 
-    config = default_config()
+    if args.config_path is None:
+        config = default_config()
+    else:
+        payload = json.loads(args.config_path.read_text())
+        if not isinstance(payload, dict):
+            raise ValueError("config JSON must be an object")
+        config = validate_config(payload)
     model = QCPRV3Model(config).to(device)
     model.train()
     objective = UnifiedListwiseLoss(temperature=config.training.temperature)
@@ -119,7 +125,7 @@ def main() -> None:
     (args.run_root / "metrics.jsonl").write_text("\n".join(json.dumps(row) for row in metrics_history) + "\n")
     (args.run_root / "evaluation_metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
     (args.run_root / "retrieval_integrity_audit.json").write_text(json.dumps({"ranking_shape": list(final.scores.shape), "ranking_sha256": ranking_digest, "query_ids_sha256": hashlib.sha256("\n".join(f"query-{i}" for i in range(query_count)).encode()).hexdigest(), "gallery_ids_sha256": hashlib.sha256("\n".join(f"pair-{i}" for i in range(pair_count)).encode()).hexdigest()}, indent=2) + "\n")
-    (args.run_root / "embedding_diagnostics.json").write_text(json.dumps({"sequence_cls_norm_mean": float(visual.sequence_cls.norm(dim=-1).mean()), "text_cls_norm_mean": float(query.text_cls.norm(dim=-1).mean())}, indent=2) + "\n")
+    (args.run_root / "embedding_diagnostics.json").write_text(json.dumps({"sequence_cls_norm_mean": float(visual.sequence_cls.norm(dim=-1).mean().detach()), "text_cls_norm_mean": float(query.text_cls.norm(dim=-1).mean().detach())}, indent=2) + "\n")
     (args.run_root / "gradient_diagnostics.json").write_text(json.dumps(evidence_gradient_diagnostics(model), indent=2) + "\n")
     (args.run_root / "evidence_diagnostics.json").write_text(json.dumps({"weights_shape": list(final.evidence_weights.shape) if final.evidence_weights is not None else None, "nonzero": bool(final.evidence_weights is not None and (final.evidence_weights > 0).any())}, indent=2) + "\n")
     (args.run_root / "localization_metrics.json").write_text(json.dumps({"mask_access": "evaluation_only", "diagnostics": "not_supervised_in_smoke"}, indent=2) + "\n")
