@@ -1,0 +1,18 @@
+{
+  "owner": "model",
+  "agent": "model",
+  "status": "MODEL_V3_IMPLEMENTATION_IN_PROGRESS",
+  "code_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
+  "branch": "codex/qcpr-model-v3-temporal-retrieval",
+  "dataset_contract_status": "DATASET_CONTRACT_MISSING",
+  "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "dataset_release_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+  "p2_allowed": false,
+  "main_training_allowed": false,
+  "historical_artifacts_modified": false,
+  "notes": [
+    "Dataset Agent shared status/capabilities files were absent at the verified base.",
+    "No semantic, localized or long-series view is assumed available.",
+    "Only CPU implementation and one bounded model smoke are in scope."
+  ]
+}

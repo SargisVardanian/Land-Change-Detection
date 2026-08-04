@@ -1,0 +1,39 @@
+{
+  "owner": "model",
+  "schema_version": "1.0.0",
+  "supported_item_types": ["pair", "sequence"],
+  "minimum_frames": 2,
+  "maximum_frames": 16,
+  "required_timestamp_format": "ISO-8601 string or normalized float with explicit missingness",
+  "required_fields": {
+    "item": ["item_id", "item_type", "frames", "split", "source", "physical_group_id", "training_enabled"],
+    "frame": ["path", "sha256"],
+    "query": ["query_id", "text", "query_scope", "positive_item_ids", "graded_relevance", "verification", "split"]
+  },
+  "query_scopes": ["exact", "semantic", "localized", "direction", "stable", "long_series"],
+  "verification_for_primary_training": ["human", "human_rewritten", "generated_verified"],
+  "forbidden_primary_training_verification": ["generated_unverified", "derived_eval"],
+  "graded_relevance": {
+    "0": "irrelevant",
+    "1": "broad semantic match, diagnostic or low weight",
+    "2": "same change category",
+    "3": "same object, direction and damage/change type"
+  },
+  "localized_relation": {
+    "optional_fields": ["relation_type", "normalized_box", "token_coordinates", "temporal_interval"]
+  },
+  "long_series": {
+    "required_fields": ["sequence_id", "frame_ids", "timestamps", "query_temporal_extent"],
+    "minimum_frames": 3
+  },
+  "evaluation_mask_sidecar": {
+    "allowed_only_in_evaluation": ["mask_path", "dense_label_path", "official_label", "semantic_map"],
+    "join_key": "item_id"
+  },
+  "source_balance": {
+    "required": true,
+    "event_uniform_validation": true,
+    "max_event_fraction_in_logical_batch": 0.1,
+    "max_new_source_fraction_initial_pilot": 0.3
+  }
+}

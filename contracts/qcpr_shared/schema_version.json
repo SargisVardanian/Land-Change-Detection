@@ -1,0 +1,6 @@
+{
+  "schema_name": "qcpr_shared",
+  "schema_version": "1.0.0",
+  "owner_contract": "model-and-dataset-agents",
+  "backward_compatible": true
+}

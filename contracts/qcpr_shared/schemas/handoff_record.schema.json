@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "QCPR model/dataset handoff record",
+  "type": "object",
+  "required": ["request_id", "created_at", "from_agent", "to_agent", "model_sha", "request_type", "required_fields", "reason", "status"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "created_at": {"type": "string", "minLength": 1},
+    "from_agent": {"enum": ["model", "dataset"]},
+    "to_agent": {"enum": ["model", "dataset"]},
+    "model_sha": {"type": "string", "minLength": 7},
+    "required_dataset_sha": {"type": ["string", "null"]},
+    "request_type": {"type": "string", "minLength": 1},
+    "required_fields": {"type": "array", "items": {"type": "string"}},
+    "reason": {"type": "string", "minLength": 1},
+    "status": {"enum": ["OPEN", "ACKNOWLEDGED", "CLOSED", "BLOCKED"]}
+  }
+}
