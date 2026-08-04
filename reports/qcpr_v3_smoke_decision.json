@@ -1,6 +1,7 @@
 {
   "status": "MODEL_V3_SMOKE_PASS",
   "code_sha": "5eab23719aa78515383befd97145c49ffe5fc714",
+  "final_code_sha": "c0218584e53fb3d5b7b65308ca5339b9dd85e1c9",
   "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_model_v3_h100_smoke_5eab237_20260804",
   "job_id": "207556",
   "slurm": {"state": "COMPLETED", "exit_code": "0:0", "node": "gpu02", "elapsed": "00:00:13", "gres": "gpu:h100:1", "host_memory": "64G"},
@@ -10,6 +11,6 @@
   "exposure": {"total_pair_presentations": 64, "total_query_presentations": 64, "unique_pairs": 4, "unique_queries": 4, "pair_sequence_sha256": "2496c2acf950d402f37802d5dd13f2edb21e83da8508f722991dce793e5a22af", "query_sequence_sha256": "b8c9b9fd61b34c120f00eefcdf33d4c046f0234dc0f3813ea3ec33efb2af7e7f"},
   "artifacts": {"checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee", "full_rankings_sha256": "6e7142ceb5b8485795681feebbb16eed7edf6a3014139a87783735ffddc99784"},
   "peak_cuda_memory": "NOT_CAPTURED_BY_SMOKE_SCRIPT",
-  "scientific_interpretation": "Synthetic bounded mechanism smoke only; it is not a retrieval-quality result and does not authorize mechanism or main training.",
+  "scientific_interpretation": "Synthetic bounded mechanism smoke only; it is not a retrieval-quality result and does not authorize mechanism or main training. The final code SHA adds CPU-tested freeze/API hardening after this smoke and does not change the executed smoke path.",
   "failed_prior_attempt": {"job_id": "207555", "status": "INFRASTRUCTURE_CODE_FAILURE", "reason": "smoke driver reused an autograd graph across optimizer steps"}
 }
