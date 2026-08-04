@@ -48,6 +48,7 @@ def main() -> None:
         "slot_count", "slot_heads", "pair_layers", "pair_heads", "token_adapter_layers",
         "token_bottleneck_ratio", "ffn_ratio", "dropout", "evidence_topk")}
     b1 = screen.get("architectures", {}).get("B1", {}).get("training", {})
+    screen_initialization_checkpoint = screen.get("current_checkpoint")
     payload: dict[str, Any] = {
         "schema_version": "qcpr-stage2-hrg-contract-v1",
         "status": "ARCHITECTURE_CONTRACT_READY_DATA_HOLD",
@@ -72,8 +73,10 @@ def main() -> None:
         },
         "current_b1_screen": {
             "status": screen.get("status"), "scope": screen.get("screen_scope"), "common_contract": screen.get("common_contract"),
+            "screen_initialization_checkpoint": screen_initialization_checkpoint,
+            "screen_initialization_checkpoint_sha256": screen.get("current_checkpoint_sha256"),
             "note": "This is a bounded 512-pair/128-step architecture screen, not a full 1,928-pair gallery result.",
-            "training": {k: b1.get(k) for k in ("kind", "steps", "microbatch", "peak_allocated_gib", "peak_reserved_gib", "trainable_parameters")},
+            "training": {k: b1.get(k) for k in ("kind", "checkpoint", "checkpoint_sha256", "steps", "microbatch", "peak_allocated_gib", "peak_reserved_gib", "trainable_parameters")},
         },
         "data_views": {"report_path": str(args.data_view_report), "report_sha256": sha256(args.data_view_report), "status": data_view.get("status", data_view.get("readiness", {}).get("overall")), "views": data_view.get("views", data_view.get("data_views", {})), "blocking_reasons": data_view.get("blocking_reasons", data_view.get("blockers", []))},
         "common_frozen_evaluation": {"state_path": str(args.common_evaluation_state), "state_sha256": sha256(args.common_evaluation_state), "status": common_state.get("status"), "query_count": common_state.get("query_count"), "gallery_count": common_state.get("gallery_count"), "note": "Do not claim full-gallery metrics until rankings are present for all common queries."},
