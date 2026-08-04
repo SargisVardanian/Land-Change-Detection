@@ -4,6 +4,7 @@ from qcpr_data.contracts.schemas import FrameRecord, PhysicalItem, QueryRecord
 from qcpr_data.contracts.validation import ValidationError, assert_mask_free, validate_query_record
 from qcpr_data.identities.overlap import audit_split_leakage
 from qcpr_data.queries.long_series import build_long_series_queries
+from qcpr_data.queries.localized import build_localized_eval_queries
 from qcpr_data.queries.semantic import build_semantic_eval_queries
 
 
@@ -171,3 +172,25 @@ def test_item_aware_query_validation_rejects_singleton_semantic() -> None:
     assert validate_query_record(query, {"x:1"}, items={"x:1": item("x:1")}) == [
         "semantic queries must have at least two positive items"
     ]
+
+
+def test_localized_builder_reuses_existing_evaluation_query_rows() -> None:
+    rows, sidecars = build_localized_eval_queries(
+        [
+            {
+                "query_id": "localized-q",
+                "query_scope": "localized",
+                "source_item_id": "x:1",
+                "text": "change near the bottom center",
+                "localized_relation": {"regions": ["lower", "center"], "evaluation_only": True},
+                "provenance": {"source_caption_id": "caption-1", "source_dataset": "s2looking"},
+                "verification": "derived_eval",
+            }
+        ],
+        {"x:1": item("x:1")},
+        {},
+    )
+    assert len(rows) == 1
+    assert rows[0]["query_id"] == "localized-q"
+    assert rows[0]["localized_relation"]["regions"] == ["lower", "center"]
+    assert sidecars == []
