@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from qcpr_data.contracts.schemas import FrameRecord, PhysicalItem, QueryRecord
 from qcpr_data.contracts.validation import ValidationError, assert_mask_free, validate_query_record
+from qcpr_data.identities.physical_graph import build_identity_graph, connected_components
 from qcpr_data.identities.overlap import audit_split_leakage
 from qcpr_data.queries.long_series import build_long_series_queries
 from qcpr_data.queries.localized import build_localized_eval_queries
 from qcpr_data.queries.semantic import build_semantic_eval_queries
+from scripts.finalize_qcpr_dataset_v2 import rscc_ai_audit_status
 
 
 def item(
@@ -197,3 +199,31 @@ def test_localized_builder_reuses_existing_evaluation_query_rows() -> None:
     assert rows[0]["query_id"] == "localized-q"
     assert rows[0]["localized_relation"]["regions"] == ["lower", "center"]
     assert sidecars == []
+
+
+def test_missing_rscc_ai_audit_is_not_fabricated(tmp_path) -> None:
+    audit = rscc_ai_audit_status(tmp_path)
+    assert audit["status"] == "MISSING_INPUT"
+    assert audit["verified"] is False
+    assert audit["human_gate_satisfied"] is False
+    assert not list(tmp_path.rglob("*"))
+
+
+def test_cross_source_parent_ids_are_not_inferred_as_shared_physical_identity() -> None:
+    levir = item("levir:parent-derived", frame_sha="c" * 64, second_frame_sha="d" * 64)
+    levir["source"] = "levir_mci"
+    levir["provenance"] = {"parent_image_id": "parent-1"}
+    levir["frames"][0]["path"] = "/tmp/levir-a"
+    levir["frames"][1]["path"] = "/tmp/levir-b"
+    qag = item("qag:parent-derived", frame_sha="e" * 64, second_frame_sha="f" * 64)
+    qag["source"] = "QAG-360K"
+    qag["provenance"] = {"parent_image_id": "parent-1"}
+    qag["frames"][0]["path"] = "/tmp/qag-a"
+    qag["frames"][1]["path"] = "/tmp/qag-b"
+
+    components = connected_components(build_identity_graph([levir, qag]))
+    parent_nodes = {
+        "provenance:parent_image_id:levir_mci:parent-1",
+        "provenance:parent_image_id:QAG-360K:parent-1",
+    }
+    assert not any(parent_nodes.issubset(set(component["nodes"])) for component in components)
