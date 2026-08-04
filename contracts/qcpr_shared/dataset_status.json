@@ -2,9 +2,9 @@
   "schema_version": "qcpr-dataset-status-v1",
   "status": "DATA_QUALITY_HOLD",
   "branch": "codex/qcpr-dataset-v2-final",
-  "dataset_head_sha": "1b931c7a6115919401429e2edcd5a2cee3208094",
-  "release_code_sha": "1b931c7a6115919401429e2edcd5a2cee3208094",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_1b931c7_20260804",
+  "dataset_head_sha": "440d14cf90e003254804412ebeaae4a278c09e95",
+  "release_code_sha": "440d14cf90e003254804412ebeaae4a278c09e95",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_440d14c_20260804",
   "training_submitted": false,
   "p2_authorized": false,
   "views": {
@@ -24,7 +24,7 @@
     "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
     "open_request_ids": ["M2D-20260804-001", "M2D-20260804-002"]
   },
-  "release_sha256": "836d0392a1a12dc54a8048589d73335e9111bab8e898bca04e07dfc911540f9a",
+  "release_sha256": "e638e73a12e7d53057f4ece0956386faebe48079ba1bf65578c24536f064b2d0",
   "rscc_ai_audit_status": "MISSING_INPUT",
   "tamms_physical_inventory": {
     "sequences": 489,
