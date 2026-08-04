@@ -1112,6 +1112,31 @@ def main() -> int:
             "training_enabled": False,
         })
 
+    # Temporal review candidates are also part of the singular-purpose audit.
+    # Their physical IDs are canonicalized above, while their generated text
+    # remains disabled until license and temporal review are complete.
+    long_series_audit_rows = []
+    for row in tamm_rows:
+        item = items.get(str(row.get("source_item_id") or ""), {})
+        t1_path, t2_path = item_paths(item)
+        long_series_audit_rows.append(annotate_purpose({
+            "record_type": "long_series_candidate",
+            "query_id": row.get("query_id"),
+            "source_item_id": row.get("source_item_id"),
+            "source_dataset": "TAMMs",
+            "split": row.get("split"),
+            "text": row.get("text"),
+            "query_scope": "long_series",
+            "verification": row.get("verification"),
+            "item_type": "sequence",
+            "physical_group_id": item.get("physical_group_id"),
+            "t1_path": t1_path,
+            "t2_path": t2_path,
+            "positive_item_ids": row.get("positive_item_ids"),
+            "positive_set_size": len(row.get("positive_item_ids") or []),
+        }, collision_map=collision_map, neighbour_map=neighbour_map))
+    audit_rows.extend(long_series_audit_rows)
+
     all_candidate_rows = exact_candidates + semantic_queries + localized_queries + direction_queries + stable_exact_rows + tamm_rows + generic_rows
     # Query purpose registry is the authoritative audit index.  It includes
     # source captions, current queries, and stable candidates with exactly one
