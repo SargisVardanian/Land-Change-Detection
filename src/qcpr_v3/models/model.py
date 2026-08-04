@@ -194,11 +194,30 @@ class QCPRV3Model(nn.Module):
         trainable = sum(parameter.numel() for parameter in self.parameters() if parameter.requires_grad)
         return {"total": all_count, "trainable": trainable}
 
+    def parameter_group_counts(self) -> dict[str, dict[str, int]]:
+        groups = {
+            "temporal_adapter": self.temporal_adapter,
+            "text_encoder": self.text_encoder,
+            "evidence_bottleneck": self.evidence_bottleneck,
+            "relevance_model": self.relevance_model,
+        }
+        return {
+            name: {
+                "total": sum(parameter.numel() for parameter in module.parameters()),
+                "trainable": sum(parameter.numel() for parameter in module.parameters() if parameter.requires_grad),
+            }
+            for name, module in groups.items()
+        }
+
     def freeze_backbones(self) -> None:
         for parameter in self.temporal_adapter.parameters():
             parameter.requires_grad_(True)
-        for parameter in self.text_encoder.parameters():
-            parameter.requires_grad_(False)
+        if self.text_encoder.base_encoder is not None:
+            for parameter in self.text_encoder.base_encoder.parameters():
+                parameter.requires_grad_(False)
+        for module in (self.text_encoder.input_projection, self.text_encoder.adapter, self.text_encoder.output_projection):
+            for parameter in module.parameters():
+                parameter.requires_grad_(True)
 
 
 def _select_visual(visual: TemporalOutput, indices: Tensor) -> TemporalOutput:

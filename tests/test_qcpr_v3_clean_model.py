@@ -147,6 +147,14 @@ def test_variable_length_mask_and_small_displacement_contract():
     assert torch.isfinite(output.dense_tokens).all()
 
 
+def test_freeze_backbones_keeps_permitted_text_adapter_trainable():
+    config, *_ = _inputs()
+    model = QCPRV3Model(config)
+    model.freeze_backbones()
+    assert any(parameter.requires_grad for parameter in model.text_encoder.adapter.parameters())
+    assert any(parameter.requires_grad for parameter in model.text_encoder.output_projection.parameters())
+
+
 def test_sparsemax_is_a_simplex_and_schedule_is_deterministic():
     values = torch.tensor([[2.0, 0.0, -1.0]])
     weights = sparsemax(values)
