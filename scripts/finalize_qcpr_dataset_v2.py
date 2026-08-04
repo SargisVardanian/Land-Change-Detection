@@ -295,6 +295,35 @@ def build_tamms_items(manifest_path: Path) -> tuple[list[dict[str, Any]], dict[s
     return items, by_id
 
 
+def align_tamms_text(
+    rows: Iterable[Mapping[str, Any]],
+    items: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Join pilot text to physical sequences by stable source sequence ID.
+
+    Archive revisions intentionally change item IDs.  The source sequence path
+    is the permitted join key; this avoids silently dropping verified status
+    or pretending that a pilot ID is the new physical identity.
+    """
+
+    source_sequence_to_item: dict[str, str] = {}
+    for item_id, item in items.items():
+        source_sequence_id = str(item.get("provenance", {}).get("source_sequence_id") or "")
+        if source_sequence_id:
+            source_sequence_to_item[source_sequence_id] = str(item_id)
+    aligned: list[dict[str, Any]] = []
+    for row in rows:
+        sequence_id = str(row.get("sequence_id") or "")
+        if sequence_id in items:
+            aligned.append(dict(row))
+            continue
+        source_sequence_id = sequence_id.split(":", 2)[-1] if sequence_id.count(":") >= 2 else sequence_id
+        target_item = source_sequence_to_item.get(source_sequence_id)
+        if target_item is not None:
+            aligned.append({**dict(row), "sequence_id": target_item, "source_sequence_id": source_sequence_id})
+    return aligned
+
+
 def audit_asset_hashes(items: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     checked = 0
     missing: list[dict[str, Any]] = []
@@ -517,7 +546,7 @@ def main() -> int:
     # The official structured relation source is kept as evaluation-only test data.
     semantic = [dict(row, split="test") for row in semantic]
 
-    tamms_text = read_jsonl(args.tamms_text)
+    tamms_text = align_tamms_text(read_jsonl(args.tamms_text), tamms_by_id)
     long_series = build_long_series_queries(tamms_text, tamms_by_id)
 
     source_registry = source_rows(args.input_release / "registries/source_registry.json")
