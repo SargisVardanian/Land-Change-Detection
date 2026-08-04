@@ -203,7 +203,8 @@ def main() -> int:
     if sum(len(row["captions"]) for row in rows) != 9640:
         raise RuntimeError("common development query count must be 9640")
     payload = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    if payload.get("kind") != "B1":
+    checkpoint_kind = payload.get("kind") or payload.get("model_kind")
+    if checkpoint_kind != "B1":
         raise RuntimeError("common evaluator requires a B1 checkpoint")
     config_keys = set(SinglePassConfig.__dataclass_fields__)
     cfg = SinglePassConfig(**{key: value for key, value in (payload.get("config") or {}).items() if key in config_keys})
