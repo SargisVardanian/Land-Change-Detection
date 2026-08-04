@@ -1,36 +1,56 @@
 {
   "schema_version": "qcpr-dataset-capabilities-v1",
-  "dataset_head_sha": "1c798e7168e670f13104bf4efdb9428d00242565",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_1c798e7_20260804",
-  "release_sha256": "ac6cb3b066c3cc977c80e200b5f36f7f8a24b0d037a494a37438a056f1789b32",
+  "dataset_head_sha": "1b931c7a6115919401429e2edcd5a2cee3208094",
+  "release_code_sha": "1b931c7a6115919401429e2edcd5a2cee3208094",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_1b931c7_20260804",
+  "release_sha256": "836d0392a1a12dc54a8048589d73335e9111bab8e898bca04e07dfc911540f9a",
   "exact": {
     "train_items": 10916,
     "development_items": 1539,
     "test_items": 389,
     "train_queries": 37529,
+    "development_queries": 5065,
+    "test_queries": 1245,
     "verified": true
   },
   "semantic": {
     "train_queries": 0,
+    "development_queries": 0,
+    "test_queries": 1598,
     "groups": 2,
+    "grade_2_3_groups": 2,
     "status": "HOLD"
   },
   "localized": {
     "queries": 2000,
     "evaluation_masks": 2000,
+    "verified_training_queries": 0,
     "status": "EVAL_ONLY"
   },
   "long_series": {
-    "sequences": 100,
+    "sequences": 489,
+    "pilot_verified_text_sequences": 0,
     "verified_queries": 0,
-    "status": "PILOT"
+    "status": "PILOT_PHYSICAL_ONLY_TEXT_HOLD"
+  },
+  "direction": {
+    "train_queries": 16352,
+    "development_queries": 2184,
+    "test_queries": 479,
+    "status": "EXACT_CONDITIONAL"
+  },
+  "stable": {
+    "train_queries": 0,
+    "development_queries": 0,
+    "test_queries": 0,
+    "status": "EMPTY_GENERIC_NO_CHANGE_EXCLUDED"
   },
   "sources": {
     "LEVIR-MCI": {"physical_items": 8143, "status": "EXACT_CONDITIONAL_READY"},
     "SECOND-CC": {"physical_items": 4701, "status": "EXACT_CONDITIONAL_READY"},
     "RSCC-EBD": {"physical_items": 18215, "verified_text_rows": 0, "status": "PHYSICAL_ONLY"},
     "S2Looking": {"physical_items": 1000, "evaluation_queries": 3598, "status": "EVALUATION_ONLY"},
-    "TAMMs": {"sequences": 100, "frames": 400, "verified_queries": 0, "status": "PILOT_TEXT_HOLD"}
+    "TAMMs": {"sequences": 489, "frames": 1956, "full_metadata_sequences": 37003, "verified_queries": 0, "status": "PHYSICAL_ONLY_TEXT_HOLD"}
   },
   "blocked_sources": {
     "Forest-Change": "scene-disjoint proposal/caption provenance not released",
@@ -45,11 +65,33 @@
     "GlobalGeoTree": "specialized-evaluation-only source deferred"
   },
   "manifest_sha256": {
-    "manifests/exact_train.jsonl": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85",
+    "manifests/direction_development.jsonl": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3",
+    "manifests/direction_test.jsonl": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4",
+    "manifests/direction_train.jsonl": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243",
     "manifests/exact_development.jsonl": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf",
     "manifests/exact_test.jsonl": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec",
-    "manifests/semantic_test.jsonl": "1afcf3cfe2e674a35047fb4ccff6bd992f28e5ec0425dd302f30d79f070de204",
+    "manifests/exact_train.jsonl": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85",
+    "manifests/localized_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "manifests/localized_test.jsonl": "c3dbc760f160d007d81ced41e24b87aad87bef1c12fad9f49104a3d6977f383f",
-    "manifests/long_series_train.jsonl": "c83f75500ca4cc3acd04751db61ee0bbd2cffa3f7de3221180af334511675b33"
+    "manifests/localized_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/long_series_development.jsonl": "39cc8acc99a9160f3280e620631ade364522bc3ac7d27d536c459a8f4fe478f2",
+    "manifests/long_series_test.jsonl": "b7362d95134cbd4c5381f897b6464cd799f290081e38a85f308f66e6d5750dc3",
+    "manifests/long_series_train.jsonl": "34337abf1d4accf7138c8c94ae8e0f666746f5ba92a559fd02abb89e40df9f9e",
+    "manifests/semantic_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/semantic_test.jsonl": "1afcf3cfe2e674a35047fb4ccff6bd992f28e5ec0425dd302f30d79f070de204",
+    "manifests/semantic_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/stable_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/stable_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "manifests/stable_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "model_contract": {
+    "status": "MODEL_CONTRACT_AVAILABLE",
+    "branch": "codex/qcpr-model-v3-temporal-retrieval",
+    "code_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
+    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
+    "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
+    "open_request_ids": ["M2D-20260804-001", "M2D-20260804-002"],
+    "main_training_allowed": false,
+    "p2_allowed": false
   }
 }
