@@ -77,10 +77,8 @@ def main() -> None:
         delta_times=timestamps - timestamps[:, :1],
         frame_ids=torch.arange(time_count, device=device).view(1, -1).expand(pair_count, -1),
     )
-    visual = model.encode_visual(native_tokens, coordinates, metadata)
     text_tokens = torch.randn(query_count, length, config.text.input_dim, device=device)
     text_mask = torch.ones(query_count, length, dtype=torch.bool, device=device)
-    query = model.encode_query(text_tokens, text_mask)
     grades = torch.eye(query_count, pair_count, device=device, dtype=torch.long)
     accounting = ExposureAccounting([], [], [], [])
     metrics_history: list[dict[str, Any]] = []
@@ -88,6 +86,10 @@ def main() -> None:
         pair_ids = [f"pair-{index}" for index in range(pair_count)]
         query_ids = [f"query-{index}" for index in range(query_count)]
         record_step(accounting, pair_ids, query_ids)
+        # Rebuild the trainable adapter graph every step. Reusing encoded
+        # outputs would attempt a second backward through a freed graph.
+        visual = model.encode_visual(native_tokens, coordinates, metadata)
+        query = model.encode_query(text_tokens, text_mask)
         result = train_step(model, query, visual, grades, objective=objective, optimizer=optimizer)
         if not torch.isfinite(result.scores).all() or not torch.isfinite(result.loss.loss):
             raise FloatingPointError("non-finite smoke score or loss")
@@ -95,6 +97,8 @@ def main() -> None:
 
     model.eval()
     with torch.no_grad():
+        visual = model.encode_visual(native_tokens, coordinates, metadata)
+        query = model.encode_query(text_tokens, text_mask)
         final = model.score(query, visual)
         metrics = retrieval_metrics(final.scores, grades.bool(), ks=(1, 2, 4))
         ranking_order = rank_scores(final.scores).cpu()
