@@ -483,6 +483,24 @@ def zero_evidence_score(model: QCPRV3Model, query: QueryFeatures, visual: Tempor
     ).score
 
 
+def remove_flat_token_indices(token_mask: Tensor, indices: Tensor) -> Tensor:
+    """Return a token mask with flattened [T,N] token indices disabled."""
+    if token_mask.ndim != 3 or token_mask.shape[0] < 1:
+        raise ValueError("token_mask must be [B,T,N] with a non-empty batch")
+    if indices.ndim != 1:
+        raise ValueError("indices must be a flat [M] tensor")
+    result = token_mask.clone()
+    time_count, tokens_per_frame = result.shape[1], result.shape[2]
+    for value in indices.tolist():
+        frame, token = divmod(int(value), tokens_per_frame)
+        if frame >= time_count:
+            raise IndexError(f"token index {value} is outside [T={time_count},N={tokens_per_frame}]")
+        result[0, frame, token] = False
+    if not bool(result.any()):
+        result[0, 0, 0] = True
+    return result
+
+
 def evidence_probe(
     model: QCPRV3Model, native: Tensor, coords: Tensor,
     metadata: TemporalMetadata, texts: list[str], device: torch.device,
@@ -525,13 +543,10 @@ def evidence_diagnostics(
             bottom = torch.argsort(first)[:count]
 
             def remove(indices: Tensor) -> TemporalOutput:
-                mask = pair_visual.token_mask.clone()
-                for value in indices.tolist():
-                    frame, token = divmod(int(value), pair_visual.dense_tokens.shape[-1])
-                    mask[0, frame, token] = False
-                if not bool(mask.any()):
-                    mask[0, 0, 0] = True
-                return replace(pair_visual, token_mask=mask)
+                return replace(
+                    pair_visual,
+                    token_mask=remove_flat_token_indices(pair_visual.token_mask, indices),
+                )
 
             top_score = float(model.score(select_query(query, [0]), remove(top)).scores[0, 0])
             bottom_score = float(model.score(select_query(query, [0]), remove(bottom)).scores[0, 0])
