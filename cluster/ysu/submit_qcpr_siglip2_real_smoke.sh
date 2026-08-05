@@ -7,6 +7,8 @@
 #SBATCH --time=00:15:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
+#SBATCH --output=/tmp/qcpr_siglip2_real_smoke_%j.out
+#SBATCH --error=/tmp/qcpr_siglip2_real_smoke_%j.err
 
 set -eu
 ROOT=${PROJECT_ROOT:-/mnt/weka/svardanyan/rs_change_project}
