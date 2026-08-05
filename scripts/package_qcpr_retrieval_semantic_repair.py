@@ -231,6 +231,40 @@ def main() -> int:
     frame_count = sum(len(row.get("frames", [])) for row in existing_items)
     query_rows = read_jsonl(args.output / "registries/queries.jsonl")
     relevance_graph = write_relevance_graph(args.output / "registries/relevance_graph.jsonl", query_rows)
+    # Source-derived verification labels do not replace the identifiability
+    # review gate. Report only reviewer-promoted exact rows as verified; this
+    # release has zero completed review decisions.
+    handoff = dict(handoff)
+    handoff["verified_exact_query_count"] = 0
+    handoff["relevance_graph"] = {
+        "schema_version": relevance_graph["schema_version"],
+        "edge_count": relevance_graph["edge_count"],
+        "sha256": relevance_graph["sha256"],
+    }
+    handoff_hashes = dict(handoff.get("hashes") or {})
+    handoff_hashes["relevance_graph_sha256"] = relevance_graph["sha256"]
+    handoff["hashes"] = handoff_hashes
+    comparison_payload = dict(handoff.get("data_only_comparison") or {})
+    comparison_payload.update({
+        "artifact": "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json",
+        "checkpoint_sha256": data_only_comparison.get("checkpoint_sha256"),
+        "feature_cache_sha256": data_only_comparison.get("feature_cache_sha256"),
+        "status": data_only_comparison.get("status"),
+        "improvement_claim": data_only_comparison.get("improvement_claim", False),
+        "gallery_item_count": data_only_comparison.get("gallery_item_count"),
+        "metrics_by_view": {
+            name: value.get("metrics")
+            for name, value in (data_only_comparison.get("views") or {}).items()
+        },
+        "paired_bootstrap_query_count": (
+            data_only_comparison.get("paired_bootstrap", {})
+            .get("D0_vs_D1_exact", {})
+            .get("paired_query_count")
+        ),
+        "verified_additions": data_only_comparison.get("verified_additions", {}),
+    })
+    handoff["data_only_comparison"] = comparison_payload
+    write_json(args.output / "handoff/retrieval_semantic_repair/model_agent_handoff.json", handoff)
     release = {
         "schema_version": "qcpr-dataset-v2-retrieval-semantic-repair-v1",
         "release_name": args.release_name,
