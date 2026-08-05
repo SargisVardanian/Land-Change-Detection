@@ -26,6 +26,8 @@ class EvidenceBottleneck(nn.Module):
         super().__init__()
         self.hidden_size = config.hidden_size
         self.evidence_temperature = float(config.evidence_temperature)
+        self.query_chunk_size = int(config.evidence_query_chunk_size)
+        self.pair_chunk_size = int(config.evidence_pair_chunk_size)
         self.raw_gate = nn.Parameter(torch.tensor(config.evidence_gate_raw_init))
 
     @property
@@ -57,8 +59,8 @@ class EvidenceBottleneck(nn.Module):
         # materialized Q x P x L x M and could silently exceed H100 memory.
         text_normalized = F.normalize(text_tokens, dim=-1)
         visual_normalized = F.normalize(visual_tokens, dim=-1)
-        query_chunk = min(self.config.evidence_query_chunk_size, q)
-        pair_chunk = min(self.config.evidence_pair_chunk_size, p)
+        query_chunk = min(self.query_chunk_size, q)
+        pair_chunk = min(self.pair_chunk_size, p)
         logits_rows: list[Tensor] = []
         weight_rows: list[Tensor] = []
         vector_rows: list[Tensor] = []

@@ -188,7 +188,7 @@ def test_reranking_selects_and_orders_candidates():
     assert candidates.tolist() == [[1, 2, 0]]
     assert rerank_candidate_indices(
         candidates, torch.tensor([[0.1, 0.8, 0.2]])
-    ).tolist() == [[2, 1, 0]]
+    ).tolist() == [[2, 0, 1]]
 
 
 def test_manifest_loader_keeps_generic_no_change_out_of_exact_pair_view(tmp_path):
@@ -233,6 +233,7 @@ def test_phase_a_optimizer_scope_is_temporal_only():
         for name in group["parameter_names"]
     )
     assert len(optimizer.param_groups) == len(report["groups"])
+    optimizer.step()
     scheduler.step()
 
 
