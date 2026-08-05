@@ -1,2 +1,10 @@
-from .siglip2 import Siglip2Backbone, ImageEncoding, TextEncoding
-__all__ = ["Siglip2Backbone", "ImageEncoding", "TextEncoding"]
+from .georsclip import GeoRSCLIPBackbone, GeoRSCLIPLoadAudit
+from .siglip2 import ImageEncoding, Siglip2Backbone, TextEncoding
+
+__all__ = [
+    "GeoRSCLIPBackbone",
+    "GeoRSCLIPLoadAudit",
+    "ImageEncoding",
+    "Siglip2Backbone",
+    "TextEncoding",
+]

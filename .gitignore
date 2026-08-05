@@ -10,6 +10,8 @@ artifacts/
 /external/UniverSat/
 /models/
 data/
+!src/qcpr_siglip2/data/
+!src/qcpr_siglip2/data/**
 !src/land_change_detection/data/
 !src/land_change_detection/data/**
 /datasets/
