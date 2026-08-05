@@ -99,7 +99,7 @@
     "main_training_allowed": false,
     "observed_declared_sha_mismatch": true,
     "observed_head_sha": "0dba5fae696139df1a9976fda4447ad7a0f9cb08",
-    "observed_worktree_dirty": true,
+    "observed_worktree_dirty": false,
     "open_request_ids": [
       "M2D-20260804-001",
       "M2D-20260804-002"
