@@ -24,7 +24,7 @@
       "long_series": 0
     }
   },
-  "dataset_head_sha": "a49e44d09d44a133c01d15b4f8c6cba60dc56141",
+  "dataset_head_sha": "4efb00fd8a0bdf82e457ad17d717357f8dbc9a27",
   "direction": {
     "development_queries": 2184,
     "human_verified_queries": 0,
@@ -136,9 +136,9 @@
     "registry_rows": 89396,
     "training_enabled": 0
   },
-  "release_code_sha": "a49e44d09d44a133c01d15b4f8c6cba60dc56141",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_retrieval_semantic_repair_a49e44d_20260805",
-  "release_sha256": "6f9457c489c57526093bbda0c09d438099e46828fa4b161403e6d8403811c515",
+  "release_code_sha": "4efb00fd8a0bdf82e457ad17d717357f8dbc9a27",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_retrieval_semantic_repair_4efb00f_20260805",
+  "release_sha256": "04330331d5a3c2982e03ed78013caa53adbb56826c8731a0001b0f6bf8ed6fa7",
   "release_state": "DATA_QUALITY_HOLD",
   "schema_version": "qcpr-dataset-capabilities-v1",
   "semantic": {
