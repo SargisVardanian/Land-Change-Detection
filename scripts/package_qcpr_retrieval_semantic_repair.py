@@ -216,6 +216,17 @@ def main() -> int:
     if data_only_comparison.get("status"):
         repair_package = dict(repair_package)
         repair_package["frozen_model_comparison_status"] = data_only_comparison["status"]
+    if data_only_comparison.get("status") == "PASS_FROZEN_B1_DATA_ONLY_METRICS":
+        handoff = dict(handoff)
+        handoff["frozen_model_comparison_status"] = data_only_comparison["status"]
+        handoff["data_only_comparison"] = {
+            "artifact": "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json",
+            "checkpoint_sha256": data_only_comparison.get("checkpoint_sha256"),
+            "feature_cache_sha256": data_only_comparison.get("feature_cache_sha256"),
+            "status": data_only_comparison["status"],
+            "improvement_claim": data_only_comparison.get("improvement_claim", False),
+        }
+        write_json(args.output / "handoff/retrieval_semantic_repair/model_agent_handoff.json", handoff)
     physical_count = len(existing_items)
     frame_count = sum(len(row.get("frames", [])) for row in existing_items)
     query_rows = read_jsonl(args.output / "registries/queries.jsonl")
@@ -274,7 +285,13 @@ def main() -> int:
         "all_query_training_enabled_false": all(not bool(row.get("training_enabled")) for row in query_rows),
         "exact_gate_passed": False,
         "stable_gate_passed": False,
-        "status": "HOLD_REVIEW_AND_MODEL_COMPARISON_REQUIRED" if integrity["passed"] else "HOLD_CHECKSUM_FAILURE",
+        "status": (
+            "HOLD_REVIEW_REQUIRED"
+            if integrity["passed"] and data_only_comparison.get("status") == "PASS_FROZEN_B1_DATA_ONLY_METRICS"
+            else "HOLD_REVIEW_AND_MODEL_COMPARISON_REQUIRED"
+            if integrity["passed"]
+            else "HOLD_CHECKSUM_FAILURE"
+        ),
     })
     # The integrity audit is part of the immutable release, so regenerate the
     # checksum file once after writing it and verify the final set.
@@ -320,6 +337,8 @@ def main() -> int:
         "decode_failures": validator["decode_failures"],
         "mask_free_forbidden_key_hits": validator["mask_free_forbidden_key_hits"],
     }
+    if data_only_comparison.get("status") == "PASS_FROZEN_B1_DATA_ONLY_METRICS":
+        integrity_record["status"] = "HOLD_REVIEW_REQUIRED"
     integrity_record["checksum_entry_count_before_integrity_audit"] = len(pre_validator_checksums)
     integrity_record["checksum_verification_before_integrity_audit"] = pre_validator_integrity
     integrity_record["final_sha256sums"] = {
