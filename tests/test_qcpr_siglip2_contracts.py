@@ -6,7 +6,11 @@ from run_qcpr_siglip2_real_smoke import build_relevance
 
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.loader import make_exact_batches
-from qcpr_siglip2.evaluation.evidence import effective_token_count, evidence_entropy
+from qcpr_siglip2.evaluation.evidence import (
+    effective_token_count,
+    evidence_entropy,
+    time_reversal_score_change,
+)
 from qcpr_siglip2.evaluation.reranking import (
     rerank_candidate_indices,
     select_topk_candidates,
@@ -178,6 +182,14 @@ def test_global_stage_one_score_is_unscaled_cosine():
     )
     expected = output.text_embedding @ output.pair_cls.transpose(0, 1)
     assert torch.allclose(output.global_score_matrix, expected)
+
+
+def test_time_reversal_score_change_is_explicit_and_shape_checked():
+    forward = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    reversed_scores = torch.tensor([[1.0, 1.5], [2.5, 4.0]])
+    assert time_reversal_score_change(forward, reversed_scores) == 0.5
+    with pytest.raises(ValueError, match="equal shapes"):
+        time_reversal_score_change(forward, reversed_scores[:1])
 
 
 def test_deterministic_sampler_rotates_captions_without_pair_weight_drift():

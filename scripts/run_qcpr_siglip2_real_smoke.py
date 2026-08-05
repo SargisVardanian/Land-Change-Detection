@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import resource
 import subprocess
 import sys
 import time
@@ -99,6 +100,17 @@ def effective_rank(values: torch.Tensor) -> float:
     return float(
         torch.exp(-(probabilities * probabilities.clamp_min(1e-12).log()).sum())
     )
+
+
+def peak_cpu_rss_gib() -> float:
+    """Return process peak RSS in GiB on the Linux Slurm nodes."""
+
+    usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    # Linux reports KiB; macOS reports bytes.  The smoke runs on Linux, while
+    # the branch remains inspectable on a developer workstation.
+    if sys.platform == "darwin":
+        return float(usage) / (1024**3)
+    return float(usage) / (1024**2)
 
 
 def load_batch_rows(
@@ -558,6 +570,7 @@ def main() -> int:
         write_json(run / "step_latest.json", metric_row)
     total_wall = time.perf_counter() - start_total
     timings["total_wall_seconds"] = total_wall
+    timings["cpu_peak_rss_gib"] = peak_cpu_rss_gib()
     # Recompute the reference after the final optimizer step.  The checkpoint
     # below contains post-step weights; comparing a pre-step forward would
     # turn a valid checkpoint roundtrip into a false mismatch.
@@ -606,6 +619,24 @@ def main() -> int:
         model, last_output, torch.zeros_like(last_output.evidence.evidence_weights)
     ).detach()
     deletion = evidence_deletion(model, last_output)
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        reversed_image = backbone.encode_images(
+            pixels.flip(1),
+            pixel_attention_mask=pixel_mask.flip(1) if pixel_mask is not None else None,
+            spatial_shapes=shapes.flip(1) if shapes is not None else None,
+        )
+        reversed_output = model.forward_from_features(
+            reversed_image.patch_tokens,
+            reversed_image.pooled_embedding,
+            text_encoding.token_embeddings,
+            text_encoding.pooled_embedding,
+            text_encoding.attention_mask,
+        )
+    time_reversal_change = float(
+        (last_output.score_matrix.float() - reversed_output.score_matrix.float())
+        .abs()
+        .max()
+    )
     diagnostics = {
         "query_swap_map_l1": l1,
         "query_swap_map_cosine": cosine,
@@ -617,6 +648,12 @@ def main() -> int:
         ),
         "evidence_gate": float(last_output.evidence.evidence_gate),
         "evidence_deletion": deletion,
+        "time_reversal": {
+            "score_change_max": time_reversal_change,
+            "original_score_q0_p0": float(last_output.score_matrix[0, 0]),
+            "reversed_score_q0_p0": float(reversed_output.score_matrix[0, 0]),
+            "passed": time_reversal_change > 1e-6,
+        },
         "multi_positive_runtime": "EXERCISED"
         if multi_positive_supported
         else "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED",

@@ -3,6 +3,7 @@ from .evidence import (
     evidence_entropy,
     query_swap_map_cosine,
     query_swap_map_l1,
+    time_reversal_score_change,
 )
 from .reranking import (
     rerank_candidate_indices,
@@ -38,4 +39,5 @@ __all__ = [
     "rerank_candidate_indices",
     "scatter_reranked_scores",
     "select_topk_candidates",
+    "time_reversal_score_change",
 ]
