@@ -237,18 +237,23 @@ def main() -> int:
     torch.cuda.reset_peak_memory_stats(device)
     processor = AutoProcessor.from_pretrained(args.siglip2_model, local_files_only=True)
     pairs, query_rows, multi_positive_supported = load_batch_rows(args.train_manifest, args.physical_batch_size, args.captions_per_pair)
+    image_start = time.perf_counter()
     pixels, pixel_mask, shapes, image_meta = process_images(processor, pairs, device)
+    torch.cuda.synchronize()
+    image_decode_seconds = time.perf_counter() - image_start
     input_ids, attention_mask, texts = process_text(processor, query_rows, device)
     positive, ignored, relevance_meta = build_relevance(query_rows, pairs, args.captions_per_pair, device)
     backbone = Siglip2Backbone(args.siglip2_model, local_files_only=True, torch_dtype=torch.bfloat16)
     model = Siglip2TemporalRetrievalModel(backbone, Siglip2TemporalConfig()).to(device)
+    assert model.backbone is not None
+    backbone = model.backbone
     model.train()
     optimizer = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=2e-4, weight_decay=0.05)
     write_json(run / "parameter_groups.json", {"groups": [{"name": "temporal_and_evidence", "lr": 2e-4, "weight_decay": 0.05, "parameter_count": sum(p.numel() for p in model.parameters() if p.requires_grad)}], "scope": model.trainable_parameter_report(), "frozen_backbone": True})
     write_json(run / "model_contract.json", {"architecture": "SigLIP2_fixed_checkpoint_native_SiglipModel_plus_two_layer_temporal_adapter", "expected_code_sha": args.expected_code_sha, "hidden_size": 768, "native_patch_contract": [args.physical_batch_size, 2, 256, 768], "query_count": len(query_rows), "score_matrix": list(positive.shape), "evidence_map": [len(query_rows), len(pairs), 2, 16, 16], "multi_positive_runtime": bool(multi_positive_supported)})
     write_json(run / "batch_contract.json", {"physical_batch_size": args.physical_batch_size, "captions_per_pair": args.captions_per_pair, "query_count": len(query_rows), "score_matrix": list(positive.shape), "native_visual_tokens": 256, "precision": "bf16", "gradient_accumulation": 1})
     write_json(run / "roundtrip_input.json", {"pairs": [{"canonical_pair_id": row["canonical_pair_id"], "t1_path": row["t1_path"], "t2_path": row["t2_path"]} for row in pairs], "queries": [{"caption_id": row["caption_id"], "caption": row["caption"]} for row in query_rows]})
-    timings = {"image_decode_and_processor_seconds": 0.0, "vision_seconds": [], "text_seconds": [], "forward_seconds": [], "backward_seconds": [], "optimizer_step_seconds": [], "total_wall_seconds": 0.0}
+    timings = {"image_decode_and_processor_seconds": image_decode_seconds, "vision_seconds": [], "text_seconds": [], "forward_seconds": [], "backward_seconds": [], "optimizer_step_seconds": [], "checkpoint_write_seconds": 0.0, "total_wall_seconds": 0.0}
     start_total = time.perf_counter()
     last_output = None
     preclip_norms = []
@@ -256,14 +261,19 @@ def main() -> int:
         optimizer.zero_grad(set_to_none=True)
         torch.cuda.synchronize(); start = time.perf_counter()
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            output = model(pixels, input_ids, attention_mask, pixel_attention_mask=pixel_mask, spatial_shapes=shapes)
+            vision_start = time.perf_counter()
+            image_encoding = backbone.encode_images(pixels, pixel_attention_mask=pixel_mask, spatial_shapes=shapes)
+            torch.cuda.synchronize(); timings["vision_seconds"].append(time.perf_counter() - vision_start)
+            text_start = time.perf_counter()
+            text_encoding = backbone.encode_text(input_ids, attention_mask)
+            torch.cuda.synchronize(); timings["text_seconds"].append(time.perf_counter() - text_start)
+            output = model.forward_from_features(image_encoding.patch_tokens, image_encoding.pooled_embedding, text_encoding.token_embeddings, text_encoding.pooled_embedding, text_encoding.attention_mask)
         torch.cuda.synchronize(); timings["forward_seconds"].append(time.perf_counter() - start)
         loss = multi_positive_listwise_loss(output.score_matrix.float(), positive, ignored)
         start = time.perf_counter(); loss.backward(); torch.cuda.synchronize(); timings["backward_seconds"].append(time.perf_counter() - start)
         flat = torch.cat([p.grad.detach().float().reshape(-1) for p in model.parameters() if p.grad is not None])
         preclip_norms.append(float(flat.norm()))
         start = time.perf_counter(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); optimizer.step(); torch.cuda.synchronize(); timings["optimizer_step_seconds"].append(time.perf_counter() - start)
-        last_output = output.detach() if hasattr(output, "detach") else output
         write_json(run / "step_latest.json", {"global_step": step, "loss": float(loss.detach().cpu()), "finite": bool(torch.isfinite(loss)), "gradient_norm_preclip": preclip_norms[-1]})
     total_wall = time.perf_counter() - start_total
     timings["total_wall_seconds"] = total_wall
@@ -288,7 +298,7 @@ def main() -> int:
     diagnostics = {"query_swap_map_l1": l1, "query_swap_map_cosine": cosine, "score_change_after_query_swap": float((last_output.score_matrix[0,0]-last_output.score_matrix[1,0]).abs()), "score_change_after_evidence_zeroing": float((last_output.score_matrix-zero_score).abs().max()), "evidence_gate": float(last_output.evidence.evidence_gate), "evidence_deletion": deletion, "multi_positive_runtime": "EXERCISED" if multi_positive_supported else "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED"}
     write_json(run / "evidence_diagnostics.json", diagnostics)
     state = {"model_state": model.state_dict(), "optimizer_state": optimizer.state_dict(), "step": args.steps, "config": Siglip2TemporalConfig().to_dict(), "expected_code_sha": args.expected_code_sha, "train_manifest": args.train_manifest}
-    checkpoint = run / "checkpoint.pt"; torch.save(state, checkpoint); (run / "checkpoint.sha256").write_text(sha256(checkpoint) + "  checkpoint.pt\n", encoding="utf-8")
+    checkpoint = run / "checkpoint.pt"; checkpoint_start = time.perf_counter(); torch.save(state, checkpoint); (run / "checkpoint.sha256").write_text(sha256(checkpoint) + "  checkpoint.pt\n", encoding="utf-8"); timings["checkpoint_write_seconds"] = time.perf_counter() - checkpoint_start
     reference = last_output.score_matrix.detach().float().cpu(); reference_path = run / "reference_scores.pt"; torch.save(reference, reference_path)
     child_args = [sys.executable, __file__, "--roundtrip-only", "--siglip2-model", args.siglip2_model, "--train-manifest", args.train_manifest, "--output-dir", str(run), "--expected-code-sha", args.expected_code_sha, "--physical-batch-size", str(args.physical_batch_size), "--captions-per-pair", str(args.captions_per_pair), "--checkpoint", str(checkpoint), "--reference-scores", str(reference_path)]
     roundtrip = subprocess.run(child_args, env={**os.environ, "HF_HUB_OFFLINE": "1"}, check=False)
