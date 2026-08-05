@@ -192,7 +192,10 @@ def gradient_report(model: Siglip2TemporalRetrievalModel) -> dict[str, Any]:
 def deterministic_roundtrip(args: argparse.Namespace) -> int:
     run = Path(args.output_dir)
     meta = json.loads((run / "roundtrip_input.json").read_text(encoding="utf-8"))
-    device = torch.device("cpu")
+    # The authoritative comparison is fresh-process CUDA-to-CUDA inside the
+    # H100 allocation.  CPU is only a diagnostic fallback and is labelled as
+    # such because BF16 CPU kernels are not bitwise-equivalent to H100.
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     backbone = Siglip2Backbone(args.siglip2_model, local_files_only=True, torch_dtype=torch.bfloat16)
     model = Siglip2TemporalRetrievalModel(backbone, Siglip2TemporalConfig()).to(device).eval()
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
@@ -201,12 +204,12 @@ def deterministic_roundtrip(args: argparse.Namespace) -> int:
     pairs, query_rows, _ = load_batch_rows(args.train_manifest, args.physical_batch_size, args.captions_per_pair)
     pixels, pixel_mask, shapes, _ = process_images(processor, pairs, device)
     input_ids, attention_mask, _ = process_text(processor, query_rows, device)
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.bfloat16):
         output = model(pixels, input_ids, attention_mask, pixel_attention_mask=pixel_mask, spatial_shapes=shapes)
     reference = torch.load(args.reference_scores, map_location="cpu", weights_only=True)
     difference = (output.score_matrix.float().cpu() - reference.float()).abs()
-    tolerance = 2e-5
-    result = {"status": "PASS" if float(difference.max()) <= tolerance else "CHECKPOINT_ROUNDTRIP_MISMATCH", "max_abs_score_difference": float(difference.max()), "tolerance": tolerance, "score_shape": list(output.score_matrix.shape)}
+    tolerance = 2e-5 if device.type == "cuda" else 5e-2
+    result = {"status": "PASS" if float(difference.max()) <= tolerance else "CHECKPOINT_ROUNDTRIP_MISMATCH", "comparison_device": device.type, "authoritative": device.type == "cuda", "max_abs_score_difference": float(difference.max()), "tolerance": tolerance, "score_shape": list(output.score_matrix.shape)}
     write_json(run / "checkpoint_roundtrip.json", result)
     return 0 if result["status"] == "PASS" else 1
 
@@ -282,7 +285,7 @@ def main() -> int:
     checkpoint = run / "checkpoint.pt"; torch.save(state, checkpoint); (run / "checkpoint.sha256").write_text(sha256(checkpoint) + "  checkpoint.pt\n", encoding="utf-8")
     reference = last_output.score_matrix.detach().float().cpu(); reference_path = run / "reference_scores.pt"; torch.save(reference, reference_path)
     child_args = [sys.executable, __file__, "--roundtrip-only", "--siglip2-model", args.siglip2_model, "--train-manifest", args.train_manifest, "--output-dir", str(run), "--expected-code-sha", args.expected_code_sha, "--physical-batch-size", str(args.physical_batch_size), "--captions-per-pair", str(args.captions_per_pair), "--checkpoint", str(checkpoint), "--reference-scores", str(reference_path)]
-    roundtrip = subprocess.run(child_args, env={**os.environ, "CUDA_VISIBLE_DEVICES": ""}, check=False)
+    roundtrip = subprocess.run(child_args, env={**os.environ, "HF_HUB_OFFLINE": "1"}, check=False)
     if roundtrip.returncode != 0: raise RuntimeError("CHECKPOINT_ROUNDTRIP_MISMATCH")
     memory = {"gpu_name": torch.cuda.get_device_name(device), "peak_allocated_gib": torch.cuda.max_memory_allocated(device)/(1024**3), "peak_reserved_gib": torch.cuda.max_memory_reserved(device)/(1024**3), "current_allocated_gib": torch.cuda.memory_allocated(device)/(1024**3), "score_matrix": list(positive.shape), "visual_tokens": [int(x) for x in last_output.temporal.temporal_patch_tokens.shape], "text_tokens": [int(x) for x in input_ids.shape]}
     write_json(run / "cuda_memory.json", memory); write_json(run / "runtime_profile.json", timings); write_json(run / "exposure_accounting.json", {"physical_pairs_unique": len(pairs), "physical_pair_presentations": len(pairs) * args.steps, "query_unique": len(query_rows), "query_presentations": len(query_rows) * args.steps, "steps": args.steps, "pair_sequence_sha256": hashlib.sha256("\n".join(row["canonical_pair_id"] for row in pairs).encode()).hexdigest(), "query_sequence_sha256": hashlib.sha256("\n".join(row["caption_id"] for row in query_rows).encode()).hexdigest()})
