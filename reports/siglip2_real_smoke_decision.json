@@ -1,6 +1,6 @@
 {
   "code_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
-  "final_status_sha": "f42cb5945b1ed6a2708fc8abff84b0560b90db6f",
+  "final_status_sha": "e58980553e5a72884d52e2994416bf2e37d37766",
   "job_id": 207706,
   "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_80d17d5_20260805",
   "state": "COMPLETED",
