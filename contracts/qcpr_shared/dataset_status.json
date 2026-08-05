@@ -1,44 +1,64 @@
 {
   "branch": "codex/qcpr-dataset-v2-final",
-  "dataset_head_sha": "b19cda128330ee8f67ab47dc39b3c81ad7740c7b",
+  "calibration": {
+    "average_positive_set_size": null,
+    "collision_rate": null,
+    "decisions_completed": 0,
+    "exact_scope_precision": null,
+    "exact_scope_precision_ci95": null,
+    "false_exact_rate": null,
+    "generic_no_change_contamination": null,
+    "populations_sampled": 5,
+    "required_per_population": 300,
+    "rows_sampled": 1500,
+    "semantic_false_negative_rate": null,
+    "status": "HOLD_REVIEW_REQUIRED"
+  },
+  "data_only_comparison": {
+    "attempted": true,
+    "checkpoint_sha256": "75791b8e429fd6bde496ec7f4bbbb0263536ebd301bcfb341bbc5389dd5aa437",
+    "improvement_claim": false,
+    "metrics": null,
+    "same_frozen_model_required": true,
+    "status": "BLOCKED_NO_ACTIVE_CUDA_OR_COMPATIBLE_FROZEN_EVALUATOR"
+  },
+  "dataset_head_sha": "bbc48cffd02ee13c8381bc94e1fdbe60431c9241",
   "limitations": [
-    "This response supersedes prior Dataset Agent handoffs and points to immutable qcpr_dataset_v2_final_b19cda1_20260805.",
-    "The Model Agent declared SHA is 4aaa7649daa0079689b577cf63184ca01c05f4e7, while audit-time observed HEAD is 9d95181c3825c2cc49532d14adf1e628a6e746d3; worktree dirty=False; no model files were modified.",
-    "The Model Agent must consume this handoff and close M2D-20260804-001/002 before any training authorization.",
-    "Semantic primary train/development are empty; semantic test is evaluation-only derived_eval.",
-    "Localized queries and dense masks are evaluation-only; long-series has physical sequences but zero verified queries.",
-    "No P1/P2/training submission was performed."
+    "Exact, direction and stable views are materialized but held because the 300-per-population human review decisions are still null.",
+    "Stable candidates are derived from independent T1/T2 visual anchor probes; 158 stable-specific rows exist, but none is training-enabled.",
+    "Localized view has 3,473 rows and 3,473 mask sidecars, but no verified training text; masks are evaluation sidecars only.",
+    "TAMMs retains 489 physical sequences and 200 unverified long-series candidates; verified onset/duration/gradual-or-abrupt fields remain zero.",
+    "Forest-Change has 334 scene-component-disjoint physical pairs and 1,670 held captions; no caption row is promoted.",
+    "RSCC-EBD has 18,215 physical pairs and zero verified text; Reviewer A/B/adjudication counts are zero.",
+    "DUBAI-CC, RSRCC, DynamicEarthNet, SpaceNet-7 and TERRA-CD remain NOT_INTEGRATED pending official physical assets, hashes, licenses, loaders and manifests.",
+    "The same frozen B1 evaluator was attempted after manifest freeze but failed because CUDA is unavailable; historical rankings were not reused and no D0-D3 improvement is claimed.",
+    "All final query rows are training-disabled until the explicit review and comparison gates pass; main expanded training is unauthorized."
   ],
   "manifest_count": 18,
   "manifest_sha256": {
-    "manifests/direction_development.jsonl": "99dea5068f82aa697e18c3f85452d161822dc2990b75542a4d936af0d637bda3",
-    "manifests/direction_test.jsonl": "91857d1910125c7a63f6d4720a3f12215ad8defa0e72e05d6eff64db66a254d4",
-    "manifests/direction_train.jsonl": "05724a26e356ee53180369e8a89519b59a4a6593d1aeab65ed9b34ece1ea3243",
-    "manifests/exact_development.jsonl": "fbc6d6379456f51f180199404d840b3fee30bf64c2f77d5ce4296bc4f5ed7daf",
-    "manifests/exact_test.jsonl": "f1fd1b8eea87da4420d824e5cf122af60a7192bc39027144153cced26189b6ec",
-    "manifests/exact_train.jsonl": "ec133e9956372e03a43aff48cade61dd29d735d74589ef4d6db80f56316f9d85",
-    "manifests/localized_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/localized_test.jsonl": "1e8a64920df78744e6883aceee17edbff4970be1225784e03c0d8e5fcc1867d3",
-    "manifests/localized_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/long_series_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/semantic_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/semantic_test.jsonl": "be21b0c69ba494227a10a93e67a8bfec179da9c6a16ac9f46c40011369b3a8a6",
-    "manifests/semantic_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/stable_development.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/stable_test.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "manifests/stable_train.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    "manifests/direction_development.jsonl": "56740583eefb799cf982e56532d9d2f13f5078d60729c08cdd223810d78b5e7b",
+    "manifests/direction_test.jsonl": "63f9e34fe0d49ae38bc9c10106757c1503a8decc47033e8e1db81c60ad1c7529",
+    "manifests/direction_train.jsonl": "7862e48e54d20c7efda8b283b236bdc09f908c7988bcfd63ab9415f1199ba147",
+    "manifests/exact_development.jsonl": "c96c19dc583db9a02779e80fb32e6a0539e290a5feffa84ccb8b3dea5051a65b",
+    "manifests/exact_test.jsonl": "43f5e46a494942c3f8776dff297f64bf3032f243c2f873e0a3c5267f3ee55ca7",
+    "manifests/exact_train.jsonl": "230d91f3c1811000b1aabfdbc4f0a922ea0fd67e682c01ed04e8b12fadb35eb2",
+    "manifests/localized_development.jsonl": "f112de990081fcc88ac7887ddabf918f650393fd0d07a3ed5633fbca8a2b1bad",
+    "manifests/localized_test.jsonl": "362880c05750413cb5f64d07b0c5eb40b662b17313d59e7a80a8837fd0542448",
+    "manifests/localized_train.jsonl": "72a26dabeea16b31dbd00ee03bc8a5ad169ca8d1ee21d4853351abae0703aa5e",
+    "manifests/long_series_development.jsonl": "18b48f5ff1182a60a902d1012a373d89a40f2e468e2c144957dea27fae43f970",
+    "manifests/long_series_test.jsonl": "714e3f39a97a6888dcd4c35a79589fd5a270613fef2be1c42232f7a447b3578f",
+    "manifests/long_series_train.jsonl": "fa1c87d3822323448f7ab744543b7009f344fdeee8201b84ade4336af0dbd1ec",
+    "manifests/semantic_development.jsonl": "fa75889f90c1d8d420634805bc3e32d132d252c13ea3c5980d49522035a85412",
+    "manifests/semantic_test.jsonl": "2322bf80fa6c4820e2f2614900d4d3f07bfbaac0ddd64d9ca0525967dcfb7fb6",
+    "manifests/semantic_train.jsonl": "fd98a5e52c5b957ba0c3717c575eab3ee4ff39dc6324f0ccfd05f2361cac3798",
+    "manifests/stable_development.jsonl": "d4881beed1ae1886d4c424cc2535b1b8c1850cd470b1fb9aebfc4c63e3dcc6fc",
+    "manifests/stable_test.jsonl": "17ff8f3c035dba6fd646371320d730b163c3a002b1e2b0335b8c062186b7db27",
+    "manifests/stable_train.jsonl": "b5d57141ce915d183a55138f9fde2c9022b4c3af65b20fa8079490c202d58ea4"
   },
   "model_contract": {
     "declared_branch": "codex/qcpr-model-v3-temporal-retrieval",
     "declared_code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
-    "declared_dataset_contract_status": "DATASET_CONTRACT_MISSING",
-    "declared_model_status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
     "main_training_allowed": false,
-    "maximum_frames": 16,
-    "minimum_frames": 2,
-    "model_to_dataset_sha256": "875bd0ebc474745bee5641624cc59884adb2ac3be29416b5fb1d5063eb5e2064",
     "observed_branch": "codex/qcpr-model-v3-temporal-retrieval",
     "observed_declared_sha_mismatch": true,
     "observed_head_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
@@ -48,7 +68,6 @@
       "M2D-20260804-002"
     ],
     "p2_allowed": false,
-    "requirements_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
     "status": "MODEL_CONTRACT_AVAILABLE_WITH_OBSERVED_HEAD_MISMATCH"
   },
   "open_model_request_ids": [
@@ -58,9 +77,10 @@
   "p1_submitted": false,
   "p2_authorized": false,
   "physical_registry": {
-    "frames": 66074,
-    "items": 32548,
+    "frames": 66742,
+    "items": 32882,
     "source_counts": {
+      "forest_change": 334,
       "levir_mci": 8143,
       "rscc_ebd": 18215,
       "s2looking": 1000,
@@ -69,58 +89,131 @@
     }
   },
   "query_registry": {
-    "queries": 66452,
-    "scope_counts": {
-      "direction": 19015,
-      "exact": 43839,
+    "audit_scope_counts": {
+      "direction_sensitive": 19015,
+      "exact_discriminative": 5118,
+      "generic_no_change": 28516,
       "localized": 2000,
-      "semantic": 1598
+      "long_series": 200,
+      "semantic_multi_positive": 83275,
+      "stable_scene_specific": 158,
+      "unsupported_or_reject": 16221
     },
-    "training_enabled": 61080,
-    "verification_counts": {
-      "derived_eval": 3598,
-      "human": 62854
-    }
+    "disabled_generic_no_change": 28516,
+    "manifest_queries": 60880,
+    "manifest_scope_counts": {
+      "direction": 19015,
+      "exact": 2559,
+      "localized": 3473,
+      "long_series": 200,
+      "semantic": 35475,
+      "stable": 158
+    },
+    "mask_sidecars": 3473,
+    "queries": 89396,
+    "registry_rows": 89396,
+    "review_decisions_completed": 0,
+    "review_sampled": 1500,
+    "training_enabled": 0
   },
-  "release_code_sha": "b19cda128330ee8f67ab47dc39b3c81ad7740c7b",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_final_b19cda1_20260805",
-  "release_sha256": "74dc404f1d152cad516835d4febb6fcac2381f110f09365ff268dc7fdcddd81b",
+  "release_code_sha": "bbc48cffd02ee13c8381bc94e1fdbe60431c9241",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_retrieval_semantic_repair_bbc48cf_20260805",
+  "release_sha256": "9fa1d36e782d47f051d6e307e48b74ef5d3b2865128bf51087bcd1085516ba82",
   "release_state": "DATA_QUALITY_HOLD",
   "required_report_artifacts": [
-    "source_reports/rsrcc_overlap_audit.json",
-    "source_reports/qag360k_overlap_audit.json",
-    "source_reports/localized_query_capabilities.json",
-    "source_reports/long_series_source_audit.json",
-    "source_reports/dubai_source_audit.json",
-    "source_reports/static_pretraining_decision.json",
-    "source_reports/human_review_packet_status.json",
+    "audits/retrieval_semantic_repair_integrity.json",
+    "audits/retrieval_semantic_repair/view_readiness.json",
+    "audits/retrieval_semantic_repair/retrieval_identifiability_calibration.json",
+    "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json",
+    "source_reports/retrieval_semantic_repair/retrieval_data_difficulty_report.json",
+    "source_reports/retrieval_semantic_repair/human_review_packet_status.json",
+    "source_reports/retrieval_semantic_repair/official_source_acquisition_audit.json",
+    "source_reports/retrieval_semantic_repair/rscc_verified_text_audit.json",
+    "source_reports/retrieval_semantic_repair/tamms_long_series_audit.json",
+    "source_reports/forest/forest_split_integrity.json",
     "audits/final_acceptance_audit.json",
     "audits/validate_qcpr_release_contract.json"
   ],
-  "rscc_ai_audit_status": "MISSING_INPUT",
-  "rsrcc_physical_asset_status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
   "schema_version": "qcpr-dataset-status-v1",
-  "source_base_commit": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
-  "status": "DATA_QUALITY_HOLD",
-  "tamms_physical_inventory": {
-    "frames": 1956,
-    "full_metadata_sequences": 37003,
-    "sequences": 489,
-    "training_enabled": false,
-    "verified_queries": 0
+  "sources": {
+    "DUBAI-CC": {
+      "status": "NOT_INTEGRATED_OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    "DynamicEarthNet": {
+      "status": "NOT_INTEGRATED_OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    "Forest-Change": {
+      "caption_rows": 1670,
+      "physical_pairs": 334,
+      "promoted_training_rows": 0,
+      "scene_component_overlap": 0,
+      "status": "PHYSICAL_READY_TEXT_HOLD",
+      "training_enabled": false
+    },
+    "LEVIR-MCI": {
+      "physical_items": 8143,
+      "status": "PHYSICAL_READY_EXACT_REVIEW_HOLD",
+      "training_enabled": false
+    },
+    "RSCC-EBD": {
+      "adjudicated": 0,
+      "physical_items": 18215,
+      "reviewer_a": 0,
+      "reviewer_b": 0,
+      "status": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+      "training_enabled": false,
+      "verified_text_rows": 0
+    },
+    "RSRCC": {
+      "status": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
+      "training_enabled": false
+    },
+    "S2Looking": {
+      "localized_current_queries": 2000,
+      "physical_items": 1000,
+      "status": "EVALUATION_ONLY",
+      "training_enabled": false
+    },
+    "SECOND-CC": {
+      "physical_items": 4701,
+      "status": "PHYSICAL_READY_EXACT_REVIEW_HOLD",
+      "training_enabled": false
+    },
+    "SpaceNet-7": {
+      "status": "NOT_INTEGRATED_OFFICIAL_ARCHIVE_NOT_ACQUIRED",
+      "training_enabled": false
+    },
+    "TAMMs": {
+      "candidate_long_series_queries": 200,
+      "frames": 1956,
+      "full_metadata_sequences": 37003,
+      "sequences": 489,
+      "status": "PHYSICAL_ONLY_TEXT_HOLD",
+      "training_enabled": false,
+      "verified_queries": 0
+    },
+    "TERRA-CD": {
+      "status": "NOT_INTEGRATED_OFFICIAL_ASSET_NOT_PINNED",
+      "training_enabled": false
+    }
   },
+  "status": "DATA_QUALITY_HOLD",
   "training_authorized": false,
   "training_submitted": false,
   "views": {
-    "direction": "EXACT_CONDITIONAL",
-    "exact": "READY_EXACT_ONLY_CONDITIONAL_SOURCE_TERMS",
+    "direction": "HOLD_DIRECTION_REVIEW_GATE",
+    "exact": "HOLD_EXACT_REVIEW_GATE",
     "forest": "PHYSICAL_READY_TEXT_HOLD",
-    "localized": "EVAL_ONLY",
-    "long_series": "PHYSICAL_ONLY_NO_VALID_QUERY_METADATA_HOLD",
+    "generic_no_change": "DIAGNOSTIC_ONLY_EXACT_DISABLED",
+    "localized": "EVAL_ONLY_AND_HOLD_UNVERIFIED_FOREST",
+    "long_series": "HOLD_TAMMS_LICENSE_AND_TEMPORAL_REVIEW",
     "rscc": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
     "rsrcc": "PHYSICAL_ASSET_ACQUISITION_INCOMPLETE",
-    "semantic": "EVAL_ONLY_PRIMARY_GOLD_HOLD",
-    "stable": "EMPTY_GENERIC_NO_CHANGE_EXCLUDED",
-    "tamms": "PHYSICAL_ONLY_TEXT_HOLD"
+    "semantic": "EVAL_ONLY_ATTRIBUTE_GROUPS_HOLD_PRIMARY_TRAINING",
+    "stable": "HOLD_STABLE_SCENE_REVIEW_GATE",
+    "tamms": "PHYSICAL_ONLY_TEXT_HOLD",
+    "unsupported_or_reject": "REJECTED_NOT_MATERIALIZED"
   }
 }
