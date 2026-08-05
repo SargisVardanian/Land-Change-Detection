@@ -151,6 +151,9 @@ def main() -> int:
     handoff = read_json(args.repair_output / "handoff/model_agent_handoff.json", {})
     view_readiness = read_json(args.repair_output / "audits/view_readiness.json", {})
     data_only_comparison = read_json(args.repair_output / "audits/data_only_D0_D3_comparison.json", {})
+    if data_only_comparison.get("status"):
+        repair_package = dict(repair_package)
+        repair_package["frozen_model_comparison_status"] = data_only_comparison["status"]
     physical_count = len(existing_items)
     frame_count = sum(len(row.get("frames", [])) for row in existing_items)
     query_rows = read_jsonl(args.output / "registries/queries.jsonl")
