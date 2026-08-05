@@ -40,7 +40,7 @@
       "long_series": 0
     }
   },
-  "dataset_head_sha": "2080bb39fe5e1afe186dd82bf5e754d68eab7f04",
+  "dataset_head_sha": "a49e44d09d44a133c01d15b4f8c6cba60dc56141",
   "limitations": [
     "Exact, direction and stable views are materialized but held because the 300-per-population human review decisions are still null.",
     "Stable candidates are derived from independent T1/T2 visual anchor probes; 158 stable-specific rows exist, but none is training-enabled.",
@@ -136,9 +136,9 @@
     "relevance_graph_sha256": "7d523e1165119cd11a3f9ffd00b2f010d09b3581e84e2d9a07d55c7e91b2c187",
     "training_enabled": 0
   },
-  "release_code_sha": "2080bb39fe5e1afe186dd82bf5e754d68eab7f04",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_retrieval_semantic_repair_2080bb3_20260805",
-  "release_sha256": "b97b7808db217e8d5622299b32c0429c384ad18fe2072d22c847616d5b981ed2",
+  "release_code_sha": "a49e44d09d44a133c01d15b4f8c6cba60dc56141",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_retrieval_semantic_repair_a49e44d_20260805",
+  "release_sha256": "6f9457c489c57526093bbda0c09d438099e46828fa4b161403e6d8403811c515",
   "release_state": "DATA_QUALITY_HOLD",
   "required_report_artifacts": [
     "audits/retrieval_semantic_repair_integrity.json",
