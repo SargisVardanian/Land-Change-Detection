@@ -8,6 +8,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -260,7 +261,57 @@ def main() -> int:
     final_integrity = verify_checksums(args.output)
     if not final_integrity["passed"]:
         raise SystemExit(json.dumps(final_integrity, sort_keys=True))
-    print(json.dumps({"release": str(args.output), "physical_items": physical_count, "frames": frame_count, "queries": len(query_rows), "checksum_entries": final_integrity["entries"], "status": "DATA_QUALITY_HOLD"}, sort_keys=True))
+
+    # Refresh the validator report against this exact release.  Copying a
+    # baseline validator report is insufficient because its counts and
+    # manifest hashes describe a different physical/query registry.
+    validator_path = args.output / "audits/validate_qcpr_release_contract.json"
+    subprocess.run(
+        [
+            sys.executable,
+            str(args.repo / "scripts/validate_qcpr_release_contract.py"),
+            "--release",
+            str(args.output),
+            "--output",
+            str(validator_path),
+            "--decode-sample",
+            "256",
+        ],
+        check=True,
+    )
+    validator = read_json(validator_path, {})
+    if not validator.get("passed"):
+        raise SystemExit(json.dumps(validator, sort_keys=True))
+    pre_validator_checksums = write_checksums(args.output)
+    pre_validator_integrity = verify_checksums(args.output)
+    if not pre_validator_integrity["passed"]:
+        raise SystemExit(json.dumps(pre_validator_integrity, sort_keys=True))
+    integrity_path = args.output / "audits/retrieval_semantic_repair_integrity.json"
+    integrity_record = read_json(integrity_path, {})
+    integrity_record["release_contract_validation"] = {
+        "passed": validator["passed"],
+        "manifest_count": validator["manifest_count"],
+        "physical_item_count": validator["physical_item_count"],
+        "frame_count": validator["frame_count"],
+        "query_count": validator["query_count"],
+        "query_errors": validator["query_errors"],
+        "physical_errors": validator["physical_errors"],
+        "decode_failures": validator["decode_failures"],
+        "mask_free_forbidden_key_hits": validator["mask_free_forbidden_key_hits"],
+    }
+    integrity_record["checksum_entry_count_before_integrity_audit"] = len(pre_validator_checksums)
+    integrity_record["checksum_verification_before_integrity_audit"] = pre_validator_integrity
+    integrity_record["final_sha256sums"] = {
+        "entries": len(pre_validator_checksums),
+        "failures": [],
+        "passed": True,
+    }
+    write_json(integrity_path, integrity_record)
+    final_checksums = write_checksums(args.output)
+    final_integrity = verify_checksums(args.output)
+    if not final_integrity["passed"]:
+        raise SystemExit(json.dumps(final_integrity, sort_keys=True))
+    print(json.dumps({"release": str(args.output), "physical_items": physical_count, "frames": frame_count, "queries": len(query_rows), "checksum_entries": len(final_checksums), "validator_passed": validator["passed"], "status": "DATA_QUALITY_HOLD"}, sort_keys=True))
     return 0
 
 
