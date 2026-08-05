@@ -299,5 +299,5 @@ def test_temporal_adapter_supports_variable_sequence_lengths_and_reversal():
 
 def test_evidence_diagnostics_report_entropy_and_effective_tokens():
     weights = torch.full((2, 4), 0.25)
-    assert torch.allclose(evidence_entropy(weights), torch.full((2,), 2.0))
+    assert torch.allclose(evidence_entropy(weights), torch.log(torch.full((2,), 4.0)))
     assert torch.allclose(effective_token_count(weights), torch.full((2,), 4.0))
