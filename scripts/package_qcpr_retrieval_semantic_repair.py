@@ -196,6 +196,23 @@ def main() -> int:
     data_only_comparison = read_json(comparison_path, {})
     if args.data_only_comparison is not None:
         copy_file(args.data_only_comparison, args.output / "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json")
+    difficulty_path = args.output / "source_reports/retrieval_semantic_repair/retrieval_data_difficulty_report.json"
+    difficulty = read_json(difficulty_path, {})
+    if data_only_comparison.get("status") == "PASS_FROZEN_B1_DATA_ONLY_METRICS":
+        difficulty["frozen_anchor_baseline"] = {
+            "status": data_only_comparison["status"],
+            "same_frozen_model": data_only_comparison.get("same_frozen_model"),
+            "checkpoint_sha256": data_only_comparison.get("checkpoint_sha256"),
+            "feature_cache_sha256": data_only_comparison.get("feature_cache_sha256"),
+            "comparison_artifact": "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json",
+            "metrics_by_view": {
+                name: value.get("metrics")
+                for name, value in (data_only_comparison.get("views") or {}).items()
+            },
+            "paired_bootstrap": data_only_comparison.get("paired_bootstrap"),
+            "improvement_claim": data_only_comparison.get("improvement_claim", False),
+        }
+        write_json(difficulty_path, difficulty)
     if data_only_comparison.get("status"):
         repair_package = dict(repair_package)
         repair_package["frozen_model_comparison_status"] = data_only_comparison["status"]
