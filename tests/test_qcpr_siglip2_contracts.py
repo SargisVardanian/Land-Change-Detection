@@ -22,6 +22,7 @@ from qcpr_siglip2.evaluation.retrieval import (
 from qcpr_siglip2.models.evidence import EvidenceBottleneck
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.models.temporal import TemporalTransformerAdapter
+from qcpr_siglip2.training.exposure import ExposureLedger, sequence_sha256
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
 from qcpr_siglip2.training.optimizer import build_adamw
 
@@ -196,6 +197,24 @@ def test_deterministic_sampler_rotates_captions_without_pair_weight_drift():
     assert len(first.query_ids) == 4
     assert set(first.pair_ids) == {"p0", "p1"}
     assert first.query_ids != rotated.query_ids
+
+
+def test_exposure_ledger_records_total_and_per_step_schedule_hashes():
+    ledger = ExposureLedger()
+    ledger.record_step(["p0", "p1"], ["q0", "q1"])
+    ledger.record_step(["p1", "p0"], ["q1", "q0"])
+    report = ledger.to_dict()
+    assert report["steps"] == 2
+    assert report["physical_pair_presentations"] == 4
+    assert report["query_presentations"] == 4
+    assert report["per_step_pair_sequence_sha256"] == [
+        sequence_sha256(["p0", "p1"]),
+        sequence_sha256(["p1", "p0"]),
+    ]
+    assert report["per_step_query_sequence_sha256"] == [
+        sequence_sha256(["q0", "q1"]),
+        sequence_sha256(["q1", "q0"]),
+    ]
 
 
 def test_reranking_rejects_row_duplicate_candidates():

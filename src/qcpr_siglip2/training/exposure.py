@@ -18,11 +18,17 @@ class ExposureLedger:
     steps: int = 0
     pair_sequence: list[str] = field(default_factory=list)
     query_sequence: list[str] = field(default_factory=list)
+    per_step_pair_sequence_sha256: list[str] = field(default_factory=list)
+    per_step_query_sequence_sha256: list[str] = field(default_factory=list)
 
     def record_step(self, pair_ids: Iterable[str], query_ids: Iterable[str]) -> None:
+        pairs = [str(value) for value in pair_ids]
+        queries = [str(value) for value in query_ids]
         self.steps += 1
-        self.pair_sequence.extend(str(value) for value in pair_ids)
-        self.query_sequence.extend(str(value) for value in query_ids)
+        self.pair_sequence.extend(pairs)
+        self.query_sequence.extend(queries)
+        self.per_step_pair_sequence_sha256.append(sequence_sha256(pairs))
+        self.per_step_query_sequence_sha256.append(sequence_sha256(queries))
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -33,6 +39,8 @@ class ExposureLedger:
             "query_unique": len(set(self.query_sequence)),
             "pair_sequence_sha256": sequence_sha256(self.pair_sequence),
             "query_sequence_sha256": sequence_sha256(self.query_sequence),
+            "per_step_pair_sequence_sha256": self.per_step_pair_sequence_sha256,
+            "per_step_query_sequence_sha256": self.per_step_query_sequence_sha256,
         }
 
     def write(self, path: str) -> None:

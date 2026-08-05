@@ -21,6 +21,7 @@ from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.manifest import group_rows_by_pair, load_exact_pair_rows
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
+from qcpr_siglip2.training.exposure import sequence_sha256
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
 
 _ACTIVE_ARGS: argparse.Namespace | None = None
@@ -694,6 +695,14 @@ def main() -> int:
             "query_sequence_sha256": hashlib.sha256(
                 ("\n".join(row["caption_id"] for row in query_rows) + "\n").encode()
             ).hexdigest(),
+            "per_step_pair_sequence_sha256": [
+                sequence_sha256(row["canonical_pair_id"] for row in pairs)
+            ]
+            * args.steps,
+            "per_step_query_sequence_sha256": [
+                sequence_sha256(row["caption_id"] for row in query_rows)
+            ]
+            * args.steps,
         },
     )
     (run / "metrics.jsonl").write_text(
