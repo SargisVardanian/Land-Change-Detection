@@ -42,6 +42,14 @@ def mrr_full(scores: Tensor, relevance: Tensor) -> float:
     return float((1.0 / _ranks(scores, relevance).float()).mean())
 
 
+def mean_rank(scores: Tensor, relevance: Tensor) -> float:
+    return float(_ranks(scores, relevance).float().mean())
+
+
+def median_rank(scores: Tensor, relevance: Tensor) -> float:
+    return float(_ranks(scores, relevance).float().median())
+
+
 def mrr_at_k(scores: Tensor, relevance: Tensor, k: int) -> float:
     ranks = _ranks(scores, relevance)
     return float(
@@ -68,6 +76,8 @@ def full_gallery_metrics(
     scores: Tensor, relevance: Tensor, ks: Iterable[int] = (1, 5, 10, 50, 100, 500)
 ) -> dict[str, float]:
     result = {"mrr_full": mrr_full(scores, relevance)}
+    result["mean_rank"] = mean_rank(scores, relevance)
+    result["median_rank"] = median_rank(scores, relevance)
     for k in ks:
         kk = min(int(k), scores.shape[1])
         result[f"candidate_hit_at_{k}"] = candidate_hit_at_k(scores, relevance, kk)

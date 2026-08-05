@@ -6,12 +6,15 @@ from run_qcpr_siglip2_real_smoke import build_relevance
 
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.loader import make_exact_batches
+from qcpr_siglip2.evaluation.evidence import effective_token_count, evidence_entropy
 from qcpr_siglip2.evaluation.reranking import (
     rerank_candidate_indices,
     select_topk_candidates,
 )
 from qcpr_siglip2.evaluation.retrieval import (
     candidate_hit_at_k,
+    mean_rank,
+    median_rank,
     mrr_at_k,
     mrr_full,
     multi_positive_recall_at_k,
@@ -92,6 +95,13 @@ def test_hit_and_recall_differ_for_multiple_positives():
     positives = torch.tensor([[True, True, False]])
     assert candidate_hit_at_k(scores, positives, 1) == 1.0
     assert multi_positive_recall_at_k(scores, positives, 1) == 0.5
+
+
+def test_rank_diagnostics_are_explicit():
+    scores = torch.tensor([[3.0, 2.0, 1.0]])
+    relevance = torch.tensor([[False, True, False]])
+    assert mean_rank(scores, relevance) == 2.0
+    assert median_rank(scores, relevance) == 2.0
 
 
 def test_evidence_bottleneck_rejects_no_valid_text():
@@ -271,3 +281,23 @@ def test_temporal_metadata_projection_accepts_bfloat16_tokens():
         timestamps=torch.tensor([[0.0, 1.0], [0.0, 2.0]], dtype=torch.bfloat16),
     )
     assert output.pair_cls.dtype == torch.bfloat16
+
+
+def test_temporal_adapter_supports_variable_sequence_lengths_and_reversal():
+    torch.manual_seed(23)
+    adapter = TemporalTransformerAdapter(Siglip2TemporalConfig(max_frames=4))
+    frame_tokens = torch.randn(1, 3, 256, 768)
+    frame_embeddings = torch.randn(1, 3, 768)
+    forward = adapter(frame_tokens, frame_embeddings)
+    reversed_output = adapter(frame_tokens.flip(1), frame_embeddings.flip(1))
+    restored = adapter(frame_tokens.flip(1).flip(1), frame_embeddings.flip(1).flip(1))
+    assert forward.pair_cls.shape == (1, 768)
+    assert forward.temporal_patch_tokens.shape == (1, 768, 768)
+    assert not torch.allclose(forward.pair_cls, reversed_output.pair_cls)
+    assert torch.allclose(forward.pair_cls, restored.pair_cls)
+
+
+def test_evidence_diagnostics_report_entropy_and_effective_tokens():
+    weights = torch.full((2, 4), 0.25)
+    assert torch.allclose(evidence_entropy(weights), torch.full((2,), 2.0))
+    assert torch.allclose(effective_token_count(weights), torch.full((2,), 4.0))
