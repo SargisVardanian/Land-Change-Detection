@@ -71,6 +71,7 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
+    "code_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
@@ -88,7 +89,9 @@
       "SIGLIP2_DOWNLOAD_VALID": true,
       "SIGLIP2_PHASE_A_VALID": false,
       "SIGLIP2_PHASE_B_VALID": false,
-      "SIGLIP2_SMOKE_PASS": false
+      "SIGLIP2_SMOKE_PASS": true,
+      "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS",
+      "SIGLIP2_MECHANISM": "BLOCKED_EVIDENCE_DELETION"
     },
     "source": {
       "cpu_inference": "PASS",
@@ -107,7 +110,38 @@
       "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
       "runtime_class": "SiglipModel",
       "safe_tensors": "PASS"
-    }
+    },
+    "real_smoke": {
+      "batch_contract": {
+        "captions_per_pair": 2,
+        "physical_batch_size": 8,
+        "query_count": 16,
+        "score_matrix": [16, 8],
+        "steps": 8
+      },
+      "checkpoint_roundtrip": "PASS",
+      "checkpoint_sha256": "d9f1fb6a387641bdd956725fa90da598fbea917bd4f72cbbbe3dde4b973513b5",
+      "code_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
+      "evidence_deletion": "FAIL_TOP_EVIDENCE_DID_NOT_REDUCE_SCORE",
+      "evidence_zeroing": "PASS",
+      "frozen_backbone_gradients": "PASS",
+      "job_id": "207706",
+      "mechanism_status": "BLOCKED_EVIDENCE_DELETION",
+      "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED",
+      "peak_allocated_gib": 1.369966983795166,
+      "peak_reserved_gib": 1.4765625,
+      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_80d17d5_20260805",
+      "status": "MODEL_V3_SIGLIP2_REAL_SMOKE_PASS",
+      "trainable_gradients": "PASS"
+    },
+    "notes": [
+      "Job 207706 used real LEVIR-MCI images, the pinned SigLIP checkpoint, real tokenization and BF16 H100 forward/backward for eight steps.",
+      "This is an integration smoke, not a retrieval-quality result or mechanism pilot.",
+      "Evidence zeroing was causal, but top-evidence deletion did not lower the score; mechanism readiness remains blocked.",
+      "The exact batch did not contain an explicit multi-positive query, so multi-positive runtime behavior was not exercised.",
+      "No model improvement is claimed."
+    ],
+    "track_status": "SIGLIP2_REAL_INTEGRATION_SMOKE_PASS_MECHANISM_BLOCKED"
   },
   "status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
   "track_branch": "codex/qcpr-siglip2-temporal-training",
