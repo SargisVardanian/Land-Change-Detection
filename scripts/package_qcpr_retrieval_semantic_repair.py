@@ -144,6 +144,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--source-branch", default="codex/qcpr-dataset-v2-final")
     parser.add_argument("--release-name", required=True)
+    parser.add_argument("--data-only-comparison", type=Path)
     return parser.parse_args()
 
 
@@ -191,7 +192,10 @@ def main() -> int:
     repair_package = read_json(args.repair_output / "REPAIR_PACKAGE.json", {})
     handoff = read_json(args.repair_output / "handoff/model_agent_handoff.json", {})
     view_readiness = read_json(args.repair_output / "audits/view_readiness.json", {})
-    data_only_comparison = read_json(args.repair_output / "audits/data_only_D0_D3_comparison.json", {})
+    comparison_path = args.data_only_comparison or (args.repair_output / "audits/data_only_D0_D3_comparison.json")
+    data_only_comparison = read_json(comparison_path, {})
+    if args.data_only_comparison is not None:
+        copy_file(args.data_only_comparison, args.output / "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json")
     if data_only_comparison.get("status"):
         repair_package = dict(repair_package)
         repair_package["frozen_model_comparison_status"] = data_only_comparison["status"]
