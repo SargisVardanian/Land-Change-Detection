@@ -1,0 +1,115 @@
+{
+  "audit_date": "2026-08-06",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "code_snapshot_sha": "9263296b0c26ccfff1628ea76daafb75676f9e38",
+  "remote_sha_at_audit": "9263296b0c26ccfff1628ea76daafb75676f9e38",
+  "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "constraints": {
+    "dataset_v2_modified": false,
+    "p2_launched": false,
+    "long_training_launched": false,
+    "largest_training_smoke_steps": 16,
+    "approved_sources": ["levir_mci", "second_cc"]
+  },
+  "requirements": [
+    {
+      "id": "immutable_lineage",
+      "status": "PASS",
+      "evidence": "local, remote, PR #7 and cluster worktree were equal at 8ecf43a67b953978d374179239080bb4355781a3 before this code-only repair; final remote is the code snapshot above"
+    },
+    {
+      "id": "official_siglip2_source",
+      "status": "PASS",
+      "evidence": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_source_audit_3f9f96c_20260805_final/siglip2_source_audit.json",
+      "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+      "weights_sha256": "6125cacc01fa93bdc98a0c5101cefcd69b2ed1f8ab4f38d86f4ad5984f5dc863"
+    },
+    {
+      "id": "georsclip_wrapper_and_source_audit",
+      "status": "PASS_BASELINE_NOT_RUN",
+      "evidence": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_source_audit_3f9f96c_20260805_final/georsclip_source_audit.json",
+      "revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
+      "weights_sha256": "129bafaa6a097b8be52e2babf27d24f0a934dae919201e538dc698611bd1ea01"
+    },
+    {
+      "id": "minimal_temporal_architecture",
+      "status": "PASS",
+      "evidence": "two pre-norm temporal blocks, pair token initialized from pooled T1/T2 sum, no change-token bank or segmentation decoder"
+    },
+    {
+      "id": "single_primary_loss",
+      "status": "PASS",
+      "evidence": "multi_positive_listwise_loss is the only scalar passed to backward in the bounded smoke"
+    },
+    {
+      "id": "blockwise_evidence",
+      "status": "PASS",
+      "evidence": "value/gradient equivalence tests pass for chunked versus unchunked evidence"
+    },
+    {
+      "id": "real_integration_smoke",
+      "status": "PASS_TECHNICAL_ONLY",
+      "job_id": "207780",
+      "steps": 16,
+      "physical_batch_size": 8,
+      "score_matrix": [16, 8],
+      "visual_shape": [8, 512, 768],
+      "text_shape": [16, 64, 768],
+      "peak_allocated_gib": 1.3931632041931152,
+      "peak_reserved_gib": 1.650390625,
+      "checkpoint_roundtrip": "PASS",
+      "retrieval_quality_evaluation": "NOT_RUN"
+    },
+    {
+      "id": "evidence_causality",
+      "status": "BLOCKED_EVIDENCE_DELETION",
+      "evidence": "zero-evidence score change passed, but top-evidence deletion did not lower the score more than bottom-evidence deletion"
+    },
+    {
+      "id": "multi_positive_runtime",
+      "status": "NOT_EXERCISED",
+      "evidence": "the selected exact-core smoke batch had one explicit positive per query"
+    },
+    {
+      "id": "time_reversal_runtime",
+      "status": "IMPLEMENTED_NOT_RUN",
+      "evidence": "the next bounded smoke now writes an explicit time_reversal diagnostic; the immutable 207780 run predates this instrumentation"
+    },
+    {
+      "id": "h100_batch_calibration",
+      "status": "NOT_AUTHORIZED",
+      "evidence": "current task prohibits a new job beyond 32 steps; only the physical batch-8 smoke is measured"
+    },
+    {
+      "id": "phase_a",
+      "status": "NOT_AUTHORIZED",
+      "evidence": "256-step Phase A has not been launched"
+    },
+    {
+      "id": "phase_b",
+      "status": "NOT_AUTHORIZED",
+      "evidence": "1536-step partial-tower Phase B has not been launched"
+    },
+    {
+      "id": "full_gallery_rankings",
+      "status": "NOT_RUN",
+      "evidence": "bounded smoke writes explicit NOT_RUN evaluation artifacts"
+    },
+    {
+      "id": "dataset_agent_contract",
+      "status": "MISSING_FOR_FUTURE_VIEWS",
+      "evidence": "exact-core smoke does not require semantic/localized/long-series views; the model handoff remains OPEN"
+    }
+  ],
+  "readiness": {
+    "SIGLIP2_DOWNLOAD": "VALID",
+    "SIGLIP2_SMOKE": "PASS",
+    "SIGLIP2_PHASE_A": "NOT_AUTHORIZED",
+    "SIGLIP2_PHASE_B": "NOT_AUTHORIZED",
+    "SIGLIP2_MAIN_MODEL": "NOT_AUTHORIZED",
+    "GEORSCLIP_BASELINE": "WRAPPER_VALID_BASELINE_NOT_RUN",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  }
+}
