@@ -166,6 +166,45 @@ def main() -> int:
     merge_tree(args.repair_output / "evaluation_sidecars", args.output / "evaluation_sidecars")
     merge_tree(args.repair_output / "audits", args.output / "audits/retrieval_semantic_repair")
     merge_tree(args.repair_output / "source_reports", args.output / "source_reports/retrieval_semantic_repair")
+    # Keep Forest's deterministic scene-component split as a canonical source
+    # report as well as a repair-package artifact.  The physical split is
+    # materialized, but captions remain held until provenance/review gates
+    # pass; do not silently leave the legacy empty split files in the release.
+    forest_repair_dir = args.repair_output / "source_reports/forest"
+    forest_release_dir = args.output / "source_reports/forest"
+    forest_split_audit = read_json(forest_repair_dir / "scene_disjoint_split_audit.json", {})
+    forest_caption_audit = read_json(forest_repair_dir / "caption_level_audit.json", {})
+    if forest_split_audit:
+        for artifact in (
+            "scene_disjoint_train.jsonl",
+            "scene_disjoint_development.jsonl",
+            "scene_disjoint_test.jsonl",
+            "caption_level_audit.json",
+            "scene_disjoint_split_audit.json",
+        ):
+            source = forest_repair_dir / artifact
+            if source.exists():
+                copy_file(source, forest_release_dir / artifact)
+        physical_source = args.repair_output / "registries/forest_physical_items.jsonl"
+        if physical_source.exists():
+            copy_file(physical_source, forest_release_dir / "forest_physical_registry_scene_disjoint.jsonl")
+        legacy_forest_audit = read_json(forest_release_dir / "forest_split_integrity.json", {})
+        legacy_forest_audit.update({
+            "status": "MATERIALIZED_SCENE_COMPONENT_DISJOINT_CANDIDATE",
+            "promotion_status": forest_split_audit.get("promotion_status", "HOLD_CAPTION_PROVENANCE_AND_HUMAN_REVIEW"),
+            "component_count": forest_split_audit.get("component_count"),
+            "cross_split_component_overlap": forest_split_audit.get("cross_split_component_overlap"),
+            "materialized_pair_counts": forest_split_audit.get("split_pair_counts", {}),
+            "materialized_component_counts": forest_split_audit.get("split_component_counts", {}),
+            "materialized_split_manifests": [
+                "source_reports/forest/scene_disjoint_train.jsonl",
+                "source_reports/forest/scene_disjoint_development.jsonl",
+                "source_reports/forest/scene_disjoint_test.jsonl",
+            ],
+            "caption_level_audit": forest_caption_audit,
+            "training_enabled": False,
+        })
+        write_json(forest_release_dir / "forest_split_integrity.json", legacy_forest_audit)
     for packet in sorted((args.repair_output / "source_reports/review_samples").glob("*.jsonl")):
         copy_file(packet, args.output / "source_reports/human_review_packets" / packet.name)
     merge_tree(args.repair_output / "handoff", args.output / "handoff/retrieval_semantic_repair")
@@ -291,7 +330,11 @@ def main() -> int:
         "data_only_comparison": data_only_comparison,
         "model_agent_handoff": handoff,
         "source_integration": {
-            "forest": "PHYSICAL_SCENE_DISJOINT_CANDIDATE_TEXT_HOLD",
+            "forest": (
+                "PHYSICAL_SCENE_COMPONENT_DISJOINT_MATERIALIZED_TEXT_HOLD"
+                if forest_split_audit
+                else "PHYSICAL_SCENE_DISJOINT_CANDIDATE_TEXT_HOLD"
+            ),
             "tamm": "PHYSICAL_489_SEQUENCE_TEXT_HOLD",
             "rscc": "VERIFIED_TEXT_ZERO_HOLD",
             "dubai_cc": "NOT_INTEGRATED",
