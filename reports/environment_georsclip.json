@@ -1,0 +1,11 @@
+{
+  "status": "RESEARCH_BASELINE_ONLY",
+  "separate_environment_created": false,
+  "reason": "OpenCLIP 3.3.0 state-dict compatibility was verified in the shared rschange environment; no training was run.",
+  "hf_repository": "Zilun/GeoRSCLIP",
+  "revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
+  "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
+  "open_clip": "3.3.0",
+  "weights_only": "PASS",
+  "state_dict_compatibility": "PASS"
+}

@@ -1,73 +1,116 @@
 {
-  "owner": "model",
   "agent": "model",
-  "status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
-  "code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+  "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-model-v3-temporal-retrieval",
-  "dataset_contract_status": "DATASET_CONTRACT_MISSING",
+  "code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+  "cpu_gate": {
+    "compileall": "PASS",
+    "full_pytest": "612 passed, 3 skipped",
+    "git_diff_check": "PASS",
+    "pyright": "0 errors, 0 warnings",
+    "shell_syntax": "PASS"
+  },
+  "dataset_contract_status": "MISSING",
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "dataset_release_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
-  "p2_allowed": false,
-  "main_training_allowed": false,
-  "historical_artifacts_modified": false,
-  "cpu_gate": {
-    "full_pytest": "612 passed, 3 skipped",
-    "pyright": "0 errors, 0 warnings",
-    "compileall": "PASS",
-    "shell_syntax": "PASS",
-    "git_diff_check": "PASS"
-  },
   "h100_smoke": {
-    "synthetic": {
-      "model_v3_synthetic_smoke": "PASS",
-      "job_id": "207556",
-      "state": "COMPLETED",
-      "exit_code": "0:0",
-      "checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee",
-      "scientific_scope": "synthetic bounded mechanism smoke only"
-    },
     "real_integration": {
-      "model_v3_real_integration_smoke": "FAIL",
-      "job_id": "207560",
-      "state": "FAILED",
-      "exit_code": "1:0",
-      "node": "gpu04",
-      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v3_real_integration_smoke_4aaa764_20260805",
-      "code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
-      "requested_steps": 8,
-      "checkpoint_global_step": 8,
-      "physical_batch_size": 8,
+      "backbone_forward_backward": "executed",
+      "batch_contract_artifact": "NOT_WRITTEN_AFTER_POSTRUN_FAILURE",
       "captions_per_pair": 2,
+      "checkpoint_global_step": 8,
+      "checkpoint_roundtrip": "PASS",
+      "code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+      "cuda_memory_artifact": "NOT_WRITTEN_AFTER_POSTRUN_FAILURE",
+      "exit_code": "1:0",
+      "failure": "evidence deletion helper used hidden dimension instead of spatial token dimension",
+      "failure_class": "ENGINEERING_RUNTIME_DIAGNOSTIC_BUG",
+      "job_id": "207560",
+      "model_v3_real_integration_smoke": "FAIL",
+      "native_visual_shape": "[B,2,1024,768] contract enforced",
+      "node": "gpu04",
+      "physical_batch_size": 8,
       "query_count": 16,
+      "requested_steps": 8,
+      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v3_real_integration_smoke_4aaa764_20260805",
+      "scientific_interpretation": "not a retrieval-quality result",
       "score_matrix": [
         16,
         8
       ],
-      "native_visual_shape": "[B,2,1024,768] contract enforced",
-      "failure_class": "ENGINEERING_RUNTIME_DIAGNOSTIC_BUG",
-      "failure": "evidence deletion helper used hidden dimension instead of spatial token dimension",
-      "backbone_forward_backward": "executed",
-      "checkpoint_roundtrip": "PASS",
-      "batch_contract_artifact": "NOT_WRITTEN_AFTER_POSTRUN_FAILURE",
-      "cuda_memory_artifact": "NOT_WRITTEN_AFTER_POSTRUN_FAILURE",
-      "scientific_interpretation": "not a retrieval-quality result"
+      "state": "FAILED"
+    },
+    "synthetic": {
+      "checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee",
+      "exit_code": "0:0",
+      "job_id": "207556",
+      "model_v3_synthetic_smoke": "PASS",
+      "scientific_scope": "synthetic bounded mechanism smoke only",
+      "state": "COMPLETED"
     }
   },
-  "readiness": {
-    "B1_CONTROL": "VERIFIED",
-    "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
-    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL",
-    "MODEL_V3_MECHANISM": "BLOCKED",
-    "MODEL_V3_MAIN": "NOT_AUTHORIZED",
-    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
-    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
-    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
-  },
+  "historical_artifacts_modified": false,
+  "main_training_allowed": false,
   "notes": [
     "Job 207555 is classified as ENGINEERING_RUNTIME_DRIVER_BUG: the driver reused one autograd graph across optimizer steps.",
     "Job 207560 is classified as ENGINEERING_RUNTIME_DIAGNOSTIC_BUG: the real backbone and eight optimizer steps completed, but post-training evidence deletion indexing raised IndexError.",
     "The 207560 checkpoint roundtrip passed in a fresh process with zero score difference.",
     "The post-smoke repair adds a safe flattened temporal-spatial token deletion helper and a regression test; no second H100 job was submitted.",
     "No scientific retrieval improvement is claimed."
-  ]
+  ],
+  "owner": "model",
+  "p2_allowed": false,
+  "readiness": {
+    "B1_CONTROL": "VERIFIED",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+    "MODEL_V3_MECHANISM": "BLOCKED",
+    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL",
+    "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
+  },
+  "siglip2_track": {
+    "georsclip_baseline": {
+      "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
+      "open_clip_vit_b32_state_dict": "PASS",
+      "repository": "Zilun/GeoRSCLIP",
+      "revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
+      "status": "RESEARCH_BASELINE_ONLY",
+      "weights_only": "PASS"
+    },
+    "main_training_allowed": false,
+    "p2_allowed": false,
+    "readiness": {
+      "GEORSCLIP_BASELINE_VALID": false,
+      "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+      "P2": "BLOCKED",
+      "SIGLIP2_DOWNLOAD_VALID": true,
+      "SIGLIP2_PHASE_A_VALID": false,
+      "SIGLIP2_PHASE_B_VALID": false,
+      "SIGLIP2_SMOKE_PASS": false
+    },
+    "source": {
+      "cpu_inference": "PASS",
+      "license": "Apache-2.0",
+      "native_image_tokens": [
+        1,
+        256,
+        768
+      ],
+      "native_text_tokens": [
+        1,
+        64,
+        768
+      ],
+      "repository": "google/siglip2-base-patch16-256",
+      "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+      "runtime_class": "SiglipModel",
+      "safe_tensors": "PASS"
+    }
+  },
+  "status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
+  "track_branch": "codex/qcpr-siglip2-temporal-training",
+  "track_parent_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
+  "track_status": "SIGLIP2_SCAFFOLD_SOURCE_AUDITED"
 }

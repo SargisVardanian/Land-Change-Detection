@@ -1,18 +1,17 @@
 {
-  "owner": "model",
-  "schema_version": "1.0.0",
-  "supported_item_types": ["pair", "sequence"],
-  "minimum_frames": 2,
-  "maximum_frames": 16,
-  "required_timestamp_format": "ISO-8601 string or normalized float with explicit missingness",
-  "required_fields": {
-    "item": ["item_id", "item_type", "frames", "split", "source", "physical_group_id", "training_enabled"],
-    "frame": ["path", "sha256"],
-    "query": ["query_id", "text", "query_scope", "positive_item_ids", "graded_relevance", "verification", "split"]
+  "evaluation_mask_sidecar": {
+    "allowed_only_in_evaluation": [
+      "mask_path",
+      "dense_label_path",
+      "official_label",
+      "semantic_map"
+    ],
+    "join_key": "item_id"
   },
-  "query_scopes": ["exact", "semantic", "localized", "direction", "stable", "long_series"],
-  "verification_for_primary_training": ["human", "human_rewritten", "generated_verified"],
-  "forbidden_primary_training_verification": ["generated_unverified", "derived_eval"],
+  "forbidden_primary_training_verification": [
+    "generated_unverified",
+    "derived_eval"
+  ],
   "graded_relevance": {
     "0": "irrelevant",
     "1": "broad semantic match, diagnostic or low weight",
@@ -20,20 +19,114 @@
     "3": "same object, direction and damage/change type"
   },
   "localized_relation": {
-    "optional_fields": ["relation_type", "normalized_box", "token_coordinates", "temporal_interval"]
+    "optional_fields": [
+      "relation_type",
+      "normalized_box",
+      "token_coordinates",
+      "temporal_interval"
+    ]
   },
   "long_series": {
-    "required_fields": ["sequence_id", "frame_ids", "timestamps", "query_temporal_extent"],
-    "minimum_frames": 3
+    "minimum_frames": 3,
+    "required_fields": [
+      "sequence_id",
+      "frame_ids",
+      "timestamps",
+      "query_temporal_extent"
+    ]
   },
-  "evaluation_mask_sidecar": {
-    "allowed_only_in_evaluation": ["mask_path", "dense_label_path", "official_label", "semantic_map"],
-    "join_key": "item_id"
+  "maximum_frames": 16,
+  "minimum_frames": 2,
+  "owner": "model",
+  "query_scopes": [
+    "exact",
+    "semantic",
+    "localized",
+    "direction",
+    "stable",
+    "long_series"
+  ],
+  "required_fields": {
+    "frame": [
+      "path",
+      "sha256"
+    ],
+    "item": [
+      "item_id",
+      "item_type",
+      "frames",
+      "split",
+      "source",
+      "physical_group_id",
+      "training_enabled"
+    ],
+    "query": [
+      "query_id",
+      "text",
+      "query_scope",
+      "positive_item_ids",
+      "graded_relevance",
+      "verification",
+      "split"
+    ]
+  },
+  "required_timestamp_format": "ISO-8601 string or normalized float with explicit missingness",
+  "schema_version": "1.0.0",
+  "siglip2_track": {
+    "accepted_primary_verification_states": [
+      "human",
+      "human_rewritten"
+    ],
+    "native_visual_contract": {
+      "hidden_size": 768,
+      "patch_grid": [
+        16,
+        16
+      ],
+      "patch_tokens": 256
+    },
+    "rejected_primary_verification_states": [
+      "generated_unverified",
+      "derived_eval"
+    ],
+    "required_hashes": [
+      "release_sha256",
+      "train_manifest_sha256",
+      "development_manifest_sha256",
+      "ordered_pair_ids_sha256",
+      "ordered_query_ids_sha256"
+    ],
+    "source_balance": {
+      "approved_sources": [
+        "levir_mci",
+        "second_cc"
+      ],
+      "rscc": "disabled",
+      "synthetic": "disabled"
+    },
+    "supported_frame_count": {
+      "maximum": 8,
+      "minimum": 2,
+      "variable_length": true
+    },
+    "training_views": [
+      "retrieval_exact_train_v2.jsonl",
+      "retrieval_exact_development_v2.jsonl"
+    ]
   },
   "source_balance": {
-    "required": true,
     "event_uniform_validation": true,
     "max_event_fraction_in_logical_batch": 0.1,
-    "max_new_source_fraction_initial_pilot": 0.3
-  }
+    "max_new_source_fraction_initial_pilot": 0.3,
+    "required": true
+  },
+  "supported_item_types": [
+    "pair",
+    "sequence"
+  ],
+  "verification_for_primary_training": [
+    "human",
+    "human_rewritten",
+    "generated_verified"
+  ]
 }

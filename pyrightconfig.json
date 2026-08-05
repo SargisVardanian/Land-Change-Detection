@@ -1,14 +1,8 @@
 {
-  "include": [
-    "src/qcpr_v3"
-  ],
+  "include": ["src/qcpr_v3", "src/qcpr_siglip2"],
   "executionEnvironments": [
-    {
-      "root": "src/qcpr_v3",
-      "extraPaths": [
-        "src"
-      ]
-    }
+    {"root": "src/qcpr_v3", "extraPaths": ["src"]},
+    {"root": "src/qcpr_siglip2", "extraPaths": ["src"]}
   ],
   "reportMissingImports": "none",
   "reportPrivateImportUsage": "none",

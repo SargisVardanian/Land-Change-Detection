@@ -1,6 +1,9 @@
 {
-  "schema_name": "qcpr_shared",
-  "schema_version": "1.0.0",
+  "backward_compatible": true,
+  "dataset_contract_required": true,
+  "notes": "SigLIP2 track adds no incompatible schema fields; Dataset Agent status/capability files remain required.",
+  "owner": "model",
   "owner_contract": "model-and-dataset-agents",
-  "backward_compatible": true
+  "schema_name": "qcpr_shared",
+  "schema_version": "1.0.0"
 }
