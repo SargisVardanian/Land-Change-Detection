@@ -215,7 +215,11 @@ def main() -> int:
         tamm_release_audit_path = args.output / "source_reports/tamms_long_series_audit.json"
         tamm_release_audit = read_json(tamm_release_audit_path, {})
         tamm_annotation_rows = read_jsonl(tamm_annotation_source)
-        tamm_physical_rows = [row for row in existing_items if str(row.get("source", "")).casefold() == "tamms"]
+        tamm_physical_rows = [
+            row
+            for row in read_jsonl(args.base_release / "registries/physical_items.jsonl")
+            if str(row.get("source", "")).casefold() == "tamms"
+        ]
         annotation_fields = ("onset", "duration", "gradual_or_abrupt", "relevant_frame_range")
         field_coverage = {
             field: {
