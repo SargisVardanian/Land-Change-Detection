@@ -39,7 +39,11 @@ class TemporalTransformerAdapter(nn.Module):
         else:
             if timestamps.shape != (b,t): raise ValueError("timestamps must be [B,T]")
             first=timestamps[:,:1]; delta=timestamps-first; scale=delta.abs().amax(dim=1,keepdim=True).clamp_min(1.0); tf=torch.stack((timestamps-first,delta/scale),dim=-1).to(frame_tokens.dtype)
-        time_bias=self.time_projection(tf); seq=[pair_initial.unsqueeze(1)]
+        # Metadata features may follow BF16 backbone activations while this
+        # small projection is retained in its module dtype.  Normalize the
+        # input to the projection dtype, then return the learned bias in the
+        # token dtype for mixed-precision-safe residual addition.
+        time_bias=self.time_projection(tf.to(dtype=self.time_projection.weight.dtype)).to(dtype=frame_tokens.dtype); seq=[pair_initial.unsqueeze(1)]
         for i in range(t):
             frame_bias=self.frame_position[i].view(1,1,-1).to(frame_tokens.dtype); time=time_bias[:,i:i+1]; seq.extend((frame_embeddings[:,i:i+1]+frame_bias+self.frame_type.to(frame_tokens.dtype)+time,frame_tokens[:,i]+spatial+self.patch_type.to(frame_tokens.dtype)+frame_bias+time))
         hidden=torch.cat(seq,dim=1)

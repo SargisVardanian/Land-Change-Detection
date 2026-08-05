@@ -4,6 +4,7 @@ from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.evaluation.retrieval import candidate_hit_at_k,multi_positive_recall_at_k,mrr_full,mrr_at_k
 from qcpr_siglip2.models.evidence import EvidenceBottleneck
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
+from qcpr_siglip2.models.temporal import TemporalTransformerAdapter
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
 from run_qcpr_siglip2_real_smoke import build_relevance
 
@@ -35,3 +36,13 @@ def test_smoke_relevance_does_not_infer_positives_from_text_collision():
     assert not ignored.any()
     assert meta["multi_positive_queries"] == 0
     assert meta["text_collision_not_used_as_positive"] is True
+
+def test_temporal_metadata_projection_accepts_bfloat16_tokens():
+    frame_tokens, frame_embeddings, *_ = _features(q=2, p=2)
+    adapter = TemporalTransformerAdapter(Siglip2TemporalConfig()).bfloat16()
+    output = adapter(
+        frame_tokens.bfloat16(),
+        frame_embeddings.bfloat16(),
+        timestamps=torch.tensor([[0.0, 1.0], [0.0, 2.0]], dtype=torch.bfloat16),
+    )
+    assert output.pair_cls.dtype == torch.bfloat16
