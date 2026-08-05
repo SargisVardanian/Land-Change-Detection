@@ -97,6 +97,7 @@
     "declared_branch": "codex/qcpr-model-v3-temporal-retrieval",
     "declared_code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
     "main_training_allowed": false,
+    "observed_branch": "codex/qcpr-emergent-grounding-long-repair",
     "observed_declared_sha_mismatch": true,
     "observed_head_sha": "0dba5fae696139df1a9976fda4447ad7a0f9cb08",
     "observed_worktree_dirty": false,
@@ -160,11 +161,18 @@
       "training_enabled": false
     },
     "Forest-Change": {
+      "caption_levels": 5,
       "caption_records": 1670,
+      "materialized_split_counts": {
+        "development": 49,
+        "test": 53,
+        "train": 232
+      },
       "physical_pairs": 334,
       "promoted_training_records": 0,
+      "scene_component_count": 25,
       "scene_component_overlap": 0,
-      "status": "PHYSICAL_READY_TEXT_HOLD",
+      "status": "PHYSICAL_SCENE_COMPONENT_DISJOINT_MATERIALIZED_TEXT_HOLD",
       "training_enabled": false
     },
     "RSCC-EBD": {
@@ -185,11 +193,39 @@
       "training_enabled": false
     },
     "TAMMs": {
+      "annotation_field_coverage": {
+        "duration": {
+          "non_null": 0,
+          "null_or_unverified": 489,
+          "rows": 489
+        },
+        "gradual_or_abrupt": {
+          "non_null": 0,
+          "null_or_unverified": 489,
+          "rows": 489
+        },
+        "onset": {
+          "non_null": 0,
+          "null_or_unverified": 489,
+          "rows": 489
+        },
+        "relevant_frame_range": {
+          "non_null": 0,
+          "null_or_unverified": 489,
+          "rows": 489
+        }
+      },
+      "annotation_rows_materialized": 489,
       "candidate_queries": 200,
       "frames": 1956,
       "full_metadata_sequences": 37003,
+      "physical_split_counts": {
+        "development": 74,
+        "test": 71,
+        "train": 344
+      },
       "sequences": 489,
-      "status": "PHYSICAL_ONLY_TEXT_HOLD",
+      "status": "PHYSICAL_489_SEQUENCE_FIELDS_MATERIALIZED_TEXT_HOLD",
       "training_enabled": false,
       "verified_queries": 0
     },
