@@ -267,6 +267,12 @@ def main() -> int:
         write_json(run / "step_latest.json", {"global_step": step, "loss": float(loss.detach().cpu()), "finite": bool(torch.isfinite(loss)), "gradient_norm_preclip": preclip_norms[-1]})
     total_wall = time.perf_counter() - start_total
     timings["total_wall_seconds"] = total_wall
+    # Recompute the reference after the final optimizer step.  The checkpoint
+    # below contains post-step weights; comparing a pre-step forward would
+    # turn a valid checkpoint roundtrip into a false mismatch.
+    model.eval()
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+        last_output = model(pixels, input_ids, attention_mask, pixel_attention_mask=pixel_mask, spatial_shapes=shapes)
     grad = gradient_report(model)
     frozen_has_grad = any(v["trainable_count"] == 0 and v["parameters_with_grad"] > 0 for k, v in grad.items() if "backbone" in k)
     expected_no_grad = [k for k, v in grad.items() if v["trainable_count"] > 0 and v["parameters_with_grad"] == 0]
