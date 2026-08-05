@@ -122,6 +122,7 @@ def main() -> int:
     copy_file(args.repair_output / "registries/semantic_groups.jsonl", args.output / "registries/semantic_groups.jsonl")
     copy_file(args.repair_output / "registries/generic_no_change_diagnostic.jsonl", args.output / "registries/generic_no_change_diagnostic.jsonl")
     merge_tree(args.repair_output / "evaluation_sidecars", args.output / "evaluation_sidecars")
+    merge_tree(args.repair_output / "audits", args.output / "audits/retrieval_semantic_repair")
     merge_tree(args.repair_output / "source_reports", args.output / "source_reports/retrieval_semantic_repair")
     for packet in sorted((args.repair_output / "source_reports/review_samples").glob("*.jsonl")):
         copy_file(packet, args.output / "source_reports/human_review_packets" / packet.name)
@@ -149,6 +150,7 @@ def main() -> int:
     repair_package = read_json(args.repair_output / "REPAIR_PACKAGE.json", {})
     handoff = read_json(args.repair_output / "handoff/model_agent_handoff.json", {})
     view_readiness = read_json(args.repair_output / "audits/view_readiness.json", {})
+    data_only_comparison = read_json(args.repair_output / "audits/data_only_D0_D3_comparison.json", {})
     physical_count = len(existing_items)
     frame_count = sum(len(row.get("frames", [])) for row in existing_items)
     query_rows = read_jsonl(args.output / "registries/queries.jsonl")
@@ -174,6 +176,7 @@ def main() -> int:
         "p2_submitted": False,
         "all_query_training_enabled": all(not bool(row.get("training_enabled")) for row in query_rows),
         "repair_package": repair_package,
+        "data_only_comparison": data_only_comparison,
         "model_agent_handoff": handoff,
         "source_integration": {
             "forest": "PHYSICAL_SCENE_DISJOINT_CANDIDATE_TEXT_HOLD",
@@ -217,4 +220,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
