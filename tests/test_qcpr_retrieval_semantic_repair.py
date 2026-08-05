@@ -1,3 +1,6 @@
+import json
+
+from package_qcpr_retrieval_semantic_repair import write_relevance_graph
 from qcpr_data.queries.purpose import QUERY_PURPOSES, classify_query, semantic_group_id
 
 
@@ -37,3 +40,43 @@ def test_semantic_group_id_excludes_event_and_source_identity():
 def test_causal_or_severity_claim_is_rejected_when_unverified():
     result = classify_query({"query_scope": "exact_pair", "verification": "source_unverified", "text": "severe loss occurred because of a flood"})
     assert result["purpose"] == "unsupported_or_reject"
+
+
+def test_relevance_graph_materializes_all_positive_edges(tmp_path):
+    rows = [
+        {
+            "query_id": "q2",
+            "query_scope": "generic_no_change",
+            "purpose": "generic_no_change",
+            "source_item_id": "item-b",
+            "positive_item_ids": ["item-b"],
+            "graded_relevance": {"item-b": 3},
+            "split": "development",
+            "verification": "human",
+            "training_enabled": False,
+        },
+        {
+            "query_id": "q1",
+            "query_scope": "semantic",
+            "purpose": "semantic_multi_positive",
+            "source_item_id": "item-a",
+            "positive_item_ids": ["item-c", "item-a"],
+            "graded_relevance": {"item-a": 3, "item-c": 2},
+            "split": "train",
+            "verification": "human",
+            "training_enabled": False,
+            "provenance": {"semantic_group_id": "group-1"},
+        },
+    ]
+    path = tmp_path / "registries/relevance_graph.jsonl"
+    metadata = write_relevance_graph(path, rows)
+    edges = [json.loads(line) for line in path.read_text().splitlines()]
+    assert metadata["edge_count"] == 3
+    assert [(edge["query_id"], edge["item_id"]) for edge in edges] == [
+        ("q1", "item-a"),
+        ("q1", "item-c"),
+        ("q2", "item-b"),
+    ]
+    assert [edge["relevance_grade"] for edge in edges] == [3, 2, 3]
+    assert edges[-1]["diagnostic_only"] is True
+    assert edges[0]["semantic_group_id"] == "group-1"

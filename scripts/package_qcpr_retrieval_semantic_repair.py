@@ -32,6 +32,46 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
+def write_relevance_graph(path: Path, query_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Materialize one deterministic positive edge per query/item relation."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256()
+    edge_count = 0
+    with path.open("wb") as handle:
+        ordered_queries = sorted(query_rows, key=lambda row: str(row.get("query_id")))
+        for query in ordered_queries:
+            query_id = str(query.get("query_id") or "")
+            query_scope = str(query.get("query_scope") or "")
+            provenance = query.get("provenance") if isinstance(query.get("provenance"), dict) else {}
+            grades = query.get("graded_relevance") if isinstance(query.get("graded_relevance"), dict) else {}
+            positive_ids = sorted({str(item_id) for item_id in query.get("positive_item_ids") or []})
+            for item_id in positive_ids:
+                edge = {
+                    "schema_version": "qcpr-relevance-graph-edge-v1",
+                    "query_id": query_id,
+                    "item_id": item_id,
+                    "source_item_id": query.get("source_item_id"),
+                    "relevance_grade": int(grades[item_id]),
+                    "query_scope": query_scope,
+                    "purpose": query.get("purpose"),
+                    "split": query.get("split"),
+                    "verification": query.get("verification"),
+                    "training_enabled": bool(query.get("training_enabled")),
+                    "diagnostic_only": query_scope == "generic_no_change",
+                    "semantic_group_id": provenance.get("semantic_group_id"),
+                }
+                payload = (json.dumps(edge, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+                handle.write(payload)
+                digest.update(payload)
+                edge_count += 1
+    return {
+        "schema_version": "qcpr-relevance-graph-edge-v1",
+        "path": str(path),
+        "edge_count": edge_count,
+        "sha256": digest.hexdigest(),
+    }
+
+
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -157,6 +197,7 @@ def main() -> int:
     physical_count = len(existing_items)
     frame_count = sum(len(row.get("frames", [])) for row in existing_items)
     query_rows = read_jsonl(args.output / "registries/queries.jsonl")
+    relevance_graph = write_relevance_graph(args.output / "registries/relevance_graph.jsonl", query_rows)
     release = {
         "schema_version": "qcpr-dataset-v2-retrieval-semantic-repair-v1",
         "release_name": args.release_name,
@@ -168,6 +209,7 @@ def main() -> int:
         "physical_item_count": physical_count,
         "frame_count": frame_count,
         "query_count": len(query_rows),
+        "relevance_graph": relevance_graph,
         "required_manifest_names": REQUIRED_MANIFESTS,
         "manifest_counts": {name: len(read_jsonl(args.output / "manifests" / name)) for name in REQUIRED_MANIFESTS},
         "manifest_hashes_before_release_metadata": {name: sha256(args.output / "manifests" / name) for name in REQUIRED_MANIFESTS},
@@ -201,6 +243,7 @@ def main() -> int:
         "physical_item_count": physical_count,
         "frame_count": frame_count,
         "query_count": len(query_rows),
+        "relevance_graph": relevance_graph,
         "manifest_count": len(REQUIRED_MANIFESTS),
         "manifest_nonempty": {name: len(read_jsonl(args.output / "manifests" / name)) > 0 for name in REQUIRED_MANIFESTS},
         "checksum_entry_count_before_integrity_audit": len(checksums),
