@@ -1,0 +1,50 @@
+{
+  "code_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
+  "final_status_sha": "63bcf4d7f1ffd76f125577430c29cb2c6a96b2b8",
+  "job_id": 207706,
+  "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_80d17d5_20260805",
+  "state": "COMPLETED",
+  "exit_code": "0:0",
+  "scope": "real_backbone_integration_smoke",
+  "scientific_claim": "none",
+  "model": {
+    "repository": "google/siglip2-base-patch16-256",
+    "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+    "weights_sha256": "6125cacc01fa93bdc98a0c5101cefcd69b2ed1f8ab4f38d86f4ad5984f5dc863",
+    "runtime_class": "SiglipModel",
+    "native_image_tokens": [1, 256, 768],
+    "native_text_tokens": [1, 64, 768]
+  },
+  "contract": {
+    "steps": 8,
+    "physical_batch_size": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "precision": "bf16",
+    "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED"
+  },
+  "gates": {
+    "real_images_and_tokenizer": "PASS",
+    "finite_loss_and_gradients": "PASS",
+    "frozen_backbone_no_gradients": "PASS",
+    "checkpoint_roundtrip": "PASS",
+    "evidence_zeroing_causal": "PASS",
+    "evidence_query_swap_score": "PASS",
+    "evidence_top_deletion": "FAIL",
+    "mechanism_status": "BLOCKED_EVIDENCE_DELETION"
+  },
+  "memory_gib": {
+    "peak_allocated": 1.369966983795166,
+    "peak_reserved": 1.4765625
+  },
+  "readiness": {
+    "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
+    "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS",
+    "MODEL_V3_MECHANISM": "BLOCKED",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  }
+}

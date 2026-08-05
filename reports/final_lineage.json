@@ -1,0 +1,12 @@
+{
+  "local_sha": "63bcf4d7f1ffd76f125577430c29cb2c6a96b2b8",
+  "remote_sha": "63bcf4d7f1ffd76f125577430c29cb2c6a96b2b8",
+  "pr_number": 7,
+  "pr_head_sha": "63bcf4d7f1ffd76f125577430c29cb2c6a96b2b8",
+  "worktree_clean": true,
+  "parent_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
+  "commit_timestamp": "2026-08-05T20:04:49+04:00",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "base_branch": "codex/qcpr-model-v3-temporal-retrieval",
+  "status": "IMMUTABLE_PUBLISHED_LINEAGE"
+}
