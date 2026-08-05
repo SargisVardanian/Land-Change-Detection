@@ -41,6 +41,14 @@ def write_json(path: Path, value: Any) -> None:
     )
 
 
+def write_sha256sums(run: Path) -> None:
+    sums: list[str] = []
+    for artifact in sorted(run.iterdir()):
+        if artifact.is_file() and artifact.name != "SHA256SUMS":
+            sums.append(f"{sha256(artifact)}  {artifact.name}")
+    (run / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
+
+
 def write_failure_artifacts(args: argparse.Namespace, exc: Exception) -> None:
     """Persist a traceback even when Slurm's node-local stderr disappears."""
     run = Path(args.output_dir)
@@ -60,11 +68,7 @@ def write_failure_artifacts(args: argparse.Namespace, exc: Exception) -> None:
         },
     )
     (run / "failure_traceback.txt").write_text(trace, encoding="utf-8")
-    sums: list[str] = []
-    for artifact in sorted(run.iterdir()):
-        if artifact.is_file() and artifact.name != "SHA256SUMS":
-            sums.append(f"{sha256(artifact)}  {artifact.name}")
-    (run / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
+    write_sha256sums(run)
 
 
 def git_state(worktree: Path) -> dict[str, Any]:
@@ -789,11 +793,6 @@ def main() -> int:
             "evaluation_status": "NOT_RUN",
         },
     )
-    sums = []
-    for artifact in sorted(run.iterdir()):
-        if artifact.is_file() and artifact.name != "SHA256SUMS":
-            sums.append(f"{sha256(artifact)}  {artifact.name}")
-    (run / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
     write_json(
         run / "smoke_summary.json",
         {
@@ -810,6 +809,7 @@ def main() -> int:
             "image_hashes": image_meta,
         },
     )
+    write_sha256sums(run)
     return 0
 
 
