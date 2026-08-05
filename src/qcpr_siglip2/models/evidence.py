@@ -64,7 +64,11 @@ class EvidenceBottleneck(nn.Module):
         logits_rows: list[Tensor] = []
         weight_rows: list[Tensor] = []
         vector_rows: list[Tensor] = []
-        floor = torch.finfo(text_normalized.dtype).min
+        # ``torch.finfo(dtype).min`` is mathematically valid but passing the
+        # BF16 Python float through ``masked_fill`` overflows in current
+        # PyTorch. A finite sentinel is sufficient: exp(-1e4) is negligible
+        # in this logsumexp while remaining representable in FP32/BF16.
+        floor = -1e4
         for query_start in range(0, q, query_chunk):
             query_end = min(query_start + query_chunk, q)
             query_logits: list[Tensor] = []

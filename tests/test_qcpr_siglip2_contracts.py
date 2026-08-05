@@ -158,6 +158,19 @@ def test_blockwise_evidence_matches_unchunked_values_and_gradients():
     assert torch.allclose(visual_grad, visual.grad, atol=2e-5, rtol=2e-5)
 
 
+def test_evidence_bfloat16_mask_fill_is_finite():
+    evidence = EvidenceBottleneck(
+        Siglip2TemporalConfig(evidence_query_chunk_size=1, evidence_pair_chunk_size=1)
+    )
+    text = torch.randn(2, 4, 768, dtype=torch.bfloat16)
+    visual = torch.randn(1, 512, 768, dtype=torch.bfloat16)
+    mask = torch.tensor([[True, True, False, False], [True, False, False, False]])
+    output = evidence(text, mask, visual, frame_count=2, patch_count=256)
+    assert torch.isfinite(output.evidence_logits).all()
+    assert torch.isfinite(output.evidence_weights).all()
+    assert torch.isfinite(output.evidence_vector).all()
+
+
 def test_global_stage_one_score_is_unscaled_cosine():
     output = Siglip2TemporalRetrievalModel(None).forward_from_features(
         *_features(q=2, p=3)
