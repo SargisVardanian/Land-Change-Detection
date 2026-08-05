@@ -2,10 +2,10 @@
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
+  "code_sha": "c55209fee1b88aa5caed826a8080243e0fa8fd71",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "631 passed, 3 skipped, 16 warnings",
+    "full_pytest": "632 passed, 3 skipped, 16 warnings",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
     "shell_syntax": "PASS"
@@ -63,15 +63,15 @@
   "readiness": {
     "B1_CONTROL": "VERIFIED",
     "MODEL_V3_MAIN": "NOT_AUTHORIZED",
-    "MODEL_V3_MECHANISM": "BLOCKED_REAL_SMOKE",
-    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL_UNDIAGNOSED_GPU_EXIT",
+    "MODEL_V3_MECHANISM": "BLOCKED_EVIDENCE_DELETION",
+    "MODEL_V3_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
     "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
     "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
     "P2_REAL": "BLOCKED_DATASET_CONTRACT",
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
+    "code_sha": "c55209fee1b88aa5caed826a8080243e0fa8fd71",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
@@ -83,16 +83,17 @@
     "main_training_allowed": false,
     "p2_allowed": false,
     "readiness": {
-      "GEORSCLIP_BASELINE_VALID": true,
+      "GEORSCLIP_BASELINE_VALID": false,
+      "GEORSCLIP_WRAPPER_CONTRACT": "PASS_BASELINE_NOT_RUN",
       "MODEL_V3_MAIN": "NOT_AUTHORIZED",
       "P2": "BLOCKED",
       "SIGLIP2_DOWNLOAD_VALID": true,
       "SIGLIP2_PHASE_A_VALID": false,
       "SIGLIP2_PHASE_B_VALID": false,
-      "SIGLIP2_SMOKE_PASS": false,
+      "SIGLIP2_SMOKE_PASS": true,
       "SIGLIP2_HISTORICAL_SMOKE_207706": "PASS",
-      "SIGLIP2_REAL_INTEGRATION_SMOKE": "FAIL_UNDIAGNOSED_GPU_EXIT",
-      "SIGLIP2_MECHANISM": "BLOCKED_REAL_SMOKE"
+      "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
+      "SIGLIP2_MECHANISM": "BLOCKED_EVIDENCE_DELETION"
     },
     "source": {
       "cpu_inference": "PASS",
@@ -144,10 +145,10 @@
     ],
     "track_status": "HISTORICAL_207706_PASS_MECHANISM_BLOCKED"
   },
-  "current_real_smoke": {
+  "historical_failed_smoke_207778": {
     "job_id": "207778",
     "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
-    "state": "FAILED",
+    "state": "FAILED_HISTORICAL",
     "exit_code": "1:0",
     "node": "gpu02",
     "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_b5873c0_20260806",
@@ -160,8 +161,27 @@
     "traceback": "UNAVAILABLE_NODE_LOCAL_STDERR",
     "scientific_interpretation": "not a retrieval-quality result"
   },
-  "status": "SIGLIP2_HARDENED_REAL_SMOKE_FAIL_UNDIAGNOSED",
+  "current_real_smoke": {
+    "job_id": "207780",
+    "code_sha": "c8a06122a2ef2f10c409ae732ddb62e73bcabe73",
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "node": "gpu02",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_c8a0612_20260806",
+    "requested_steps": 16,
+    "physical_batch_size": 8,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "peak_allocated_gib": 1.3931632041931152,
+    "peak_reserved_gib": 1.650390625,
+    "checkpoint_sha256": "dc5ff006e6f416c0b65c8c181b2532fe907063af4f03f921338c9a51096f29c5",
+    "checkpoint_roundtrip": "PASS",
+    "evidence_deletion": "FAIL_TOP_EVIDENCE_DID_NOT_REDUCE_SCORE",
+    "evaluation_status": "NOT_RUN",
+    "scientific_interpretation": "technical smoke only; no retrieval-quality claim"
+  },
+  "status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_BLOCKED",
   "track_branch": "codex/qcpr-siglip2-temporal-training",
-  "track_parent_sha": "3abbb62fb8192f45a3d1c1b0314bbaffeaeb92d3",
-  "track_status": "SIGLIP2_HARDENING_SMOKE_BLOCKED"
+  "track_parent_sha": "c8a06122a2ef2f10c409ae732ddb62e73bcabe73",
+  "track_status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_BLOCKED"
 }

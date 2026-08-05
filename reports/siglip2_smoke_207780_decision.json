@@ -1,0 +1,61 @@
+{
+  "job_id": "207780",
+  "code_sha": "c8a06122a2ef2f10c409ae732ddb62e73bcabe73",
+  "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_c8a0612_20260806",
+  "state": "COMPLETED",
+  "exit_code": "0:0",
+  "node": "gpu02",
+  "steps": 16,
+  "physical_batch_size": 8,
+  "captions_per_pair": 2,
+  "query_count": 16,
+  "score_matrix": [16, 8],
+  "native_visual_shape": [8, 512, 768],
+  "native_text_shape": [16, 64, 768],
+  "gpu": "NVIDIA H100 80GB HBM3",
+  "peak_allocated_gib": 1.3931632041931152,
+  "peak_reserved_gib": 1.650390625,
+  "checkpoint_sha256": "dc5ff006e6f416c0b65c8c181b2532fe907063af4f03f921338c9a51096f29c5",
+  "checkpoint_roundtrip": "PASS",
+  "no_nan_or_oom": true,
+  "frozen_backbone_gradients": "PASS",
+  "trainable_parameter_count": 14384642,
+  "backbone_parameter_counts": {
+    "vision": 92930304,
+    "text": 282303744
+  },
+  "timing_seconds": {
+    "image_decode_and_processor": 0.2707276325672865,
+    "forward_mean": 0.06604146934114397,
+    "backward_mean": 0.018678592867217958,
+    "optimizer_mean": 0.009872871334664524,
+    "total_training_wall": 1.6406232062727213,
+    "checkpoint_write": 2.6946880277246237
+  },
+  "exposure": {
+    "unique_pairs": 8,
+    "pair_presentations": 128,
+    "unique_queries": 16,
+    "query_presentations": 256,
+    "pair_sequence_sha256": "76fb44759bc6c6a6961eac0f0aadc707cf281975d9d651046074a67b2ee8ad8c",
+    "query_sequence_sha256": "e9bc90e4a4004b867c61d65870e020edad5ca25f8a0cfec73feae2113bf63b9e"
+  },
+  "evidence": {
+    "zeroing_score_change": 1.2268232107162476,
+    "query_swap_score_change": 0.0078125,
+    "query_swap_map_l1": 0.00026603281730785966,
+    "query_swap_map_cosine": 0.9855419993400574,
+    "top_deletion_score_drop": -0.023046493530273438,
+    "bottom_deletion_score_drop": 0.004047751426696777,
+    "top_deletion_gate": "FAIL",
+    "multi_positive_runtime": "NOT_EXERCISED"
+  },
+  "artifact_integrity": {
+    "all_run_files_listed_in_sha256sums": true,
+    "sha256sums_repaired_after_generation_order_bug": true,
+    "evaluation_status": "NOT_RUN",
+    "full_rankings_status": "NOT_RUN"
+  },
+  "scientific_decision": "TECHNICAL_SMOKE_PASS; MECHANISM_BLOCKED_EVIDENCE_DELETION; NO_RETRIEVAL_QUALITY_CLAIM",
+  "next_authorized_scope": "Prepare but do not launch Phase A/B or P2 under the current <=32-step task limit."
+}
