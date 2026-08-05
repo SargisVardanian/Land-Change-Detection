@@ -488,23 +488,60 @@ def make_review_packet(rows: list[dict[str, Any]], purpose: str, size: int, by_g
     selected = stratified_sample(rows, size, seed)
     packet = []
     for index, row in enumerate(selected):
+        true_item_id = str(row.get("source_item_id") or row.get("canonical_pair_id") or "")
+        item = items.get(true_item_id, {})
+        item_t1, item_t2 = item_paths(item)
+        t1_path = str(row.get("t1_path") or item_t1 or "")
+        t2_path = str(row.get("t2_path") or item_t2 or "")
+        text = str(row.get("text") or row.get("query_text") or "")
+        provenance = row.get("provenance") if isinstance(row.get("provenance"), Mapping) else {}
+        semantic_sig = str(
+            row.get("semantic_signature")
+            or provenance.get("semantic_signature")
+            or semantic_signature(extract_visual_attributes(text))
+        )
+        review_row = dict(row)
+        review_row.update({
+            "source_item_id": true_item_id,
+            "split": split_name(row.get("split") or item.get("split")),
+            "semantic_signature": semantic_sig,
+        })
+        neighbours = review_neighbours(review_row, by_group, items)
+        source_dataset = str(row.get("source_dataset") or row.get("source") or item_source(item))
+        split = split_name(row.get("split") or item.get("split"))
+        positive_ids = list(row.get("positive_item_ids") or [])
+        neighbour_count = row.get("semantic_neighbour_item_count")
+        if neighbour_count is None:
+            neighbour_count = len(by_group.get((split, semantic_sig), set()))
+        positive_set_size = row.get("positive_set_size")
+        if positive_set_size is None:
+            positive_set_size = len(positive_ids) or 1
+        physical_pair_available = bool(t1_path and t2_path)
+        neighbour_evidence_available = bool(neighbours)
         packet.append({
             "review_id": f"RETRIEVAL-{purpose.upper()}-{index:04d}",
             "purpose": purpose,
             "query_id": row.get("query_id") or row.get("candidate_id"),
-            "text": row.get("text") or row.get("query_text") or "",
-            "source_dataset": row.get("source_dataset") or row.get("source"),
-            "split": split_name(row.get("split")),
-            "true_item_id": row.get("source_item_id") or row.get("canonical_pair_id"),
-            "t1_path": row.get("t1_path") or "",
-            "t2_path": row.get("t2_path") or "",
-            "semantic_neighbour_pairs": review_neighbours(row, by_group, items),
+            "text": text,
+            "source_dataset": source_dataset,
+            "split": split,
+            "true_item_id": true_item_id,
+            "t1_path": t1_path,
+            "t2_path": t2_path,
+            "semantic_signature": semantic_sig,
+            "semantic_neighbour_pairs": neighbours,
             "candidate_attributes": row.get("attributes") or {"common_atomic_anchors": row.get("common_atomic_anchors", [])},
             "classifier_evidence": {
                 "collision_count": row.get("collision_count"),
-                "semantic_neighbour_item_count": row.get("semantic_neighbour_item_count"),
-                "positive_set_size": row.get("positive_set_size"),
+                "semantic_neighbour_item_count": neighbour_count,
+                "positive_set_size": positive_set_size,
                 "identifiability_score": row.get("identifiability_score"),
+            },
+            "review_evidence": {
+                "physical_pair_available": physical_pair_available,
+                "semantic_neighbour_evidence_available": neighbour_evidence_available,
+                "paths_from_canonical_physical_registry": bool(item_t1 and item_t2),
+                "masks_used_for_text": False,
             },
             "review_fields": [
                 "true_pair_matches_scope",
@@ -523,7 +560,6 @@ def make_review_packet(rows: list[dict[str, Any]], purpose: str, size: int, by_g
             "training_enabled": False,
         })
     return packet
-
 
 def physical_stats(items: Mapping[str, Mapping[str, Any]], sample_limit: int = 256) -> dict[str, Any]:
     sources: dict[str, list[Mapping[str, Any]]] = collections.defaultdict(list)

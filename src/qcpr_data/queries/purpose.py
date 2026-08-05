@@ -43,6 +43,15 @@ _GENERIC_PHRASES = {
     "no change is occurred",
     "almost nothing has changed",
     "there is no change",
+    "there is no alteration",
+    "there are no alterations",
+    "no alteration",
+    "no alterations",
+    "nothing changed",
+    "nothing has changed",
+    "no visible change",
+    "no visible changes",
+    "unchanged",
 }
 
 _STOPWORDS = {
@@ -52,19 +61,19 @@ _STOPWORDS = {
 }
 
 _OBJECTS = {
-    "building": {"building", "buildings", "structure", "structures", "house", "houses", "roof", "roofs"},
-    "road": {"road", "roads", "lane", "lanes", "street", "streets", "path", "paths", "highway", "highways"},
-    "vegetation": {"tree", "trees", "forest", "forests", "vegetation", "canopy", "woodland", "woods"},
+    "building": {"building", "buildings", "structure", "structures", "house", "houses", "roof", "roofs", "villa", "villas", "mansion", "mansions", "mall", "malls"},
+    "road": {"road", "roads", "lane", "lanes", "street", "streets", "path", "paths", "highway", "highways", "crossroad", "crossroads", "roadside", "junction", "junctions"},
+    "vegetation": {"tree", "trees", "forest", "forests", "vegetation", "canopy", "woodland", "woods", "grass", "grasses", "plant", "plants", "shrub", "shrubs"},
     "field": {"field", "fields", "farmland", "farm", "farms", "crop", "crops", "agriculture", "cultivated"},
     "water": {"water", "river", "rivers", "lake", "lakes", "pond", "ponds", "shore", "shoreline"},
-    "soil": {"soil", "ground", "land", "bare", "clearing", "clearings", "sand", "earth"},
+    "soil": {"soil", "ground", "land", "bare", "bareland", "wasteland", "desert", "hole", "holes", "clearing", "clearings", "sand", "earth"},
     "vehicle": {"vehicle", "vehicles", "car", "cars", "truck", "trucks"},
-    "industrial": {"industrial", "factory", "factories", "warehouse", "warehouses", "facility", "facilities"},
+    "industrial": {"industrial", "factory", "factories", "warehouse", "warehouses", "facility", "facilities", "container", "containers"},
 }
 
 _DIRECTIONS = {
-    "appearance": {"appears", "appear", "appeared", "new", "built", "build", "constructed", "construction", "added", "emerged", "emergence", "expanded", "expansion", "increase", "increased", "growth"},
-    "disappearance": {"disappears", "disappear", "disappeared", "demolished", "demolition", "removed", "removal", "lost", "loss", "cleared", "clearance", "decreased", "decrease", "destroyed", "destruction", "shrank", "shrinkage"},
+    "appearance": {"appears", "appear", "appeared", "new", "built", "build", "constructed", "construction", "added", "emerged", "emergence", "expanded", "expansion", "increase", "increased", "growth", "grow", "grew", "grown", "placed", "put", "filled", "fill"},
+    "disappearance": {"disappears", "disappear", "disappeared", "demolished", "demolition", "removed", "removal", "lost", "loss", "cleared", "clearance", "decreased", "decrease", "destroyed", "destruction", "shrank", "shrinkage", "collapsed", "collapse"},
     "conversion": {"converted", "conversion", "changed", "change", "turned", "became", "replaced", "replacement", "transition"},
 }
 
@@ -79,10 +88,10 @@ _SPATIAL = {
 }
 
 _SURFACES = {
-    "built": {"building", "buildings", "structure", "structures", "house", "houses", "road", "roads", "lane", "lanes", "urban", "construction"},
-    "vegetated": {"tree", "trees", "forest", "forests", "vegetation", "canopy", "field", "fields", "crop", "crops", "farmland"},
+    "built": {"building", "buildings", "structure", "structures", "house", "houses", "villa", "villas", "mansion", "mansions", "mall", "malls", "container", "containers", "parking", "road", "roads", "lane", "lanes", "urban", "construction"},
+    "vegetated": {"tree", "trees", "forest", "forests", "vegetation", "canopy", "field", "fields", "crop", "crops", "farmland", "grass", "grasses", "plant", "plants", "green"},
     "water": {"water", "river", "rivers", "lake", "lakes", "pond", "ponds"},
-    "bare": {"bare", "soil", "ground", "land", "clearing", "clearings"},
+    "bare": {"bare", "bareland", "wasteland", "desert", "hole", "holes", "soil", "ground", "land", "clearing", "clearings"},
 }
 
 _UNSUPPORTED_TERMS = {
@@ -275,7 +284,7 @@ def classify_query(
     elif scope in {"semantic", "semantic_group", "official_relation"} or positive_set_size > 1 or collision_count > 1 or neighbour_item_count > 1:
         purpose = "semantic_multi_positive"
         reasons.append("verified_attribute_collision_or_semantic_neighbours")
-    elif scope in {"exact", "exact_pair", "exact_discriminative"} and positive_set_size == 1 and collision_count == 1 and neighbour_item_count == 1:
+    elif scope in {"exact", "exact_pair", "exact_discriminative"} and attributes.get("has_specific_visual_claim") and positive_set_size == 1 and collision_count == 1 and neighbour_item_count == 1:
         purpose = "exact_discriminative"
         reasons.append("singleton_verified_text_with_no_attribute_neighbours")
     elif unsupported and verification not in {"human", "human_rewritten", "independently_source_verified"}:

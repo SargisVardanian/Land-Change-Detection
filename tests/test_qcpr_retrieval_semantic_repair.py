@@ -23,6 +23,25 @@ def test_generic_no_change_is_not_stable():
     assert result["purpose"] == "generic_no_change"
 
 
+def test_no_alteration_is_generic_when_unattributed():
+    result = classify_query({"query_scope": "exact_pair", "verification": "human", "text": "there is no alteration"})
+    assert result["purpose"] == "generic_no_change"
+
+
+def test_exact_requires_supported_visual_attribute():
+    result = classify_query(
+        {
+            "query_scope": "exact_pair",
+            "verification": "human",
+            "text": "white rectangular shapes are present in the open area",
+        },
+        positive_set_size=1,
+        collision_count=1,
+        neighbour_item_count=1,
+    )
+    assert result["purpose"] == "unsupported_or_reject"
+
+
 def test_stable_scene_requires_common_anchors_and_is_pair_discriminative():
     row = {"query_scope": "stable_scene_candidate", "change_status": "no_change", "verification": "visual_probe_candidate", "text": "The same road and buildings remain visible in both observations."}
     result = classify_query(row, positive_set_size=1, stable_anchor_count=2, stable_identifiability=0.8)
