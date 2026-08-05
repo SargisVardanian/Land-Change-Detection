@@ -1,11 +1,11 @@
 {
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
-  "branch": "codex/qcpr-model-v3-temporal-retrieval",
-  "code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "612 passed, 3 skipped",
+    "full_pytest": "631 passed, 3 skipped, 16 warnings",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
     "shell_syntax": "PASS"
@@ -63,15 +63,15 @@
   "readiness": {
     "B1_CONTROL": "VERIFIED",
     "MODEL_V3_MAIN": "NOT_AUTHORIZED",
-    "MODEL_V3_MECHANISM": "BLOCKED",
-    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL",
+    "MODEL_V3_MECHANISM": "BLOCKED_REAL_SMOKE",
+    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL_UNDIAGNOSED_GPU_EXIT",
     "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
     "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
     "P2_REAL": "BLOCKED_DATASET_CONTRACT",
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
+    "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
@@ -83,15 +83,16 @@
     "main_training_allowed": false,
     "p2_allowed": false,
     "readiness": {
-      "GEORSCLIP_BASELINE_VALID": false,
+      "GEORSCLIP_BASELINE_VALID": true,
       "MODEL_V3_MAIN": "NOT_AUTHORIZED",
       "P2": "BLOCKED",
       "SIGLIP2_DOWNLOAD_VALID": true,
       "SIGLIP2_PHASE_A_VALID": false,
       "SIGLIP2_PHASE_B_VALID": false,
-      "SIGLIP2_SMOKE_PASS": true,
-      "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS",
-      "SIGLIP2_MECHANISM": "BLOCKED_EVIDENCE_DELETION"
+      "SIGLIP2_SMOKE_PASS": false,
+      "SIGLIP2_HISTORICAL_SMOKE_207706": "PASS",
+      "SIGLIP2_REAL_INTEGRATION_SMOKE": "FAIL_UNDIAGNOSED_GPU_EXIT",
+      "SIGLIP2_MECHANISM": "BLOCKED_REAL_SMOKE"
     },
     "source": {
       "cpu_inference": "PASS",
@@ -111,7 +112,7 @@
       "runtime_class": "SiglipModel",
       "safe_tensors": "PASS"
     },
-    "real_smoke": {
+    "historical_real_smoke_207706": {
       "batch_contract": {
         "captions_per_pair": 2,
         "physical_batch_size": 8,
@@ -141,10 +142,26 @@
       "The exact batch did not contain an explicit multi-positive query, so multi-positive runtime behavior was not exercised.",
       "No model improvement is claimed."
     ],
-    "track_status": "SIGLIP2_REAL_INTEGRATION_SMOKE_PASS_MECHANISM_BLOCKED"
+    "track_status": "HISTORICAL_207706_PASS_MECHANISM_BLOCKED"
   },
-  "status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
+  "current_real_smoke": {
+    "job_id": "207778",
+    "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
+    "state": "FAILED",
+    "exit_code": "1:0",
+    "node": "gpu02",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_b5873c0_20260806",
+    "requested_steps": 8,
+    "physical_batch_size": 8,
+    "query_count": 16,
+    "last_artifact": "roundtrip_input.json",
+    "checkpoint": "NOT_WRITTEN",
+    "cuda_memory": "NOT_WRITTEN",
+    "traceback": "UNAVAILABLE_NODE_LOCAL_STDERR",
+    "scientific_interpretation": "not a retrieval-quality result"
+  },
+  "status": "SIGLIP2_HARDENED_REAL_SMOKE_FAIL_UNDIAGNOSED",
   "track_branch": "codex/qcpr-siglip2-temporal-training",
-  "track_parent_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
-  "track_status": "SIGLIP2_SCAFFOLD_SOURCE_AUDITED"
+  "track_parent_sha": "3abbb62fb8192f45a3d1c1b0314bbaffeaeb92d3",
+  "track_status": "SIGLIP2_HARDENING_SMOKE_BLOCKED"
 }
