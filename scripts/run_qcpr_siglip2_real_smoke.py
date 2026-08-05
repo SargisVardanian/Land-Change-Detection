@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.manifest import group_rows_by_pair, load_exact_pair_rows
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
+
+_ACTIVE_ARGS: argparse.Namespace | None = None
 
 
 def sha256(path: Path) -> str:
@@ -36,6 +39,32 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(
         json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def write_failure_artifacts(args: argparse.Namespace, exc: Exception) -> None:
+    """Persist a traceback even when Slurm's node-local stderr disappears."""
+    run = Path(args.output_dir)
+    run.mkdir(parents=True, exist_ok=True)
+    trace = traceback.format_exc()
+    write_json(
+        run / "failure.json",
+        {
+            "status": "FAILED",
+            "exception_type": type(exc).__name__,
+            "message": str(exc),
+            "expected_code_sha": args.expected_code_sha,
+            "output_dir": str(run),
+            "existing_artifacts": sorted(
+                path.name for path in run.iterdir() if path.is_file()
+            ),
+        },
+    )
+    (run / "failure_traceback.txt").write_text(trace, encoding="utf-8")
+    sums: list[str] = []
+    for artifact in sorted(run.iterdir()):
+        if artifact.is_file() and artifact.name != "SHA256SUMS":
+            sums.append(f"{sha256(artifact)}  {artifact.name}")
+    (run / "SHA256SUMS").write_text("\n".join(sums) + "\n", encoding="utf-8")
 
 
 def git_state(worktree: Path) -> dict[str, Any]:
@@ -329,6 +358,7 @@ def deterministic_roundtrip(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    global _ACTIVE_ARGS
     parser = argparse.ArgumentParser()
     parser.add_argument("--siglip2-model", required=True)
     parser.add_argument("--train-manifest", required=True)
@@ -341,6 +371,20 @@ def main() -> int:
     parser.add_argument("--checkpoint")
     parser.add_argument("--reference-scores")
     args = parser.parse_args()
+    _ACTIVE_ARGS = args
+    Path(args.output_dir).mkdir(parents=True, exist_ok=True)
+    write_json(
+        Path(args.output_dir) / "smoke_started.json",
+        {
+            "status": "STARTED",
+            "expected_code_sha": args.expected_code_sha,
+            "siglip2_model": args.siglip2_model,
+            "train_manifest": args.train_manifest,
+            "steps": args.steps,
+            "physical_batch_size": args.physical_batch_size,
+            "captions_per_pair": args.captions_per_pair,
+        },
+    )
     if args.roundtrip_only:
         if not args.checkpoint or not args.reference_scores:
             raise ValueError(
@@ -452,6 +496,10 @@ def main() -> int:
     preclip_norms = []
     metric_rows: list[dict[str, Any]] = []
     for step in range(1, args.steps + 1):
+        write_json(
+            run / "step_started.json",
+            {"global_step": step, "requested_steps": args.steps},
+        )
         optimizer.zero_grad(set_to_none=True)
         torch.cuda.synchronize()
         start = time.perf_counter()
@@ -766,4 +814,9 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as exc:
+        if _ACTIVE_ARGS is not None:
+            write_failure_artifacts(_ACTIVE_ARGS, exc)
+        raise

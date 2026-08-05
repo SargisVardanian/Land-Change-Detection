@@ -25,6 +25,10 @@ CAPTIONS_PER_PAIR=${CAPTIONS_PER_PAIR:-2}
 CONFIG_PATH=${CONFIG_PATH:-$WT/configs/qcpr_siglip2_phase_a.json}
 CHECKPOINT_PATH=${CHECKPOINT_PATH:-none}
 
+mkdir -p "$RUN_ROOT"
+LOG_STEM="$RUN_ROOT/slurm-${SLURM_JOB_ID:-manual}"
+exec >"${LOG_STEM}.out" 2>"${LOG_STEM}.err"
+
 test -d "$WT"
 test "$(git -C "$WT" rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git -C "$WT" status --porcelain)"
