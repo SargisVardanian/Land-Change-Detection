@@ -123,13 +123,15 @@ class GeoRSCLIPBackbone(nn.Module):
             raise ValueError("input_ids and attention_mask must be [B,L]")
         model = self.model
         with torch.no_grad():
-            x = model.token_embedding(input_ids)
+            # Current OpenCLIP builds use batch-first transformer blocks.  Do
+            # not transpose here: doing so makes a [B, L, D] input look like
+            # a one-token batch and causes the causal mask to have the wrong
+            # shape under recent PyTorch versions.
+            x = model.token_embedding(input_ids).to(model.token_embedding.weight.dtype)
             x = x + model.positional_embedding[: input_ids.shape[1]].to(
                 dtype=x.dtype, device=x.device
             )
-            x = x.permute(1, 0, 2)
             x = model.transformer(x, attn_mask=model.attn_mask)
-            x = x.permute(1, 0, 2)
             x = model.ln_final(x)
             if model.text_projection is not None:
                 x = x @ model.text_projection
