@@ -21,6 +21,7 @@ from transformers import AutoProcessor
 from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.manifest import group_rows_by_pair, load_exact_pair_rows
+from qcpr_siglip2.evaluation.evidence import time_reversal_score_change
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.exposure import sequence_sha256
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
@@ -632,10 +633,8 @@ def main() -> int:
             text_encoding.pooled_embedding,
             text_encoding.attention_mask,
         )
-    time_reversal_change = float(
-        (last_output.score_matrix.float() - reversed_output.score_matrix.float())
-        .abs()
-        .max()
+    time_reversal_change = time_reversal_score_change(
+        last_output.score_matrix, reversed_output.score_matrix
     )
     diagnostics = {
         "query_swap_map_l1": l1,
