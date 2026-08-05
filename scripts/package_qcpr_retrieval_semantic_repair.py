@@ -205,6 +205,40 @@ def main() -> int:
             "training_enabled": False,
         })
         write_json(forest_release_dir / "forest_split_integrity.json", legacy_forest_audit)
+    # Canonicalize the TAMMs physical/annotation audit next to the physical
+    # source reports.  The fields are schema-complete but intentionally
+    # unverified; this makes coverage and the training hold auditable without
+    # turning generated temporal descriptions into supervision.
+    tamm_repair_audit = read_json(args.repair_output / "source_reports/tamms_long_series_audit.json", {})
+    tamm_annotation_source = args.repair_output / "source_reports/tamms_long_series_annotation_audit.jsonl"
+    if tamm_repair_audit and tamm_annotation_source.exists():
+        tamm_release_audit_path = args.output / "source_reports/tamms_long_series_audit.json"
+        tamm_release_audit = read_json(tamm_release_audit_path, {})
+        tamm_annotation_rows = read_jsonl(tamm_annotation_source)
+        tamm_physical_rows = [row for row in existing_items if str(row.get("source", "")).casefold() == "tamms"]
+        annotation_fields = ("onset", "duration", "gradual_or_abrupt", "relevant_frame_range")
+        field_coverage = {
+            field: {
+                "rows": len(tamm_annotation_rows),
+                "non_null": sum(row.get(field) is not None for row in tamm_annotation_rows),
+                "null_or_unverified": sum(row.get(field) is None for row in tamm_annotation_rows),
+            }
+            for field in annotation_fields
+        }
+        tamm_release_audit.update({
+            "physical_inventory_count": len(tamm_physical_rows),
+            "physical_split_counts": {
+                split: sum(row.get("split") == split for row in tamm_physical_rows)
+                for split in ("train", "development", "test")
+            },
+            "annotation_field_coverage": field_coverage,
+            "annotation_rows_materialized": len(tamm_annotation_rows),
+            "verified_long_series_query_count": 0,
+            "training_enabled": False,
+            "text_status": "GENERATED_UNVERIFIED_HUMAN_REVIEW_REQUIRED",
+        })
+        copy_file(tamm_annotation_source, args.output / "source_reports/tamms_long_series_annotation_audit.jsonl")
+        write_json(tamm_release_audit_path, tamm_release_audit)
     for packet in sorted((args.repair_output / "source_reports/review_samples").glob("*.jsonl")):
         copy_file(packet, args.output / "source_reports/human_review_packets" / packet.name)
     merge_tree(args.repair_output / "handoff", args.output / "handoff/retrieval_semantic_repair")
@@ -335,7 +369,11 @@ def main() -> int:
                 if forest_split_audit
                 else "PHYSICAL_SCENE_DISJOINT_CANDIDATE_TEXT_HOLD"
             ),
-            "tamm": "PHYSICAL_489_SEQUENCE_TEXT_HOLD",
+            "tamm": (
+                "PHYSICAL_489_SEQUENCE_FIELDS_MATERIALIZED_TEXT_HOLD"
+                if tamm_repair_audit and tamm_annotation_source.exists()
+                else "PHYSICAL_489_SEQUENCE_TEXT_HOLD"
+            ),
             "rscc": "VERIFIED_TEXT_ZERO_HOLD",
             "dubai_cc": "NOT_INTEGRATED",
             "rsrcc": "NOT_INTEGRATED",
