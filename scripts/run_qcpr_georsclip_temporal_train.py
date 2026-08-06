@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Train only the temporal head above frozen GeoRSCLIP towers.
 
-This is a bounded comparison baseline for the SigLIP-2 track.  It uses the
+This is the bounded GeoRSCLIP temporal-head baseline for the SigLIP-2 track.
+It uses the
 same exact-core data, listwise objective, logical exposure and checkpoint
 contracts as the SigLIP-2 driver, but never unfreezes or mixes GeoRSCLIP
 parameters with the primary model.
