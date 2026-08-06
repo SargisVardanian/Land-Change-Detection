@@ -1,0 +1,59 @@
+{
+  "code_sha": "e4e420628ed65a3ad6c03fb2c398746e40c0118a",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "pr": 7,
+  "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "dataset_release_sha256": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+  "implementation": {
+    "real_runtime_helpers": "PASS_CPU_STATIC",
+    "gradcache_logical_listwise": "PASS_27_FOCUSED_TESTS",
+    "module_gradient_audit": "PASS_27_FOCUSED_TESTS",
+    "phase_a_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
+    "phase_b_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
+    "common_gallery_evaluator": "IMPLEMENTED_NOT_RUN",
+    "top_k_evidence_reranking": "IMPLEMENTED_NOT_RUN"
+  },
+  "validation": {
+    "full_pytest": "639 passed, 3 skipped, 16 warnings",
+    "focused_siglip2_contracts": "27 passed, 2 warnings",
+    "pyright": "0 errors, 0 warnings",
+    "compileall": "PASS",
+    "targeted_ruff": "PASS",
+    "shell_syntax": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "smoke_207946": {
+    "job_id": 207946,
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "code_sha": "999eae4cb37067306b05c6b726f4ed871a72b2a1",
+    "steps": 16,
+    "physical_batch_size": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "visual_tokens": [8, 512, 768],
+    "text_tokens": [16, 64],
+    "peak_allocated_gib": 1.3931632041931152,
+    "peak_reserved_gib": 1.650390625,
+    "checkpoint_roundtrip": "PASS",
+    "time_reversal_score_change_max": 0.0078125,
+    "evidence_zeroing_score_change": 1.254191517829895,
+    "top_evidence_deletion": "FAIL",
+    "multi_positive_runtime": "NOT_EXERCISED",
+    "scientific_result": "NO_RETRIEVAL_CLAIM"
+  },
+  "readiness": {
+    "B1_CONTROL": "VERIFIED",
+    "SIGLIP2_SYNTHETIC_SMOKE": "PASS",
+    "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
+    "SIGLIP2_MECHANISM": "BLOCKED_EVIDENCE_DELETION",
+    "SIGLIP2_PHASE_A": "NOT_AUTHORIZED",
+    "SIGLIP2_PHASE_B": "NOT_AUTHORIZED",
+    "SIGLIP2_MAIN": "NOT_AUTHORIZED",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  },
+  "constraint": "No >32-step job, mechanism pilot, main training, GeoRSCLIP training or P2 job was launched in this task."
+}
