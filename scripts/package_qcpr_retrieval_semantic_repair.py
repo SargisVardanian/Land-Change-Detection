@@ -341,6 +341,59 @@ def main() -> int:
         "verified_additions": data_only_comparison.get("verified_additions", {}),
     })
     handoff["data_only_comparison"] = comparison_payload
+    view_manifest_hashes = {
+        scope: {
+            split: {
+                "count": len(read_jsonl(args.output / "manifests" / f"{scope}_{split}.jsonl")),
+                "sha256": sha256(args.output / "manifests" / f"{scope}_{split}.jsonl"),
+            }
+            for split in ("train", "development", "test")
+        }
+        for scope in ("exact", "semantic", "localized", "direction", "stable", "long_series")
+    }
+    handoff_hashes["generic_no_change_registry_sha256"] = sha256(
+        args.output / "registries/generic_no_change_diagnostic.jsonl"
+    )
+    handoff_hashes["evaluation_sidecars_sha256"] = sha256(
+        args.output / "evaluation_sidecars/dense.jsonl"
+    )
+    handoff["hashes"] = handoff_hashes
+    handoff["view_manifest_hashes"] = view_manifest_hashes
+    handoff["scope_counts_and_hashes"] = {
+        "verified_exact_queries": {
+            "count": int(handoff.get("verified_exact_query_count", 0)),
+            "candidate_view_manifests": view_manifest_hashes["exact"],
+        },
+        "semantic_groups": {
+            "count": int(handoff.get("semantic_group_count", 0)),
+            "sha256": handoff_hashes.get("semantic_groups_sha256"),
+        },
+        "localized_queries": {
+            "count": int(handoff.get("localized_query_count", 0)),
+            "view_manifests": view_manifest_hashes["localized"],
+            "evaluation_sidecars_sha256": handoff_hashes["evaluation_sidecars_sha256"],
+        },
+        "stable_queries": {
+            "count": int(handoff.get("stable_query_count", 0)),
+            "view_manifests": view_manifest_hashes["stable"],
+        },
+        "direction_queries": {
+            "count": int(handoff.get("direction_query_count", 0)),
+            "view_manifests": view_manifest_hashes["direction"],
+        },
+        "long_series_queries": {
+            "count": int(handoff.get("long_series_query_count", 0)),
+            "view_manifests": view_manifest_hashes["long_series"],
+        },
+        "disabled_generic_no_change_rows": {
+            "count": int(handoff.get("disabled_generic_no_change_row_count", 0)),
+            "sha256": handoff_hashes["generic_no_change_registry_sha256"],
+        },
+        "mask_evaluation_sidecars": {
+            "count": int(handoff.get("mask_sidecar_count", 0)),
+            "sha256": handoff_hashes["evaluation_sidecars_sha256"],
+        },
+    }
     write_json(args.output / "handoff/retrieval_semantic_repair/model_agent_handoff.json", handoff)
     release = {
         "schema_version": "qcpr-dataset-v2-retrieval-semantic-repair-v1",
