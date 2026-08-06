@@ -592,3 +592,15 @@ def test_batch_calibration_launcher_has_hard_step_budget():
     assert "TOTAL_STEPS=$((STEPS_PER_CANDIDATE * $#))" in launcher
     assert 'test "$TOTAL_STEPS" -le 32' in launcher
     assert "batch-sizes" in launcher
+
+
+def test_georsclip_common_gallery_launcher_is_frozen_and_sha_guarded():
+    from pathlib import Path
+
+    launcher = Path("cluster/ysu/submit_qcpr_georsclip_common_gallery.sh").read_text()
+    assert "EXPECTED_SHA" in launcher
+    assert "GEORSCLIP_CHECKPOINT" in launcher
+    assert "DEVELOPMENT_MANIFEST" in launcher
+    assert "git status --porcelain" in launcher
+    assert "pipefail" not in launcher
+    assert "--expected-code-sha" in launcher
