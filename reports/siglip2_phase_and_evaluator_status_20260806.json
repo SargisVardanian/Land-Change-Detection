@@ -1,5 +1,5 @@
 {
-  "code_sha": "e4e420628ed65a3ad6c03fb2c398746e40c0118a",
+  "code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
   "branch": "codex/qcpr-siglip2-temporal-training",
   "pr": 7,
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
@@ -10,12 +10,12 @@
     "module_gradient_audit": "PASS_27_FOCUSED_TESTS",
     "phase_a_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
     "phase_b_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
-    "common_gallery_evaluator": "IMPLEMENTED_NOT_RUN",
-    "top_k_evidence_reranking": "IMPLEMENTED_NOT_RUN"
+    "common_gallery_evaluator": "PASS_JOB_208021_FULL_GALLERY",
+    "top_k_evidence_reranking": "PASS_JOB_208021"
   },
   "validation": {
-    "full_pytest": "639 passed, 3 skipped, 16 warnings",
-    "focused_siglip2_contracts": "27 passed, 2 warnings",
+    "full_pytest": "642 passed, 3 skipped, 16 warnings (pre-evaluator-fix baseline)",
+    "focused_siglip2_contracts": "31 passed, 2 warnings",
     "pyright": "0 errors, 0 warnings",
     "compileall": "PASS",
     "targeted_ruff": "PASS",
@@ -47,13 +47,24 @@
     "B1_CONTROL": "VERIFIED",
     "SIGLIP2_SYNTHETIC_SMOKE": "PASS",
     "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
-    "SIGLIP2_MECHANISM": "BLOCKED_EVIDENCE_DELETION",
+    "SIGLIP2_MECHANISM": "READY_FOR_AUTHORIZATION",
     "SIGLIP2_PHASE_A": "NOT_AUTHORIZED",
     "SIGLIP2_PHASE_B": "NOT_AUTHORIZED",
     "SIGLIP2_MAIN": "NOT_AUTHORIZED",
     "P2_REAL": "BLOCKED_DATASET_CONTRACT",
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
     "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  },
+  "common_gallery_208021": {
+    "status": "PASS",
+    "query_count": 6310,
+    "gallery_count": 1928,
+    "score_shape": [6310, 1928],
+    "evaluation_run": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_common_eval_step0_35fb641_20260806",
+    "full_rankings": "AVAILABLE",
+    "ranking_integrity": "PASS",
+    "peak_allocated_gib": 9.647034168243408,
+    "peak_reserved_gib": 27.837890625
   },
   "constraint": "No >32-step job, mechanism pilot, main training, GeoRSCLIP training or P2 job was launched in this task."
 }

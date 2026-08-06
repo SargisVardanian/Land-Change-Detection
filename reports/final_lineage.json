@@ -1,12 +1,15 @@
 {
-  "local_sha": "e58980553e5a72884d52e2994416bf2e37d37766",
-  "remote_sha": "e58980553e5a72884d52e2994416bf2e37d37766",
-  "pr_number": 7,
-  "pr_head_sha": "e58980553e5a72884d52e2994416bf2e37d37766",
-  "worktree_clean": true,
-  "parent_sha": "f42cb5945b1ed6a2708fc8abff84b0560b90db6f",
-  "commit_timestamp": "2026-08-05T20:08:28+04:00",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "base_branch": "codex/qcpr-model-v3-temporal-retrieval",
-  "status": "IMMUTABLE_PUBLISHED_LINEAGE"
+  "local_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "remote_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "pr_number": 7,
+  "pr_head_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "pr_base": "codex/qcpr-model-v3-temporal-retrieval",
+  "pr_state": "OPEN",
+  "pr_is_draft": true,
+  "cluster_worktree_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "worktree_clean": true,
+  "parent_sha": "6c56e740fb2cb5d35a83f53312167bdb9079d7b7",
+  "commit_timestamp": "2026-08-06T18:06:33+04:00",
+  "lineage_status": "FINAL_LINEAGE_MATCH"
 }

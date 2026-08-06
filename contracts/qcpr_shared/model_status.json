@@ -2,7 +2,8 @@
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
+  "code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "executable_smoke_code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
   "cpu_gate": {
     "compileall": "PASS",
     "full_pytest": "642 passed, 3 skipped, 16 warnings",
@@ -51,7 +52,7 @@
   },
   "latest_bounded_smoke": {
     "job_id": 208013,
-    "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
+    "code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
     "state": "COMPLETED",
     "exit_code": "0:0",
     "node": "gpu05",
@@ -136,9 +137,9 @@
       "phase_b_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
       "gradcache_logical_loss": "IMPLEMENTED_CPU_TESTED",
       "module_gradient_audit": "IMPLEMENTED_CPU_TESTED",
-      "common_gallery_evaluator": "IMPLEMENTED_NOT_RUN",
-      "top_k_evidence_reranking": "IMPLEMENTED_NOT_RUN",
-      "full_gallery_rankings": "NOT_AVAILABLE",
+      "common_gallery_evaluator": "PASS_JOB_208021",
+      "top_k_evidence_reranking": "PASS_JOB_208021",
+      "full_gallery_rankings": "AVAILABLE_JOB_208021",
       "long_run_authorization": "REQUIRED_EXPLICITLY"
     },
     "source": {
@@ -209,7 +210,7 @@
   },
   "current_real_smoke": {
     "job_id": 208013,
-    "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
+      "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
     "state": "COMPLETED",
     "exit_code": "0:0",
     "node": "gpu05",
@@ -233,7 +234,7 @@
     "query_swap_score_change": 0.404296875,
     "detach_gradient_norm": 0.37753114104270935,
     "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED",
-    "evaluation_status": "NOT_RUN",
+    "evaluation_status": "STEP0_COMMON_GALLERY_PASS_JOB_208021",
     "scientific_interpretation": "technical smoke only; no retrieval-quality claim"
   },
   "status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_READY_FOR_AUTHORIZATION",
