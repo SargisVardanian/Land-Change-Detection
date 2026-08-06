@@ -2,12 +2,12 @@
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "5d87afb9a91561cd391f5d039fe38133eb368e2d",
+  "code_sha": "229ebf149697c82b5d64375c2e7ee1c7214506ea",
   "evaluation_code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
   "executable_smoke_code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "645 passed, 3 skipped, 16 warnings in 351.47s",
+    "full_pytest": "648 passed, 3 skipped, 16 warnings in 379.09s",
     "ruff": "NOT_INSTALLED_ON_CLUSTER; compileall and Pyright passed",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
@@ -110,7 +110,7 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "5d87afb9a91561cd391f5d039fe38133eb368e2d",
+    "code_sha": "229ebf149697c82b5d64375c2e7ee1c7214506ea",
     "evaluation_code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
