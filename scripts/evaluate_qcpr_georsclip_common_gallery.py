@@ -489,7 +489,11 @@ def main() -> int:
             ),
         })
         _write_json(run / "evaluation_metrics.json", {
-            "protocol": "QCPR_GEORSCLIP_FROZEN_STEP0_COMMON_GALLERY",
+            "protocol": (
+                "QCPR_GEORSCLIP_TEMPORAL_HEAD_COMMON_GALLERY"
+                if args.temporal_checkpoint is not None
+                else "QCPR_GEORSCLIP_FROZEN_STEP0_COMMON_GALLERY"
+            ),
             "query_count": len(query_rows),
             "gallery_count": len(pair_rows),
             "global": global_metrics,
@@ -502,8 +506,14 @@ def main() -> int:
             "optimizer_steps": 0,
             "georsclip_vision_frozen": True,
             "georsclip_text_frozen": True,
-            "temporal_head_initialized_only": True,
-            "trainable_parameter_count": 0,
+            "temporal_head_initialized_only": args.temporal_checkpoint is None,
+            "temporal_checkpoint_loaded": args.temporal_checkpoint is not None,
+            "temporal_global_step": temporal_global_step,
+            "trainable_parameter_count": (
+                sum(parameter.numel() for parameter in model.temporal_adapter.parameters())
+                if args.temporal_checkpoint is not None
+                else 0
+            ),
         })
         _write_json(run / "runtime_profile.json", {
             "total_wall_seconds": time.perf_counter() - started,
