@@ -419,7 +419,7 @@ def main() -> int:
                 "per_source_global": metrics_by_query_group(
                     global_scores, positive, rows
                 ),
-                "candidate_recall": {
+                "candidate_hit_at_k": {
                     f"candidate_hit_at_{k}": global_metrics[f"candidate_hit_at_{k}"]
                     for k in (10, 50, 100, 500)
                     if f"candidate_hit_at_{k}" in global_metrics

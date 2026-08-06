@@ -571,6 +571,14 @@ def test_common_gallery_metrics_keep_global_and_rerank_scores_aligned():
     assert records[0]["top_pair_ids"] == ["p2", "p1"]
 
 
+def test_siglip2_common_gallery_uses_explicit_candidate_hit_metric_name():
+    from pathlib import Path
+
+    source = Path("scripts/evaluate_qcpr_siglip2_common_gallery.py").read_text()
+    assert '"candidate_recall":' not in source
+    assert '"candidate_hit_at_k":' in source
+
+
 def test_phase_driver_requires_explicit_long_run_authorization(monkeypatch):
     from argparse import Namespace
 
