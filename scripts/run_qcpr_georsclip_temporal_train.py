@@ -243,7 +243,7 @@ def checkpoint_roundtrip(
     batch: ExactBatch,
     device: torch.device,
 ) -> dict[str, Any]:
-    from qcpr_siglip2.data.runtime import encode_real_features
+    from qcpr_siglip2.data.runtime import _device_autocast, encode_real_features
 
     model.eval()
     features = encode_real_features(
@@ -255,7 +255,7 @@ def checkpoint_roundtrip(
         dtype=torch.bfloat16,
         no_grad=True,
     )
-    with torch.no_grad():
+    with torch.no_grad(), _device_autocast(device, torch.bfloat16):
         reference = model.forward_from_features(
             features.frame_tokens,
             features.frame_embeddings,
@@ -266,7 +266,7 @@ def checkpoint_roundtrip(
     fresh = Siglip2TemporalRetrievalModel(None, config).to(device)
     fresh.load_state_dict(checkpoint_payload_value["model_state"], strict=True)
     fresh.eval()
-    with torch.no_grad():
+    with torch.no_grad(), _device_autocast(device, torch.bfloat16):
         reloaded = fresh.forward_from_features(
             features.frame_tokens,
             features.frame_embeddings,

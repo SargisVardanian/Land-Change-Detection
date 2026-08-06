@@ -621,6 +621,7 @@ def test_georsclip_temporal_baseline_is_frozen_tower_and_fixed_step() -> None:
     assert "QCPR_ALLOW_GEORSCLIP_256" in source
     assert "if global_step != 256" in source
     assert "recompute_backbone=False" in source
+    assert "_device_autocast(device, torch.bfloat16)" in source
     assert '"georsclip_towers_frozen": True' in source
     assert "GeoRSCLIPBackbone(" in source and ").to(device)" in source
     assert "torch.randn" not in source
