@@ -507,9 +507,19 @@ def test_gradcache_detaches_features_and_replays_feature_gradients():
 
 def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
     features = _features(q=4, p=2)
+    calls = []
 
-    def fake_encode(*_args, **_kwargs):
-        return RawFeatureBatch(*(value.clone() for value in features))
+    def fake_encode(_backbone, _processor, pair_rows, query_rows, _device, **_kwargs):
+        pair_count = len(pair_rows)
+        query_count = len(query_rows)
+        calls.append((pair_count, query_count))
+        return RawFeatureBatch(
+            features[0][:pair_count].clone(),
+            features[1][:pair_count].clone(),
+            features[2][:query_count].clone(),
+            features[3][:query_count].clone(),
+            features[4][:query_count].clone(),
+        )
 
     monkeypatch.setattr(
         "qcpr_siglip2.training.gradcache.encode_real_features", fake_encode
@@ -545,6 +555,7 @@ def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
     assert result["gradient_report"]["temporal_adapter"]["parameters_with_grad"] > 0
     assert result["gradient_report"]["evidence_bottleneck"]["parameters_with_grad"] > 0
     assert result["gradient_report"]["siglip2_vision_backbone"]["trainable_count"] == 0
+    assert calls == [(1, 2), (1, 2)]
 
 
 def test_common_gallery_metrics_keep_global_and_rerank_scores_aligned():
@@ -600,6 +611,26 @@ def test_phase_milestones_are_complete_and_phase_specific():
     assert required_milestones("B") == (256, 512, 1024, 1792)
     with pytest.raises(ValueError, match="unsupported"):
         required_milestones("C")
+
+
+def test_georsclip_temporal_baseline_is_frozen_tower_and_fixed_step() -> None:
+    from pathlib import Path
+
+    source = Path("scripts/run_qcpr_georsclip_temporal_train.py").read_text()
+    assert "GeoRSCLIP temporal-head baseline" in source
+    assert "QCPR_ALLOW_GEORSCLIP_256" in source
+    assert "if global_step != 256" in source
+    assert "recompute_backbone=False" in source
+    assert '"georsclip_towers_frozen": True' in source
+    assert "torch.randn" not in source
+
+
+def test_georsclip_common_gallery_accepts_trained_temporal_checkpoint() -> None:
+    from pathlib import Path
+
+    source = Path("scripts/evaluate_qcpr_georsclip_common_gallery.py").read_text()
+    assert '"--temporal-checkpoint"' in source
+    assert "TRAINED_TEMPORAL_HEAD_EVALUATION_PASS" in source
 
 
 def test_milestone_evaluator_requires_all_full_gallery_outputs():

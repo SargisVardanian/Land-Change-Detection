@@ -139,6 +139,58 @@ def _feature_surrogate(
     )
 
 
+def _encode_logical_features_in_chunks(
+    backbone: Any,
+    processor: Any,
+    pair_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    query_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    device: torch.device,
+    physical_batch_size: int,
+    captions_per_pair: int,
+    dtype: torch.dtype,
+    no_grad: bool,
+) -> RawFeatureBatch:
+    """Encode one logical batch through bounded physical microbatches.
+
+    The listwise objective is still evaluated once after concatenation.  The
+    chunking only bounds frozen-backbone activation and decoder input memory;
+    it must never turn the logical batch into independent losses.
+    """
+
+    if len(pair_rows) % physical_batch_size:
+        raise ValueError("logical pair count must divide physical microbatch size")
+    chunks: list[RawFeatureBatch] = []
+    for start in range(0, len(pair_rows), physical_batch_size):
+        end = start + physical_batch_size
+        query_start = start * captions_per_pair
+        query_end = end * captions_per_pair
+        chunks.append(
+            encode_real_features(
+                backbone,
+                processor,
+                pair_rows[start:end],
+                query_rows[query_start:query_end],
+                device,
+                dtype=dtype,
+                no_grad=no_grad,
+            )
+        )
+    if not chunks:
+        raise ValueError("logical batch must contain at least one pair")
+    return RawFeatureBatch(
+        frame_tokens=torch.cat([chunk.frame_tokens for chunk in chunks], dim=0),
+        frame_embeddings=torch.cat(
+            [chunk.frame_embeddings for chunk in chunks], dim=0
+        ),
+        text_tokens=torch.cat([chunk.text_tokens for chunk in chunks], dim=0),
+        text_embeddings=torch.cat(
+            [chunk.text_embeddings for chunk in chunks], dim=0
+        ),
+        text_mask=torch.cat([chunk.text_mask for chunk in chunks], dim=0),
+    )
+
+
 def logical_listwise_step(
     model: Siglip2TemporalRetrievalModel,
     backbone: Any,
@@ -171,16 +223,17 @@ def logical_listwise_step(
         raise ValueError("query rows do not match pair/caption contract")
     optimizer.zero_grad(set_to_none=True)
     model.eval()
-    with torch.no_grad():
-        frozen_features = encode_real_features(
-            backbone,
-            processor,
-            pair_rows,
-            query_rows,
-            device,
-            dtype=dtype,
-            no_grad=True,
-        )
+    frozen_features = _encode_logical_features_in_chunks(
+        backbone,
+        processor,
+        pair_rows,
+        query_rows,
+        device=device,
+        physical_batch_size=physical_batch_size,
+        captions_per_pair=captions_per_pair,
+        dtype=dtype,
+        no_grad=True,
+    )
     cached = cache_features(frozen_features)
     model.train()
     with _device_autocast(device, dtype):

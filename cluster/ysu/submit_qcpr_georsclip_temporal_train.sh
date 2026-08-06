@@ -1,41 +1,46 @@
 #!/usr/bin/env bash
-# Frozen GeoRSCLIP step-zero common-gallery evaluation; no optimizer steps.
+# Submit the bounded 256-step GeoRSCLIP temporal-head baseline.
 
 set -eu
 
 : "${EXPECTED_SHA:?EXPECTED_SHA is required}"
 : "${RUN_ROOT:?RUN_ROOT is required}"
 : "${DATA_RELEASE:?DATA_RELEASE is required}"
+: "${TRAIN_MANIFEST:?TRAIN_MANIFEST is required}"
 : "${DEVELOPMENT_MANIFEST:?DEVELOPMENT_MANIFEST is required}"
 : "${GEORSCLIP_CHECKPOINT:?GEORSCLIP_CHECKPOINT is required}"
 : "${GEORSCLIP_REVISION:?GEORSCLIP_REVISION is required}"
 : "${WORKTREE:?WORKTREE is required}"
 : "${PYTHON:?PYTHON is required}"
 
-GALLERY_BATCH_SIZE=${GALLERY_BATCH_SIZE:-16}
-QUERY_BATCH_SIZE=${QUERY_BATCH_SIZE:-128}
-RERANK_QUERY_BATCH_SIZE=${RERANK_QUERY_BATCH_SIZE:-16}
+STEPS=${STEPS:-256}
+PHYSICAL_BATCH_SIZE=${PHYSICAL_BATCH_SIZE:-32}
+LOGICAL_PHYSICAL_BATCH_SIZE=${LOGICAL_PHYSICAL_BATCH_SIZE:-128}
+CAPTIONS_PER_PAIR=${CAPTIONS_PER_PAIR:-2}
+SEED=${SEED:-20260805}
 PARTITION=${PARTITION:-research}
 QOS=${QOS:-researcher}
 ACCOUNT=${ACCOUNT:-research}
-TIME_LIMIT=${TIME_LIMIT:-01:00:00}
+TIME_LIMIT=${TIME_LIMIT:-08:00:00}
 MEMORY=${MEMORY:-128G}
 CPUS_PER_TASK=${CPUS_PER_TASK:-16}
 GPU_GRES=${GPU_GRES:-gpu:h100:1}
-JOB_NAME=${JOB_NAME:-qcpr-georsclip-common-gallery}
+JOB_NAME=${JOB_NAME:-qcpr-georsclip-temporal-256}
 
+test "$STEPS" -eq 256
 test -d "$WORKTREE"
 test "$(git -C "$WORKTREE" rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git -C "$WORKTREE" status --porcelain)"
 test -d "$DATA_RELEASE"
+test -s "$TRAIN_MANIFEST"
 test -s "$DEVELOPMENT_MANIFEST"
 test -s "$GEORSCLIP_CHECKPOINT"
+test "$((LOGICAL_PHYSICAL_BATCH_SIZE % PHYSICAL_BATCH_SIZE))" -eq 0
 
 mkdir -p "$RUN_ROOT"
-export EXPECTED_SHA RUN_ROOT DATA_RELEASE DEVELOPMENT_MANIFEST
+export EXPECTED_SHA RUN_ROOT DATA_RELEASE TRAIN_MANIFEST DEVELOPMENT_MANIFEST
 export GEORSCLIP_CHECKPOINT GEORSCLIP_REVISION WORKTREE PYTHON
-export TEMPORAL_CHECKPOINT="${TEMPORAL_CHECKPOINT:-}"
-export GALLERY_BATCH_SIZE QUERY_BATCH_SIZE RERANK_QUERY_BATCH_SIZE
+export STEPS PHYSICAL_BATCH_SIZE LOGICAL_PHYSICAL_BATCH_SIZE CAPTIONS_PER_PAIR SEED
 
 sbatch \
   --export=ALL \
@@ -54,24 +59,23 @@ cd \"\$WORKTREE\"
 test \"\$(git rev-parse HEAD)\" = \"\$EXPECTED_SHA\"
 test -z \"\$(git status --porcelain)\"
 test -d \"\$DATA_RELEASE\"
+test -s \"\$TRAIN_MANIFEST\"
 test -s \"\$DEVELOPMENT_MANIFEST\"
 test -s \"\$GEORSCLIP_CHECKPOINT\"
-if test -n \"\$TEMPORAL_CHECKPOINT\"; then
-  test -s \"\$TEMPORAL_CHECKPOINT\"
-fi
+export HF_HUB_OFFLINE=1
 export PYTHONPATH=\"\$WORKTREE/src:\$WORKTREE/scripts\"
-set -- \"\$WORKTREE/scripts/evaluate_qcpr_georsclip_common_gallery.py\" \\
+exec \"\$PYTHON\" \"\$WORKTREE/scripts/run_qcpr_georsclip_temporal_train.py\" \\
   --data-release \"\$DATA_RELEASE\" \\
+  --train-manifest \"\$TRAIN_MANIFEST\" \\
   --development-manifest \"\$DEVELOPMENT_MANIFEST\" \\
   --georsclip-checkpoint \"\$GEORSCLIP_CHECKPOINT\" \\
   --georsclip-revision \"\$GEORSCLIP_REVISION\" \\
   --output-dir \"\$RUN_ROOT\" \\
   --expected-code-sha \"\$EXPECTED_SHA\" \\
   --worktree \"\$WORKTREE\" \\
-  --gallery-batch-size \"\$GALLERY_BATCH_SIZE\" \\
-  --query-batch-size \"\$QUERY_BATCH_SIZE\" \\
-  --rerank-query-batch-size \"\$RERANK_QUERY_BATCH_SIZE\"
-if test -n \"\$TEMPORAL_CHECKPOINT\"; then
-  set -- \"\$@\" --temporal-checkpoint \"\$TEMPORAL_CHECKPOINT\"
-fi
-exec \"\$PYTHON\" \"\$@\""
+  --steps \"\$STEPS\" \\
+  --physical-batch-size \"\$PHYSICAL_BATCH_SIZE\" \\
+  --logical-physical-batch-size \"\$LOGICAL_PHYSICAL_BATCH_SIZE\" \\
+  --captions-per-pair \"\$CAPTIONS_PER_PAIR\" \\
+  --seed \"\$SEED\" \\
+  --authorize-256-step-run"

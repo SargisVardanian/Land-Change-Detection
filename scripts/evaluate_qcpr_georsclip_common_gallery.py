@@ -264,6 +264,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--development-manifest", required=True)
     parser.add_argument("--georsclip-checkpoint", required=True)
     parser.add_argument("--georsclip-revision", required=True)
+    parser.add_argument(
+        "--temporal-checkpoint",
+        help="Optional trained temporal-head checkpoint. Omit for frozen step-0.",
+    )
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--expected-code-sha", required=True)
     parser.add_argument("--worktree", required=True)
@@ -324,6 +328,24 @@ def main() -> int:
             max_frames=2,
         )
         model = Siglip2TemporalRetrievalModel(None, config).to(device)
+        temporal_checkpoint_sha = None
+        temporal_global_step = 0
+        if args.temporal_checkpoint is not None:
+            temporal_checkpoint = Path(args.temporal_checkpoint)
+            if not temporal_checkpoint.is_file():
+                raise FileNotFoundError(temporal_checkpoint)
+            payload = torch.load(
+                temporal_checkpoint, map_location="cpu", weights_only=True
+            )
+            if not isinstance(payload, dict) or "model_state" not in payload:
+                raise ValueError("temporal checkpoint lacks model_state")
+            checkpoint_config = payload.get("config")
+            if checkpoint_config is not None:
+                if checkpoint_config != config.to_dict():
+                    raise ValueError("temporal checkpoint config mismatch")
+            model.load_state_dict(payload["model_state"], strict=True)
+            temporal_checkpoint_sha = _sha256_file(temporal_checkpoint)
+            temporal_global_step = int(payload.get("global_step", 0))
         model.eval()
         started = time.perf_counter()
         frame_tokens, frame_embeddings, pair_embeddings = _encode_gallery(
@@ -435,6 +457,9 @@ def main() -> int:
             "patch_grid": 7,
             "mask_access": False,
             "temperature": temperature,
+            "temporal_checkpoint": args.temporal_checkpoint,
+            "temporal_checkpoint_sha256": temporal_checkpoint_sha,
+            "temporal_global_step": temporal_global_step,
         })
         _write_json(run / "batch_contract.json", {
             "query_count": len(query_rows),
@@ -445,13 +470,23 @@ def main() -> int:
             "rerank_query_batch_size": args.rerank_query_batch_size,
             "optimizer_steps": 0,
             "mask_access": False,
+            "temporal_checkpoint": args.temporal_checkpoint,
+            "temporal_global_step": temporal_global_step,
         })
         _write_json(run / "training_complete.json", {
-            "status": "FROZEN_EVALUATION_PASS",
-            "global_step": 0,
+            "status": (
+                "TRAINED_TEMPORAL_HEAD_EVALUATION_PASS"
+                if args.temporal_checkpoint is not None
+                else "FROZEN_EVALUATION_PASS"
+            ),
+            "global_step": temporal_global_step,
             "optimizer_steps": 0,
             "checkpoint_sha256": checkpoint_sha,
-            "scientific_interpretation": "frozen GeoRSCLIP step-zero diagnostic; no training",
+            "scientific_interpretation": (
+                "GeoRSCLIP frozen towers with an externally trained temporal head"
+                if args.temporal_checkpoint is not None
+                else "frozen GeoRSCLIP step-zero diagnostic; no training"
+            ),
         })
         _write_json(run / "evaluation_metrics.json", {
             "protocol": "QCPR_GEORSCLIP_FROZEN_STEP0_COMMON_GALLERY",
