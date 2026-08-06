@@ -1,5 +1,6 @@
 import json
 
+from build_qcpr_retrieval_semantic_repair import build_official_source_acquisition_audit
 from package_qcpr_retrieval_semantic_repair import write_relevance_graph
 from qcpr_data.queries.purpose import QUERY_PURPOSES, classify_query, semantic_group_id
 
@@ -99,3 +100,42 @@ def test_relevance_graph_materializes_all_positive_edges(tmp_path):
     assert [edge["relevance_grade"] for edge in edges] == [3, 2, 3]
     assert edges[-1]["diagnostic_only"] is True
     assert edges[0]["semantic_group_id"] == "group-1"
+
+
+def test_source_acquisition_audit_does_not_promote_raw_or_adapter_stubs(tmp_path):
+    project = tmp_path / "project"
+    release = project / "manifests" / "release"
+    release.mkdir(parents=True)
+    raw = project / "datasets" / "raw" / "RSRCC"
+    raw.mkdir(parents=True)
+    (raw / "before.png").write_bytes(b"raw")
+    code = tmp_path / "code"
+    adapter = code / "src" / "qcpr_data" / "sources"
+    adapter.mkdir(parents=True)
+    (adapter / "rsrcc.py").write_text(
+        'ADAPTER = RegistrySourceAdapter("RSRCC", "unacquired")\n',
+        encoding="utf-8",
+    )
+    (release / "source_reports").mkdir()
+    (release / "source_reports" / "rsrcc_source_audit.json").write_text("{}", encoding="utf-8")
+    audit = build_official_source_acquisition_audit(
+        current_release=release,
+        code_repo=code,
+        prior={
+            "blocked_or_deferred": [
+                {
+                    "source_dataset": "RSRCC",
+                    "license_status": "APACHE_2.0_SOURCE_TERMS_AND_PARENT_DATA_REVIEW_REQUIRED",
+                }
+            ]
+        },
+    )
+    row = audit["sources"]["RSRCC"]
+    assert row["physical_assets"] is True
+    assert row["loader_available"] is True
+    assert row["loader"] is False
+    assert row["hashes"] is False
+    assert row["license"] is False
+    assert row["manifest"] is False
+    assert row["ready_for_integration"] is False
+    assert audit["ready_sources"] == []

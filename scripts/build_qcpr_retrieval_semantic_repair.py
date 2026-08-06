@@ -91,6 +91,229 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+
+_SOURCE_ACQUISITION_SPECS = {
+    "DUBAI-CC": {
+        "raw_names": ("DUBAI-CC", "Dubai-CC", "dubai_cc"),
+        "adapter": "dubai_cc.py",
+        "official_locations": (
+            "https://service.tib.eu/ldmservice/dataset/dubai-cc--a-dataset-for-remote-sensing-change-captioning",
+        ),
+    },
+    "RSRCC": {
+        "raw_names": ("RSRCC", "rsrcc"),
+        "adapter": "rsrcc.py",
+        "official_locations": (
+            "https://huggingface.co/datasets/google/RSRCC",
+            "https://github.com/google-research/remote-sensing/",
+        ),
+    },
+    "DynamicEarthNet": {
+        "raw_names": ("DynamicEarthNet", "dynamic_earth_net"),
+        "adapter": "dynamic_earth_net.py",
+        "official_locations": (
+            "https://mediatum.ub.tum.de/1650201",
+            "https://dataserv.ub.tum.de/index.php/s/m1650201",
+        ),
+    },
+    "SpaceNet 7": {
+        "raw_names": ("SpaceNet-7", "SpaceNet7", "SpaceNet 7", "spacenet7"),
+        "adapter": "spacenet7.py",
+        "official_locations": (
+            "https://spacenet.ai/sn7-challenge/",
+            "https://registry.opendata.aws/spacenet/",
+        ),
+    },
+    "TERRA-CD": {
+        "raw_names": ("TERRA-CD", "terra_cd"),
+        "adapter": "terra_cd.py",
+        "official_locations": (
+            "https://github.com/omkarsoak/TERRA-CD",
+            "https://arxiv.org/abs/2605.14651",
+        ),
+    },
+}
+
+
+def _source_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _prior_source_row(prior: Mapping[str, Any], source: str) -> dict[str, Any]:
+    rows = prior.get("blocked_or_deferred", [])
+    if isinstance(rows, list):
+        for row in rows:
+            if isinstance(row, Mapping) and _source_key(row.get("source_dataset")) == _source_key(source):
+                return dict(row)
+    sources = prior.get("sources", [])
+    if isinstance(sources, Mapping):
+        candidate = sources.get(source)
+        if isinstance(candidate, Mapping):
+            return dict(candidate)
+    if isinstance(sources, list):
+        for row in sources:
+            if isinstance(row, Mapping) and _source_key(row.get("source_dataset") or row.get("source")) == _source_key(source):
+                return dict(row)
+    return {}
+
+
+def _source_file_inventory(root: Path) -> tuple[int, int]:
+    if not root.is_dir():
+        return 0, 0
+    count = 0
+    total = 0
+    for path in root.rglob("*"):
+        if not path.is_file() or ".git" in path.parts or ".cache" in path.parts:
+            continue
+        try:
+            count += 1
+            total += path.stat().st_size
+        except OSError:
+            continue
+    return count, total
+
+
+def _direct_evidence_files(root: Path, tokens: tuple[str, ...]) -> list[str]:
+    if not root.exists():
+        return []
+    matches: list[str] = []
+    normalized = tuple(_source_key(token) for token in tokens)
+    for path in root.glob("*"):
+        if not path.is_file():
+            continue
+        name = _source_key(path.name)
+        if any(token in name for token in normalized) and (
+            "sha" in name or "checksum" in name or "manifest" in name or "license" in name or name in {"copying", "notice"}
+        ):
+            matches.append(str(path))
+    return sorted(matches)
+
+
+def _source_manifest_evidence(release: Path, source: str, raw_root: Path | None) -> list[str]:
+    tokens = (_source_key(source),) + ((_source_key(raw_root.name),) if raw_root else ())
+    candidates: list[Path] = []
+    for base in (release / "manifests", release / "source_reports", release / "registries"):
+        if not base.exists():
+            continue
+        for path in base.glob("*"):
+            if path.is_file() and path.suffix in {".json", ".jsonl", ".csv"}:
+                normalized = _source_key(path.name)
+                if any(block in normalized for block in ("audit", "status", "report", "license")):
+                    continue
+                if any(token and token in normalized for token in tokens):
+                    candidates.append(path)
+    return sorted({str(path) for path in candidates if path.stat().st_size > 0})
+
+
+def _adapter_state(adapter_path: Path) -> tuple[bool, str | None]:
+    if not adapter_path.is_file():
+        return False, None
+    text = adapter_path.read_text(encoding="utf-8", errors="replace")
+    match = re.search(r'RegistrySourceAdapter\(\s*["\']([^"\']+)["\']\s*,\s*["\']([^"\']+)["\']', text)
+    return True, match.group(2) if match else None
+
+
+def build_official_source_acquisition_audit(
+    current_release: Path,
+    code_repo: Path,
+    prior: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Probe the five explicitly deferred sources without promoting any of them."""
+
+    project_root = current_release.parents[1]
+    raw_root = project_root / "datasets" / "raw"
+    manual_root = project_root / "datasets" / "manual"
+    source_rows: dict[str, dict[str, Any]] = {}
+    ready_sources: list[str] = []
+
+    for source, spec in _SOURCE_ACQUISITION_SPECS.items():
+        raw_candidates = [raw_root / name for name in spec["raw_names"]]
+        raw_candidates.extend(manual_root / name for name in spec["raw_names"])
+        raw_path = next((candidate for candidate in raw_candidates if candidate.is_dir()), None)
+        physical_file_count, physical_bytes = _source_file_inventory(raw_path) if raw_path else (0, 0)
+
+        prior_row = _prior_source_row(prior, source)
+        official_locations = list(spec["official_locations"])
+        for location in prior_row.get("official_locations", []) if isinstance(prior_row.get("official_locations"), list) else []:
+            if location not in official_locations:
+                official_locations.append(location)
+
+        hash_evidence = []
+        if prior_row.get("sha256"):
+            hash_evidence.append({"kind": "prior_source_registry", "sha256": prior_row["sha256"]})
+        for evidence_root in (raw_path, current_release / "hashes", current_release / "source_reports"):
+            if evidence_root:
+                hash_evidence.extend({"kind": "filesystem", "path": path} for path in _direct_evidence_files(evidence_root, spec["raw_names"]))
+
+        license_status = str(prior_row.get("license_status") or prior_row.get("license") or "").strip()
+        license_blocked = any(
+            token in license_status.upper()
+            for token in ("REVIEW", "REQUIRES", "NOT_PINNED", "DATA_LICENSE_NOT_PINNED", "NONCOMMERCIAL_ANNOTATION_REVIEW_REQUIRED")
+        )
+        license_evidence = []
+        if license_status:
+            license_evidence.append({"kind": "prior_source_audit", "status": license_status})
+        for evidence_root in (raw_path, current_release / "LICENSES", current_release / "source_reports"):
+            if evidence_root:
+                license_evidence.extend({"kind": "filesystem", "path": path} for path in _direct_evidence_files(evidence_root, spec["raw_names"]))
+
+        adapter_path = code_repo / "src" / "qcpr_data" / "sources" / spec["adapter"]
+        loader_available, adapter_status = _adapter_state(adapter_path)
+        loader_validated = loader_available and adapter_status not in {None, "unacquired", "unvalidated", "pilot"}
+
+        manifest_evidence = _source_manifest_evidence(current_release, source, raw_path)
+        gates = {
+            "physical_assets": physical_file_count > 0,
+            "hashes": bool(hash_evidence),
+            "license": bool(license_evidence) and not license_blocked,
+            "loader": loader_validated,
+            "manifest": bool(manifest_evidence),
+        }
+        missing = [name for name, passed in gates.items() if not passed]
+        if not missing:
+            ready_sources.append(source)
+        source_rows[source] = {
+            "source_dataset": source,
+            "official_locations": official_locations,
+            "raw_path": str(raw_path) if raw_path else None,
+            "physical_file_count": physical_file_count,
+            "physical_bytes": physical_bytes,
+            "physical_assets": gates["physical_assets"],
+            "hashes": gates["hashes"],
+            "hash_evidence": hash_evidence,
+            "license": gates["license"],
+            "license_status": license_status or "NOT_OBSERVED",
+            "license_evidence": license_evidence,
+            "loader": gates["loader"],
+            "loader_available": loader_available,
+            "loader_validated": loader_validated,
+            "loader_path": str(adapter_path),
+            "adapter_status": adapter_status,
+            "manifest": gates["manifest"],
+            "manifest_evidence": manifest_evidence,
+            "integration_prerequisites": gates,
+            "ready_for_integration": not missing,
+            "missing_prerequisites": missing,
+            "training_enabled": False,
+            "status": "READY_FOR_INTEGRATION_REVIEW" if not missing else "NOT_INTEGRATED_PREREQUISITES_MISSING",
+            "reason": (
+                "All five prerequisites are present; source-level review is still required."
+                if not missing
+                else "Do not integrate until physical assets, hashes, resolved license, validated loader, and source manifest are all present."
+            ),
+        }
+
+    return {
+        "schema_version": "qcpr-official-source-acquisition-audit-v2",
+        "status": "ACQUISITION_AUDIT_COMPLETE_PREREQUISITES_HOLD" if not ready_sources else "ACQUISITION_AUDIT_COMPLETE_REVIEW_REQUIRED",
+        "integration_policy": "A source is not integrated or training-enabled unless all five prerequisite gates are true and source review accepts it.",
+        "gate_names": ["physical_assets", "hashes", "license", "loader", "manifest"],
+        "ready_sources": ready_sources,
+        "sources": source_rows,
+        "prior_audit": prior,
+    }
+
+
 def split_name(value: Any) -> str:
     value = str(value or "")
     return {"val": "development", "validation": "development", "dev": "development"}.get(value, value or "unknown")
@@ -1289,11 +1512,14 @@ def main() -> int:
         "status": "HOLD_INPUT_OR_REVIEW_NOT_AVAILABLE",
     })
     official = read_json(current_release / "source_reports/official_source_audit.json", {})
-    write_json(out / "source_reports/official_source_acquisition_audit.json", {
-        "sources": {name: {"status": "NOT_INTEGRATED_UNTIL_PHYSICAL_HASH_LICENSE_LOADER_MANIFEST", "physical_assets": False, "hashes": False, "license": False, "loader": False, "manifest": False, "training_enabled": False} for name in ["DUBAI-CC", "RSRCC", "DynamicEarthNet", "SpaceNet 7", "TERRA-CD"]},
-        "prior_audit": official,
-        "status": "ACQUISITION_AUDIT_CONTINUES",
-    })
+    write_json(
+        out / "source_reports/official_source_acquisition_audit.json",
+        build_official_source_acquisition_audit(
+            current_release=current_release,
+            code_repo=Path(__file__).resolve().parents[1],
+            prior=official,
+        ),
+    )
 
     # Materialized view manifests.  Rows are non-empty candidate records where
     # possible, but every view carries an explicit READY/EVAL_ONLY/HOLD state.
