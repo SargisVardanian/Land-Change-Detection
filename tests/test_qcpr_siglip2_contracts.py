@@ -316,6 +316,11 @@ def test_gradient_report_captures_nested_siglip2_top_blocks():
     backbone.model.vision_model = torch.nn.Linear(3, 3)
     backbone.model.text_model = torch.nn.Linear(3, 3)
     model.backbone = backbone
+    for parameter in model.temporal_adapter.parameters():
+        parameter.requires_grad = False
+    for parameter in model.evidence_bottleneck.parameters():
+        parameter.requires_grad = False
+    model.log_temperature.requires_grad = False
     for parameter in model.backbone.parameters():
         parameter.requires_grad = True
         parameter.grad = torch.ones_like(parameter)
