@@ -593,6 +593,40 @@ def test_phase_driver_requires_explicit_long_run_authorization(monkeypatch):
     assert resolve_steps(args) == 8
 
 
+def test_phase_milestones_are_complete_and_phase_specific():
+    from qcpr_siglip2.training.milestones import required_milestones
+
+    assert required_milestones("A") == (0, 128, 256)
+    assert required_milestones("B") == (256, 512, 1024, 1792)
+    with pytest.raises(ValueError, match="unsupported"):
+        required_milestones("C")
+
+
+def test_milestone_evaluator_requires_all_full_gallery_outputs():
+    from pathlib import Path
+
+    source = Path("scripts/evaluate_qcpr_siglip2_milestones.py").read_text()
+    assert "MILESTONE_CHECKPOINT_SHA_MISMATCH" in source
+    assert "full_rankings.pt" in source
+    assert "ranking_integrity.json" in source
+    assert "PENDING_EXTERNAL_FULL_GALLERY_EVALUATION" in Path(
+        "scripts/run_qcpr_siglip2_phase.py"
+    ).read_text()
+
+
+def test_milestone_launcher_is_dependency_and_sha_guarded():
+    from pathlib import Path
+
+    launcher = Path(
+        "cluster/ysu/submit_qcpr_siglip2_milestone_evaluation.sh"
+    ).read_text()
+    assert "afterok:${PHASE_JOB_ID}" in launcher
+    assert "EXPECTED_SHA" in launcher
+    assert "git status --porcelain" in launcher
+    assert "pipefail" not in launcher
+    assert "evaluate_qcpr_siglip2_milestones.py" in launcher
+
+
 def test_batch_calibration_launcher_has_hard_step_budget():
     from pathlib import Path
 

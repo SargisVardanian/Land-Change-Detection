@@ -34,6 +34,11 @@ from qcpr_siglip2.data.runtime import (
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.exposure import ExposureLedger
 from qcpr_siglip2.training.gradcache import logical_listwise_step
+from qcpr_siglip2.training.milestones import (
+    milestone_checkpoint_path,
+    milestone_evaluation_path,
+    required_milestones,
+)
 from qcpr_siglip2.training.optimizer import build_adamw
 
 
@@ -83,12 +88,10 @@ def git_state(worktree: Path) -> dict[str, Any]:
 
 def write_sha256sums(run: Path) -> None:
     lines: list[str] = []
-    for path in sorted(run.iterdir()):
-        if not path.is_file() or path.name == "SHA256SUMS" or path.name.startswith(
-            "slurm-"
-        ):
+    for path in sorted(path for path in run.rglob("*") if path.is_file()):
+        if path.name == "SHA256SUMS" or path.name.startswith("slurm-"):
             continue
-        lines.append(f"{sha256(path)}  {path.name}")
+        lines.append(f"{sha256(path)}  {path.relative_to(run).as_posix()}")
     (run / "SHA256SUMS").write_text("\n".join(lines) + "\n")
 
 
@@ -182,6 +185,62 @@ def load_checkpoint_weights(
         raise ValueError("initial checkpoint lacks model_state")
     model.load_state_dict(payload["model_state"], strict=True)
     return payload
+
+
+def checkpoint_payload(
+    model: Siglip2TemporalRetrievalModel,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler.LRScheduler,
+    *,
+    global_step: int,
+    phase: str,
+    code_sha: str,
+    data_release: str,
+    train_manifest: str,
+    development_manifest: str,
+) -> dict[str, Any]:
+    """Build a complete, fresh-resume-safe checkpoint payload."""
+
+    return {
+        "model_state": model.state_dict(),
+        "optimizer_state": optimizer.state_dict(),
+        "scheduler_state": scheduler.state_dict(),
+        "global_step": global_step,
+        "metadata": {
+            "phase": phase,
+            "global_step": global_step,
+            "code_sha": code_sha,
+            "data_release": data_release,
+            "train_manifest": train_manifest,
+            "development_manifest": development_manifest,
+            "optimizer_resumed": False,
+        },
+        "torch_rng_state": torch.get_rng_state(),
+        "cuda_rng_state_all": torch.cuda.get_rng_state_all(),
+    }
+
+
+def save_milestone_checkpoint(
+    run: Path,
+    payload: dict[str, Any],
+    step: int,
+) -> dict[str, Any]:
+    """Save one checkpoint consumed by the external full-gallery evaluator."""
+
+    checkpoint = milestone_checkpoint_path(run, step)
+    checkpoint.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(payload, checkpoint)
+    digest = sha256(checkpoint)
+    (checkpoint.with_name(checkpoint.name + ".sha256")).write_text(
+        f"{digest}  {checkpoint.name}\n"
+    )
+    return {
+        "step": step,
+        "checkpoint": str(checkpoint),
+        "checkpoint_sha256": digest,
+        "evaluation_dir": str(milestone_evaluation_path(run, step)),
+        "evaluation_status": "PENDING_EXTERNAL_FULL_GALLERY_EVALUATION",
+    }
 
 
 def checkpoint_roundtrip(
@@ -330,6 +389,10 @@ def main() -> int:
         optimizer, optimizer_report, scheduler = build_adamw(
             model, phase=args.phase, total_steps=steps
         )
+        milestone_steps = required_milestones(args.phase)
+        phase_end = steps_start + steps
+        if not all(steps_start <= milestone <= phase_end for milestone in milestone_steps):
+            raise RuntimeError("MILESTONE_CONTRACT_NOT_COVERED")
         write_json(run / "parameter_groups.json", optimizer_report)
         write_json(
             run / "code_state.json",
@@ -376,6 +439,7 @@ def main() -> int:
                 "early_stopping": False,
                 "initial_checkpoint": args.initial_checkpoint,
                 "optimizer_resumed": False,
+                "required_evaluation_milestones": list(milestone_steps),
             },
         )
         write_json(
@@ -418,9 +482,29 @@ def main() -> int:
         )
         ledger = ExposureLedger()
         metric_rows: list[dict[str, Any]] = []
+        milestone_records: dict[str, dict[str, Any]] = {}
+
+        def save_current_milestone(step: int) -> None:
+            payload = checkpoint_payload(
+                model,
+                optimizer,
+                scheduler,
+                global_step=step,
+                phase=args.phase,
+                code_sha=args.expected_code_sha,
+                data_release=args.data_release,
+                train_manifest=args.train_manifest,
+                development_manifest=args.development_manifest,
+            )
+            milestone_records[str(step)] = save_milestone_checkpoint(
+                run, payload, step
+            )
+
         total_start = time.perf_counter()
         global_step = steps_start
         last_batch: ExactBatch | None = None
+        if global_step in milestone_steps:
+            save_current_milestone(global_step)
         for local_step in range(steps):
             batch, epoch, batch_index = select_logical_batch(
                 train_rows,
@@ -464,34 +548,39 @@ def main() -> int:
             (run / "metrics.jsonl").write_text(
                 "".join(json.dumps(row, sort_keys=True) + "\n" for row in metric_rows)
             )
+            if global_step in milestone_steps:
+                save_current_milestone(global_step)
         elapsed = time.perf_counter() - total_start
         final_step = global_step
         if final_step != steps_start + steps:
             raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
-        metadata = {
-            "phase": args.phase,
-            "global_step": final_step,
-            "code_sha": args.expected_code_sha,
-            "data_release": args.data_release,
-            "train_manifest": args.train_manifest,
-            "development_manifest": args.development_manifest,
-            "optimizer_resumed": False,
-            "fixed_steps": steps,
-        }
-        checkpoint_state = {
-            "model_state": model.state_dict(),
-            "optimizer_state": optimizer.state_dict(),
-            "scheduler_state": scheduler.state_dict(),
-            "global_step": final_step,
-            "metadata": metadata,
-            "torch_rng_state": torch.get_rng_state(),
-            "cuda_rng_state_all": torch.cuda.get_rng_state_all(),
-        }
+        checkpoint_state = checkpoint_payload(
+            model,
+            optimizer,
+            scheduler,
+            global_step=final_step,
+            phase=args.phase,
+            code_sha=args.expected_code_sha,
+            data_release=args.data_release,
+            train_manifest=args.train_manifest,
+            development_manifest=args.development_manifest,
+        )
         checkpoint = run / f"checkpoint_step_{final_step}.pt"
         torch.save(checkpoint_state, checkpoint)
         (run / "checkpoint.pt").write_bytes(checkpoint.read_bytes())
         (run / "checkpoint.sha256").write_text(
             f"{sha256(checkpoint)}  {checkpoint.name}\n"
+        )
+        write_json(
+            run / "milestone_evaluation_manifest.json",
+            {
+                "phase": args.phase,
+                "required_milestones": list(milestone_steps),
+                "milestones": [milestone_records[str(step)] for step in milestone_steps],
+                "evaluation_runner": "scripts/evaluate_qcpr_siglip2_milestones.py",
+                "status": "PENDING_EXTERNAL_FULL_GALLERY_EVALUATION",
+                "full_rankings_required": True,
+            },
         )
         write_json(run / "exposure_accounting.json", ledger.to_dict())
         if last_batch is None:
@@ -565,8 +654,9 @@ def main() -> int:
             },
         )
         not_run = {
-            "status": "NOT_RUN",
-            "reason": "training driver does not silently substitute for common-gallery evaluation",
+            "status": "PENDING_EXTERNAL_MILESTONE_EVALUATION",
+            "reason": "run the guarded milestone evaluator before scientific acceptance",
+            "required_milestones": list(milestone_steps),
         }
         write_json(run / "evaluation_metrics.json", not_run)
         write_json(run / "ranking_integrity.json", not_run)
@@ -581,7 +671,10 @@ def main() -> int:
                 "requested_steps": steps,
                 "no_nan_or_oom": True,
                 "checkpoint": str(checkpoint),
-                "evaluation_status": "NOT_RUN",
+                "evaluation_status": "PENDING_EXTERNAL_MILESTONE_EVALUATION",
+                "milestone_evaluation_manifest": str(
+                    run / "milestone_evaluation_manifest.json"
+                ),
             },
         )
         write_sha256sums(run)
