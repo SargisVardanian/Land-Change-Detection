@@ -192,8 +192,8 @@ def _direct_evidence_files(root: Path, tokens: tuple[str, ...]) -> list[str]:
 def _source_manifest_evidence(release: Path, source: str, raw_root: Path | None) -> list[str]:
     tokens = (_source_key(source),) + ((_source_key(raw_root.name),) if raw_root else ())
     candidates: list[Path] = []
-    for base in (release / "manifests", release / "source_reports", release / "registries"):
-        if not base.exists():
+    for base in (release / "manifests", release / "source_reports", release / "registries", raw_root):
+        if base is None or not base.exists():
             continue
         for path in base.glob("*"):
             if path.is_file() and path.suffix in {".json", ".jsonl", ".csv"}:
