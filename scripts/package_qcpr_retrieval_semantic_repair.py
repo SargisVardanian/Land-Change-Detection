@@ -166,6 +166,56 @@ def main() -> int:
     merge_tree(args.repair_output / "evaluation_sidecars", args.output / "evaluation_sidecars")
     merge_tree(args.repair_output / "audits", args.output / "audits/retrieval_semantic_repair")
     merge_tree(args.repair_output / "source_reports", args.output / "source_reports/retrieval_semantic_repair")
+
+    # Keep the legacy root RSRCC audit synchronized with the newly acquired
+    # physical manifest.  The source remains license-held and text-disabled,
+    # but stale "asset acquisition incomplete" evidence must not survive in
+    # the immutable release next to the current acquisition audit.
+    rsrcc_acquisition = read_json(args.repair_output / "source_reports/rsrcc_physical_asset_acquisition.json", {})
+    rsrcc_validation = read_json(args.repair_output / "source_reports/rsrcc_physical_manifest_validation.json", {})
+    rsrcc_manifest = args.repair_output / "source_reports/rsrcc_physical_asset_manifest.jsonl"
+    rsrcc_gate_report = read_json(args.repair_output / "source_reports/official_source_acquisition_audit.json", {})
+    rsrcc_gate = (rsrcc_gate_report.get("sources") or {}).get("RSRCC", {})
+    if rsrcc_acquisition and rsrcc_validation and rsrcc_manifest.exists():
+        rsrcc_path = args.output / "source_reports/rsrcc_source_audit.json"
+        rsrcc_audit = read_json(rsrcc_path, {})
+        rsrcc_physical = dict(rsrcc_audit.get("physical_asset_audit") or {})
+        rsrcc_physical.update({
+            "asset_manifest": "source_reports/retrieval_semantic_repair/rsrcc_physical_asset_manifest.jsonl",
+            "available_asset_count": rsrcc_acquisition.get("available_asset_count"),
+            "missing_asset_count": rsrcc_acquisition.get("missing_asset_count"),
+            "downloaded_asset_count": rsrcc_acquisition.get("downloaded_asset_count"),
+            "unique_asset_count": rsrcc_acquisition.get("unique_asset_count"),
+            "revision": rsrcc_acquisition.get("revision"),
+            "status": "PHYSICAL_ASSET_ACQUISITION_COMPLETE",
+            "training_enabled": False,
+            "hash_validation": {
+                "passed": bool(rsrcc_validation.get("passed")),
+                "asset_count": rsrcc_validation.get("asset_count"),
+                "missing_count": rsrcc_validation.get("missing_count"),
+                "hash_mismatch_count": rsrcc_validation.get("hash_mismatch_count"),
+            },
+            "parent_overlap_audit": "PENDING_REAUDIT_AFTER_PHYSICAL_ACQUISITION",
+        })
+        rsrcc_audit.update({
+            "status": "PHYSICAL_ASSETS_COMPLETE_LICENSE_HOLD",
+            "download_observation": "Pinned official HF physical acquisition complete; generated text remains evaluation-only.",
+            "repository_image_file_count": rsrcc_acquisition.get("unique_asset_count"),
+            "revision": rsrcc_acquisition.get("revision"),
+            "physical_asset_audit": rsrcc_physical,
+            "physical_asset_manifest_sha256": sha256(rsrcc_manifest),
+            "physical_asset_validation": {
+                "path": "source_reports/retrieval_semantic_repair/rsrcc_physical_manifest_validation.json",
+                "passed": bool(rsrcc_validation.get("passed")),
+                "asset_count": rsrcc_validation.get("asset_count"),
+                "missing_count": rsrcc_validation.get("missing_count"),
+                "hash_mismatch_count": rsrcc_validation.get("hash_mismatch_count"),
+            },
+            "license_status": rsrcc_gate.get("license_status") or rsrcc_audit.get("license_status"),
+            "training_enabled": False,
+            "integration_status": "NOT_INTEGRATED_LICENSE_AND_PARENT_DATA_REVIEW_REQUIRED",
+        })
+        write_json(rsrcc_path, rsrcc_audit)
     # Keep Forest's deterministic scene-component split as a canonical source
     # report as well as a repair-package artifact.  The physical split is
     # materialized, but captions remain held until provenance/review gates
