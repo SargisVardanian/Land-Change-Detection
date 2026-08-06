@@ -6,6 +6,13 @@ from run_qcpr_siglip2_real_smoke import build_relevance
 
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.loader import make_exact_batches
+from qcpr_siglip2.data.runtime import RawFeatureBatch, build_relevance_masks
+from qcpr_siglip2.evaluation.common_gallery import (
+    audit_ranking_integrity,
+    global_stage_scores,
+    merge_reranked_scores,
+    ranking_records,
+)
 from qcpr_siglip2.evaluation.evidence import (
     effective_token_count,
     evidence_entropy,
@@ -27,6 +34,12 @@ from qcpr_siglip2.models.evidence import EvidenceBottleneck
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.models.temporal import TemporalTransformerAdapter
 from qcpr_siglip2.training.exposure import ExposureLedger, sequence_sha256
+from qcpr_siglip2.training.gradcache import (
+    CachedLogicalFeatures,
+    _feature_surrogate,
+    cache_features,
+    logical_listwise_step,
+)
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
 from qcpr_siglip2.training.optimizer import build_adamw
 
@@ -345,3 +358,155 @@ def test_evidence_diagnostics_report_entropy_and_effective_tokens():
     weights = torch.full((2, 4), 0.25)
     assert torch.allclose(evidence_entropy(weights), torch.log(torch.full((2,), 4.0)))
     assert torch.allclose(effective_token_count(weights), torch.full((2,), 4.0))
+
+
+def test_explicit_relevance_masks_preserve_multi_positive_and_text_collisions():
+    pairs = [
+        {"canonical_pair_id": "p0"},
+        {"canonical_pair_id": "p1"},
+        {"canonical_pair_id": "p2"},
+    ]
+    queries = [
+        {
+            "caption_id": "q0",
+            "caption": "same text",
+            "positive_pair_ids": ["p0"],
+            "ignored_pair_ids": [],
+        },
+        {
+            "caption_id": "q1",
+            "caption": "same text",
+            "positive_pair_ids": ["p1"],
+            "ignored_pair_ids": [],
+        },
+        {
+            "caption_id": "q2",
+            "caption": "verified group",
+            "positive_pair_ids": ["p0", "p1"],
+            "ignored_pair_ids": ["p2"],
+        },
+    ]
+    positive, ignored, meta = build_relevance_masks(queries, pairs, torch.device("cpu"))
+    assert positive.tolist() == [
+        [True, False, False],
+        [False, True, False],
+        [True, True, False],
+    ]
+    assert ignored.tolist() == [[False, False, False]] * 2 + [[False, False, True]]
+    assert meta["multi_positive_queries"] == 1
+
+
+def test_gradcache_detaches_features_and_replays_feature_gradients():
+    frame_tokens, frame_embeddings, text_tokens, text_embeddings, text_mask = _features(
+        q=4, p=2
+    )
+    frame_tokens = frame_tokens.requires_grad_()
+    frame_embeddings = frame_embeddings.requires_grad_()
+    text_tokens = text_tokens.requires_grad_()
+    text_embeddings = text_embeddings.requires_grad_()
+    raw = RawFeatureBatch(
+        frame_tokens, frame_embeddings, text_tokens, text_embeddings, text_mask
+    )
+    cached = cache_features(raw)
+    assert cached.frame_tokens.requires_grad
+    assert cached.text_embeddings.requires_grad
+    assert not cached.text_mask.requires_grad
+    endpoints = CachedLogicalFeatures(
+        torch.ones_like(cached.frame_tokens),
+        torch.ones_like(cached.frame_embeddings),
+        torch.ones_like(cached.text_tokens),
+        torch.ones_like(cached.text_embeddings),
+        cached.text_mask,
+    )
+    micro = RawFeatureBatch(
+        raw.frame_tokens[:1],
+        raw.frame_embeddings[:1],
+        raw.text_tokens[:2],
+        raw.text_embeddings[:2],
+        raw.text_mask[:2],
+    )
+    surrogate = _feature_surrogate(micro, endpoints, 0, 1, 2)
+    surrogate.backward()
+    assert raw.frame_tokens.grad is not None
+    assert raw.text_tokens.grad is not None
+    assert raw.frame_tokens.grad.shape == (2, 2, 256, 768)
+
+
+def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
+    features = _features(q=4, p=2)
+
+    def fake_encode(*_args, **_kwargs):
+        return RawFeatureBatch(*(value.clone() for value in features))
+
+    monkeypatch.setattr(
+        "qcpr_siglip2.training.gradcache.encode_real_features", fake_encode
+    )
+    model = Siglip2TemporalRetrievalModel(None)
+    optimizer, _, scheduler = build_adamw(model, phase="A", total_steps=1)
+    queries = [
+        {"caption_id": "q0", "positive_pair_ids": ["p0"]},
+        {"caption_id": "q1", "positive_pair_ids": ["p1"]},
+        {"caption_id": "q2", "positive_pair_ids": ["p0", "p1"]},
+        {"caption_id": "q3", "positive_pair_ids": ["p1"]},
+    ]
+    pairs = [{"canonical_pair_id": "p0"}, {"canonical_pair_id": "p1"}]
+    positive, ignored, _ = build_relevance_masks(queries, pairs, torch.device("cpu"))
+    result = logical_listwise_step(
+        model,
+        object(),
+        object(),
+        pairs,
+        queries,
+        positive,
+        ignored,
+        optimizer,
+        device=torch.device("cpu"),
+        physical_batch_size=1,
+        captions_per_pair=2,
+        scheduler=scheduler,
+        dtype=torch.float32,
+    )
+    assert result["score_shape"] == [4, 2]
+    assert result["multi_positive_queries"] == 1
+    assert result["gradient_norm_preclip"] > 0.0
+    assert result["gradient_report"]["temporal_adapter"]["parameters_with_grad"] > 0
+    assert result["gradient_report"]["evidence_bottleneck"]["parameters_with_grad"] > 0
+    assert result["gradient_report"]["siglip2_vision_backbone"]["trainable_count"] == 0
+
+
+def test_common_gallery_metrics_keep_global_and_rerank_scores_aligned():
+    scores = torch.tensor([[3.0, 2.0, 1.0], [0.0, 3.0, 1.0]])
+    merged = merge_reranked_scores(
+        scores,
+        torch.tensor([[0, 2], [1, 2]]),
+        torch.tensor([[0.5, 4.0], [0.25, 0.75]]),
+    )
+    assert merged.tolist() == [[0.5, 2.0, 4.0], [0.0, 0.25, 0.75]]
+    rows = [
+        {"caption_id": "q0", "canonical_pair_id": "p0", "dataset_name": "a"},
+        {"caption_id": "q1", "canonical_pair_id": "p1", "dataset_name": "b"},
+    ]
+    pairs = [
+        {"canonical_pair_id": "p0"},
+        {"canonical_pair_id": "p1"},
+        {"canonical_pair_id": "p2"},
+    ]
+    assert global_stage_scores(torch.eye(2, 3), torch.eye(3, 3)).shape == (2, 3)
+    integrity = audit_ranking_integrity(merged[:2], rows, pairs)
+    assert integrity["scores_finite"] is True
+    records = ranking_records(merged[:2], rows, pairs, top_k=2)
+    assert records[0]["top_pair_ids"] == ["p2", "p1"]
+
+
+def test_phase_driver_requires_explicit_long_run_authorization(monkeypatch):
+    from argparse import Namespace
+
+    from run_qcpr_siglip2_phase import resolve_steps
+
+    args = Namespace(phase="A", steps=8, authorize_long_run=False)
+    monkeypatch.setenv("QCPR_ALLOW_NONSTANDARD_STEPS", "1")
+    with pytest.raises(RuntimeError, match="LONG_TRAINING"):
+        resolve_steps(Namespace(phase="A", steps=256, authorize_long_run=False))
+    monkeypatch.setenv("QCPR_ALLOW_LONG_TRAINING", "1")
+    assert resolve_steps(Namespace(phase="A", steps=256, authorize_long_run=True)) == 256
+    assert resolve_steps(args) == 8
