@@ -97,8 +97,10 @@ _SOURCE_ACQUISITION_SPECS = {
         "raw_names": ("DUBAI-CC", "Dubai-CC", "dubai_cc"),
         "adapter": "dubai_cc.py",
         "official_locations": (
+            "https://disi.unitn.it/~melgani/datasets.html",
             "https://service.tib.eu/ldmservice/dataset/dubai-cc--a-dataset-for-remote-sensing-change-captioning",
         ),
+        "access_audit": {"checked_at_utc": "2026-08-06T20:18:41Z", "status": "OFFICIAL_PAGE_CITED_BUT_ARCHIVE_NOT_ACQUIRED", "official_data_page": "https://disi.unitn.it/~melgani/datasets.html", "legacy_tib_slug_http_status": 404, "api_package_show_http_status": 404, "expected_physical_pair_count": 500, "expected_caption_count": 2500, "expected_shape": [50, 50], "expected_band_count": 6, "expected_gsd_m": 30, "expected_acquisition_dates": ["2000-05-19", "2010-06-16"], "paper_provenance": "https://doi.org/10.1109/TGRS.2022.3195692", "physical_asset_acquisition": "NOT_ACQUIRED", "license_observed": False},
     },
     "RSRCC": {
         "raw_names": ("RSRCC", "rsrcc"),
@@ -115,6 +117,7 @@ _SOURCE_ACQUISITION_SPECS = {
             "https://mediatum.ub.tum.de/1650201",
             "https://dataserv.ub.tum.de/index.php/s/m1650201",
         ),
+        "access_audit": {"checked_at_utc": "2026-08-06T20:18:41Z", "status": "OFFICIAL_PUBLIC_SHARE_FOUND_ARCHIVE_NOT_ACQUIRED", "official_record_http_status": 200, "public_share_http_status": 200, "official_download_url": "https://dataserv.ub.tum.de/public.php/dav/files/m1650201/?accept=zip", "official_download_bytes": 563350086326, "official_download_gib": 524.69, "expected_aoi_count": 75, "paper_provenance": "https://arxiv.org/abs/2203.12560", "license_status": "CC_BY_SA_4.0_OFFICIAL_RECORD_RECORDED_ARCHIVE_NOT_ACQUIRED", "physical_asset_acquisition": "NOT_ACQUIRED", "derivative_mirror": "https://huggingface.co/datasets/torchgeo/dynamic_earthnet@169e9cb6bebfce8fcf2e6421f4f81385730247a0", "derivative_mirror_status": "NOT_OFFICIAL_INTEGRATION_EVIDENCE"},
     },
     "SpaceNet 7": {
         "raw_names": ("SpaceNet-7", "SpaceNet7", "SpaceNet 7", "spacenet7"),
@@ -275,6 +278,7 @@ def build_official_source_acquisition_audit(
         source_rows[source] = {
             "source_dataset": source,
             "official_locations": official_locations,
+            "access_audit": dict(spec.get("access_audit") or {}),
             "raw_path": str(raw_path) if raw_path else None,
             "physical_file_count": physical_file_count,
             "physical_bytes": physical_bytes,
