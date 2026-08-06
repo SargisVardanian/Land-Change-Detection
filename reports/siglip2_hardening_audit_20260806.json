@@ -1,88 +1,107 @@
 {
   "audit_date": "2026-08-06",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
-  "remote_sha_at_audit": "b5873c01e83fc6adc637cb15fefcee5097e8efbf",
-  "worktree_clean_at_gpu_submission": true,
-  "scope": "bounded real integration smoke only; no mechanism or main training",
+  "code_sha": "f05124f3838e00c8fe283bfbec38693c9acb9b37",
+  "remote_sha_at_audit": "f05124f3838e00c8fe283bfbec38693c9acb9b37",
+  "pr_number": 7,
+  "pr_state": "OPEN_DRAFT_MERGEABLE",
+  "cluster_worktree_clean": true,
+  "scope": "bounded real integration and frozen evaluation audit; no mechanism or main training",
   "cpu_validation": {
     "full_pytest": {
-      "passed": 631,
+      "passed": 644,
       "skipped": 3,
       "warnings": 16,
-      "duration_seconds": 378.30,
+      "duration_seconds": 317.43,
       "status": "PASS"
     },
     "compileall": "PASS",
-    "pyright_qcpr_siglip2": "0 errors, 0 warnings, 0 informations",
+    "pyright_qcpr_siglip2": "0 errors, 0 warnings",
     "shell_syntax": "PASS",
     "git_diff_check": "PASS",
-    "ruff": "PASS on local authenticated development environment; cluster PATH has no ruff executable",
-    "real_cpu_forward": {
-      "status": "PASS",
-      "visual_tokens": [1, 2, 256, 768],
-      "text_tokens": [1, 64, 768],
-      "score_matrix": [1, 1],
-      "finite": true
-    },
-    "real_cpu_backward": {
-      "status": "PASS",
-      "score_matrix": [4, 2],
-      "finite_loss": true,
-      "trainable_parameters_with_grad": 35
-    }
+    "ruff": "NOT_INSTALLED_ON_CLUSTER",
+    "code_quality_modules": 28,
+    "import_cycles": [],
+    "public_duplicate_symbols": {},
+    "tracked_model_binaries": []
   },
-  "georsclip_wrapper_cpu_contract": {
-    "status": "PASS",
-    "repository": "Zilun/GeoRSCLIP",
-    "revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
-    "checkpoint_sha256": "129bafaa6a097b8be52e2babf27d24f0a934dae919201e538dc698611bd1ea01",
-    "weights_only": true,
-    "missing_keys": [],
-    "unexpected_keys": [],
-    "image_patch_tokens": [1, 2, 49, 512],
-    "image_pooled": [1, 2, 512],
-    "text_tokens": [1, 77, 512],
-    "text_pooled": [1, 512],
-    "frozen": true,
-    "note": "The OpenCLIP constructor warning about pretrained=None is expected; the audited checkpoint is loaded afterward with an exact state-dict check."
+  "sources": {
+    "siglip2_repository": "google/siglip2-base-patch16-256",
+    "siglip2_revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+    "siglip2_weights_sha256": "6125cacc01fa93bdc98a0c5101cefcd69b2ed1f8ab4f38d86f4ad5984f5dc863",
+    "siglip2_runtime_class": "SiglipModel",
+    "georsclip_repository": "Zilun/GeoRSCLIP",
+    "georsclip_revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
+    "georsclip_weights_sha256": "129bafaa6a097b8be52e2babf27d24f0a934dae919201e538dc698611bd1ea01",
+    "georsclip_license_status": "RESEARCH_BASELINE_ONLY"
   },
-  "current_gpu_smoke": {
-    "job_id": "207778",
-    "state": "FAILED",
-    "exit_code": "1:0",
-    "node": "gpu02",
-    "elapsed": "00:00:32",
-    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_b5873c0_20260806",
-    "requested_steps": 8,
+  "real_integration_smoke": {
+    "job_id": 208013,
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "node": "gpu05",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_integration_smoke_5aa11f1_20260806",
+    "implementation_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
+    "steps": 8,
     "physical_batch_size": 8,
     "captions_per_pair": 2,
     "query_count": 16,
     "score_matrix": [16, 8],
-    "last_written_artifact": "roundtrip_input.json",
-    "checkpoint_written": false,
-    "runtime_profile_written": false,
-    "cuda_memory_written": false,
-    "metrics_written": false,
-    "failure_class": "ENGINEERING_RUNTIME_DIAGNOSTIC_UNRESOLVED",
-    "diagnostic_blocker": "Slurm stdout/stderr was configured under node-local /tmp and was unavailable from the login node after completion; no Python traceback was recoverable.",
-    "scientific_interpretation": "not a retrieval-quality result"
+    "native_visual_shape": [8, 2, 256, 768],
+    "temporal_shape": [8, 512, 768],
+    "text_shape": [16, 64, 768],
+    "trainable_parameter_count": 14384642,
+    "peak_allocated_gib": 2.001208782371521,
+    "peak_reserved_gib": 2.03125,
+    "checkpoint_sha256": "d9bd2498629133f2027a34d8ff9febe88c1925d3bb3f4531483e35429359bc0e",
+    "checkpoint_roundtrip": "PASS",
+    "evidence": {
+      "query_swap_map_l1": 0.0003928795922547579,
+      "query_swap_score_change": 0.404296875,
+      "zero_evidence_score_change": 0.16654765605926514,
+      "top_deletion_score_drop": 0.010586023330688477,
+      "bottom_deletion_score_drop": 0.008575022220611572,
+      "detach_gradient_norm": 0.37753114104270935,
+      "time_reversal_score_change": 0.005859375,
+      "status": "PASS"
+    },
+    "multi_positive_runtime": "NOT_EXERCISED",
+    "scientific_interpretation": "technical integration only; no retrieval-quality claim"
   },
-  "historical_gpu_smoke": {
-    "job_id": "207706",
-    "code_sha": "80d17d50845ac2a4086e32b68dd58c6371e92e27",
-    "status": "PASS",
-    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_80d17d5_20260805",
-    "checkpoint_sha256": "d9f1fb6a387641bdd956725fa90da598fbea917bd4f72cbbbe3dde4b973513b5",
-    "peak_allocated_gib": 1.369966983795166,
-    "peak_reserved_gib": 1.4765625,
-    "mechanism_status": "BLOCKED_EVIDENCE_DELETION",
-    "note": "Historical PASS is retained but does not certify the hardened b5873c0 code. No retrieval improvement was claimed."
+  "frozen_evaluations": {
+    "siglip2": {
+      "job_id": 208021,
+      "query_count": 6310,
+      "gallery_count": 1928,
+      "score_shape": [6310, 1928],
+      "full_mrr": 0.005997858941555023,
+      "hit_at_10": 0.008716323412954807,
+      "hit_at_100": 0.0625990480184555,
+      "rerank_top100_mrr": 0.005998149048537016,
+      "status": "PASS_FULL_GALLERY_STEP_ZERO"
+    },
+    "georsclip": {
+      "job_id": 208024,
+      "query_count": 6310,
+      "gallery_count": 1928,
+      "score_shape": [6310, 1928],
+      "full_mrr": 0.003682836890220642,
+      "hit_at_10": 0.0030110934749245644,
+      "optimizer_steps": 0,
+      "status": "PASS_FROZEN_STEP_ZERO"
+    }
+  },
+  "historical_failures": {
+    "207778": "ENGINEERING_RUNTIME_DIAGNOSTIC_FAILURE_PRESERVED",
+    "207555": "ENGINEERING_RUNTIME_DRIVER_BUG_PRESERVED",
+    "207706": "HISTORICAL_SMOKE_PASS_WITH_DELETION_DIAGNOSTIC_FAILURE_PRESERVED"
   },
   "readiness": {
     "MODEL_V3_SYNTHETIC_SMOKE": "PASS_HISTORICAL",
-    "SIGLIP2_REAL_INTEGRATION_SMOKE": "FAIL_UNDIAGNOSED_GPU_EXIT",
-    "SIGLIP2_MECHANISM": "BLOCKED_REAL_SMOKE",
+    "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
+    "SIGLIP2_COMMON_GALLERY_STEP_ZERO": "PASS",
+    "GEORSCLIP_STEP_ZERO": "PASS_FROZEN_EVALUATION",
+    "SIGLIP2_MECHANISM": "READY_FOR_AUTHORIZATION",
     "SIGLIP2_PHASE_A": "NOT_AUTHORIZED",
     "SIGLIP2_PHASE_B": "NOT_AUTHORIZED",
     "MODEL_V3_MAIN": "NOT_AUTHORIZED",
@@ -90,5 +109,8 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
     "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
   },
-  "next_required_action": "Make Slurm logs shared and capture the exact traceback, then request authorization before any further GPU retry."
+  "historical_artifacts_modified": false,
+  "dataset_manifests_modified": false,
+  "long_training_launched": false,
+  "retrieval_improvement_claimed": false
 }
