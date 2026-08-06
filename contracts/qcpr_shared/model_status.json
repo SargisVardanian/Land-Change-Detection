@@ -2,10 +2,10 @@
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "e4e420628ed65a3ad6c03fb2c398746e40c0118a",
+  "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "639 passed, 3 skipped, 16 warnings",
+    "full_pytest": "642 passed, 3 skipped, 16 warnings",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
     "shell_syntax": "PASS"
@@ -49,6 +49,40 @@
       "state": "COMPLETED"
     }
   },
+  "latest_bounded_smoke": {
+    "job_id": 208013,
+    "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "node": "gpu05",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_integration_smoke_5aa11f1_20260806",
+    "requested_steps": 8,
+    "physical_batch_size": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "native_visual_tokens": [8, 2, 256, 768],
+    "text_tokens": [16, 64, 768],
+    "peak_allocated_gib": 2.001208782371521,
+    "peak_reserved_gib": 2.03125,
+    "cpu_peak_rss_gib": 4.752643585205078,
+    "checkpoint_sha256": "d9bd2498629133f2027a34d8ff9febe88c1925d3bb3f4531483e35429359bc0e",
+    "checkpoint_roundtrip": "PASS",
+    "evidence": {
+      "query_swap_map_l1": 0.0003928795922547579,
+      "query_swap_map_cosine": 0.9693748950958252,
+      "score_change_after_query_swap": 0.404296875,
+      "score_change_after_evidence_zeroing": 0.16654765605926514,
+      "top_score_drop": 0.010586023330688477,
+      "bottom_score_drop": 0.008575022220611572,
+      "time_reversal_score_change": 0.005859375,
+      "detach_gradient_norm": 0.37753114104270935,
+      "status": "PASS"
+    },
+    "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED",
+    "full_gallery_evaluation": "NOT_RUN",
+    "scientific_interpretation": "technical integration smoke only; no retrieval-quality claim"
+  },
   "historical_artifacts_modified": false,
   "main_training_allowed": false,
   "notes": [
@@ -56,8 +90,8 @@
     "Job 207560 is classified as ENGINEERING_RUNTIME_DIAGNOSTIC_BUG: the real backbone and eight optimizer steps completed, but post-training evidence deletion indexing raised IndexError.",
     "The 207560 checkpoint roundtrip passed in a fresh process with zero score difference.",
     "The post-smoke repair adds a safe flattened temporal-spatial token deletion helper and a regression test; no second H100 job was submitted.",
-    "The next bounded smoke now records explicit temporal-reversal score sensitivity and peak CPU RSS; these diagnostics were not retroactively added to immutable job 207780.",
-    "Job 207946 is the current bounded smoke at the final branch SHA; job 207780 remains immutable historical evidence.",
+    "Jobs 208010 and 208011 are preserved engineering-only failures: launcher permission and BF16/Float diagnostic-driver bugs; neither is a scientific result.",
+    "Job 208013 is the current bounded real integration smoke at executable SHA 5aa11f1; its checkpoint, gradients, memory and evidence artifacts are complete.",
     "No scientific retrieval improvement is claimed."
   ],
   "owner": "model",
@@ -65,7 +99,7 @@
   "readiness": {
     "B1_CONTROL": "VERIFIED",
     "MODEL_V3_MAIN": "NOT_AUTHORIZED",
-    "MODEL_V3_MECHANISM": "BLOCKED_EVIDENCE_DELETION",
+    "MODEL_V3_MECHANISM": "READY_FOR_AUTHORIZATION",
     "MODEL_V3_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
     "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
     "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
@@ -73,7 +107,7 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "e4e420628ed65a3ad6c03fb2c398746e40c0118a",
+    "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
@@ -95,7 +129,7 @@
       "SIGLIP2_SMOKE_PASS": true,
       "SIGLIP2_HISTORICAL_SMOKE_207706": "PASS",
       "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
-      "SIGLIP2_MECHANISM": "BLOCKED_EVIDENCE_DELETION"
+      "SIGLIP2_MECHANISM": "READY_FOR_AUTHORIZATION"
     },
     "implementation": {
       "phase_a_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
@@ -174,36 +208,36 @@
     "scientific_interpretation": "not a retrieval-quality result"
   },
   "current_real_smoke": {
-    "job_id": "207946",
-    "code_sha": "999eae4cb37067306b05c6b726f4ed871a72b2a1",
+    "job_id": 208013,
+    "code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
     "state": "COMPLETED",
     "exit_code": "0:0",
     "node": "gpu05",
-    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_999eae4_20260806",
-    "requested_steps": 16,
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_integration_smoke_5aa11f1_20260806",
+    "requested_steps": 8,
     "physical_batch_size": 8,
     "query_count": 16,
     "score_matrix": [16, 8],
     "visual_tokens": [8, 512, 768],
-    "text_tokens": [16, 64],
-    "peak_allocated_gib": 1.3931632041931152,
-    "peak_reserved_gib": 1.650390625,
-    "cpu_peak_rss_gib": 3.3183517456054688,
-    "checkpoint_sha256": "194bbb6b61e4fa7eb1ccb918b72bec97ef5a426df02afcd65c053b47789d97b6",
+    "native_visual_shape": [8, 2, 256, 768],
+    "text_tokens": [16, 64, 768],
+    "peak_allocated_gib": 2.001208782371521,
+    "peak_reserved_gib": 2.03125,
+    "cpu_peak_rss_gib": 4.752643585205078,
+    "checkpoint_sha256": "d9bd2498629133f2027a34d8ff9febe88c1925d3bb3f4531483e35429359bc0e",
     "checkpoint_roundtrip": "PASS",
-    "time_reversal": {
-      "score_change_max": 0.0078125,
-      "passed": true
-    },
-    "evidence_deletion": "FAIL_TOP_EVIDENCE_DID_NOT_REDUCE_SCORE",
-    "evidence_zeroing_score_change": 1.254191517829895,
+    "time_reversal_score_change": 0.005859375,
+    "evidence_deletion": "PASS_TOP_0_010586_VS_BOTTOM_0_008575",
+    "evidence_zeroing_score_change": 0.16654765605926514,
+    "query_swap_map_l1": 0.0003928795922547579,
+    "query_swap_score_change": 0.404296875,
+    "detach_gradient_norm": 0.37753114104270935,
     "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED",
-    "checksum_status": "PASS_AFTER_EXPLICIT_POST_RUN_REPAIR",
     "evaluation_status": "NOT_RUN",
     "scientific_interpretation": "technical smoke only; no retrieval-quality claim"
   },
-  "status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_BLOCKED",
+  "status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_READY_FOR_AUTHORIZATION",
   "track_branch": "codex/qcpr-siglip2-temporal-training",
   "track_parent_sha": "c8a06122a2ef2f10c409ae732ddb62e73bcabe73",
-  "track_status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_BLOCKED"
+  "track_status": "SIGLIP2_REAL_SMOKE_PASS_MECHANISM_READY_FOR_AUTHORIZATION"
 }
