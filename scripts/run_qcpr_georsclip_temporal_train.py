@@ -346,7 +346,9 @@ def main() -> int:
         )
         tokenizer = open_clip.get_tokenizer("ViT-B-32")
         processor = OpenClipProcessor(preprocess, tokenizer)
-        backbone = GeoRSCLIPBackbone(georsclip_checkpoint, model_name="ViT-B-32")
+        backbone = GeoRSCLIPBackbone(
+            georsclip_checkpoint, model_name="ViT-B-32"
+        ).to(device)
         config = Siglip2TemporalConfig(
             hidden_size=512,
             expected_patch_tokens=49,
