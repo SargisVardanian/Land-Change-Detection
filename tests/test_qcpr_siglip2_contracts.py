@@ -39,6 +39,7 @@ from qcpr_siglip2.training.gradcache import (
     _feature_surrogate,
     cache_features,
     logical_listwise_step,
+    module_gradient_report,
 )
 from qcpr_siglip2.training.objective import multi_positive_listwise_loss
 from qcpr_siglip2.training.optimizer import build_adamw
@@ -306,6 +307,25 @@ def test_phase_a_optimizer_scope_is_temporal_only():
     assert len(optimizer.param_groups) == len(report["groups"])
     optimizer.step()
     scheduler.step()
+
+
+def test_gradient_report_captures_nested_siglip2_top_blocks():
+    model = Siglip2TemporalRetrievalModel(None)
+    backbone = torch.nn.Module()
+    backbone.model = torch.nn.Module()
+    backbone.model.vision_model = torch.nn.Linear(3, 3)
+    backbone.model.text_model = torch.nn.Linear(3, 3)
+    model.backbone = backbone
+    for parameter in model.backbone.parameters():
+        parameter.requires_grad = True
+        parameter.grad = torch.ones_like(parameter)
+
+    report = module_gradient_report(model)
+
+    assert report["siglip2_vision_backbone"]["trainable_count"] > 0
+    assert report["siglip2_vision_backbone"]["parameters_with_grad"] > 0
+    assert report["siglip2_text_backbone"]["trainable_count"] > 0
+    assert report["siglip2_text_backbone"]["parameters_with_grad"] > 0
 
 
 def test_smoke_relevance_does_not_infer_positives_from_text_collision():

@@ -41,9 +41,9 @@ def module_gradient_report(
             bucket = "evidence_bottleneck"
         elif name == "log_temperature":
             bucket = "retrieval_temperature"
-        elif name.startswith("backbone.vision_model."):
+        elif name.startswith(("backbone.vision_model.", "backbone.model.vision_model.")):
             bucket = "siglip2_vision_backbone"
-        elif name.startswith("backbone.text_model."):
+        elif name.startswith(("backbone.text_model.", "backbone.model.text_model.")):
             bucket = "siglip2_text_backbone"
         else:
             continue
