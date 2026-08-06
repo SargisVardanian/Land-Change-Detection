@@ -1,18 +1,18 @@
 {
   "audit_date": "2026-08-06",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "f05124f3838e00c8fe283bfbec38693c9acb9b37",
-  "remote_sha_at_audit": "f05124f3838e00c8fe283bfbec38693c9acb9b37",
+  "code_sha": "5d87afb9a91561cd391f5d039fe38133eb368e2d",
+  "remote_sha_at_audit": "5d87afb9a91561cd391f5d039fe38133eb368e2d",
   "pr_number": 7,
   "pr_state": "OPEN_DRAFT_MERGEABLE",
   "cluster_worktree_clean": true,
   "scope": "bounded real integration and frozen evaluation audit; no mechanism or main training",
   "cpu_validation": {
     "full_pytest": {
-      "passed": 644,
+      "passed": 645,
       "skipped": 3,
       "warnings": 16,
-      "duration_seconds": 317.43,
+      "duration_seconds": 351.47,
       "status": "PASS"
     },
     "compileall": "PASS",

@@ -18,8 +18,8 @@ diagnostic failure. No historical artifact was rewritten.
 
 ## Verified gates
 
-- Full suite on the current code: **644 passed, 3 skipped, 16 warnings** in
-  317.43 seconds.
+- Full suite on the current code: **645 passed, 3 skipped, 16 warnings** in
+  351.47 seconds.
 - `compileall`: PASS.
 - Pyright for `src/qcpr_siglip2`: 0 errors, 0 warnings, 0 informations.
 - Shell syntax and `git diff --check`: PASS.

@@ -1,6 +1,6 @@
 # SigLIP-2 phase/evaluator status — 2026-08-06
 
-Code is published at `f05124f3838e00c8fe283bfbec38693c9acb9b37` on
+Code is published at `5d87afb9a91561cd391f5d039fe38133eb368e2d` on
 `codex/qcpr-siglip2-temporal-training`; PR #7 remains draft and mergeable.
 
 ## Implemented and validated
@@ -42,9 +42,9 @@ this is a frozen reference only.
 
 ## Validation
 
-- full suite: **644 passed, 3 skipped, 16 warnings** in canonical cluster
-  Python (`317.43 s`);
-- focused SigLIP-2 contracts: **32 passed, 2 warnings**;
+- full suite: **645 passed, 3 skipped, 16 warnings** in canonical cluster
+  Python (`351.47 s`);
+- focused SigLIP-2 contracts: **36 passed, 2 warnings**;
 - Pyright: `0 errors, 0 warnings`;
 - compileall, shell syntax and `git diff --check`: PASS;
 - Ruff: unavailable in the cluster image and recorded as such.
