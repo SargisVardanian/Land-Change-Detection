@@ -89,7 +89,10 @@ def run() -> int:
                 raise FileNotFoundError(checkpoint)
             if sha256(checkpoint) != str(record["checkpoint_sha256"]):
                 raise RuntimeError(f"MILESTONE_CHECKPOINT_SHA_MISMATCH:{step}")
-            evaluation_dir = output_root / f"step_{step}"
+            evaluation_dir = Path(str(record["evaluation_dir"]))
+            expected_evaluation_dir = milestone_evaluation_path(phase_root, step)
+            if evaluation_dir != expected_evaluation_dir:
+                raise RuntimeError(f"MILESTONE_EVALUATION_PATH_MISMATCH:{step}")
             evaluation_dir.mkdir(parents=True, exist_ok=True)
             command = [
                 sys.executable,

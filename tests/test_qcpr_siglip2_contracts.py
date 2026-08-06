@@ -607,6 +607,7 @@ def test_milestone_evaluator_requires_all_full_gallery_outputs():
 
     source = Path("scripts/evaluate_qcpr_siglip2_milestones.py").read_text()
     assert "MILESTONE_CHECKPOINT_SHA_MISMATCH" in source
+    assert "MILESTONE_EVALUATION_PATH_MISMATCH" in source
     assert "full_rankings.pt" in source
     assert "ranking_integrity.json" in source
     assert "PENDING_EXTERNAL_FULL_GALLERY_EVALUATION" in Path(
