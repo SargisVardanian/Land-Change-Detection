@@ -2,8 +2,8 @@
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "05ab1e0b8d6e1c4dd924616ec1cf6018986b5c5d",
-  "evaluation_code_sha": "05ab1e0b8d6e1c4dd924616ec1cf6018986b5c5d",
+  "code_sha": "f0dc536d2dda006173994cd5510674eacdca64cd",
+  "evaluation_code_sha": "f0dc536d2dda006173994cd5510674eacdca64cd",
   "executable_smoke_code_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
   "cpu_gate": {
     "compileall": "PASS",
@@ -131,8 +131,8 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "05ab1e0b8d6e1c4dd924616ec1cf6018986b5c5d",
-    "evaluation_code_sha": "05ab1e0b8d6e1c4dd924616ec1cf6018986b5c5d",
+    "code_sha": "f0dc536d2dda006173994cd5510674eacdca64cd",
+    "evaluation_code_sha": "f0dc536d2dda006173994cd5510674eacdca64cd",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
