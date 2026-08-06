@@ -25,7 +25,10 @@ GPU_GRES=${GPU_GRES:-gpu:h100:1}
 JOB_NAME=${JOB_NAME:-qcpr-siglip2-milestone-eval-${PHASE}}
 GALLERY_BATCH_SIZE=${GALLERY_BATCH_SIZE:-8}
 QUERY_BATCH_SIZE=${QUERY_BATCH_SIZE:-64}
-RERANK_QUERY_BATCH_SIZE=${RERANK_QUERY_BATCH_SIZE:-4}
+# One query keeps the candidate union bounded by Top-K.  A larger query batch
+# multiplies the native 256-patch temporal attention working set and can exceed
+# H100 memory even though feature extraction itself is safe.
+RERANK_QUERY_BATCH_SIZE=${RERANK_QUERY_BATCH_SIZE:-1}
 
 test -d "$WORKTREE"
 test "$(git -C "$WORKTREE" rev-parse HEAD)" = "$EXPECTED_SHA"
