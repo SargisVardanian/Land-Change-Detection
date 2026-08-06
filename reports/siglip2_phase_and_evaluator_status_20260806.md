@@ -15,6 +15,7 @@ Code is published at `229ebf149697c82b5d64375c2e7ee1c7214506ea` on
   gallery items;
 - Top-K evidence reranking;
 - frozen GeoRSCLIP step-zero evaluator;
+- bounded H100 calibration with selected physical batch 32 and accumulation 4;
 - deterministic ranking, exposure and artifact hashes.
 
 ## Verified jobs
@@ -49,11 +50,19 @@ this is a frozen reference only.
 - compileall, shell syntax and `git diff --check`: PASS;
 - Ruff: unavailable in the cluster image and recorded as such.
 
+## Bounded H100 calibration — job 208050
+
+The six-step calibration tested physical batches 8, 16 and 32, with two steps
+per candidate. All candidates passed with finite gradients and no OOM. The
+selected contract is 32 physical pairs, 64 queries, logical batch 128 and
+gradient accumulation 4. Peak reserved VRAM at batch 32 was 2.711 GiB.
+
+This is memory calibration only, not a retrieval-quality result.
+
 ## Not run
 
 The following remain intentionally unlaunched:
 
-- H100 batch calibration in this bounded task;
 - 256-step GeoRSCLIP temporal-head baseline;
 - SigLIP-2 Phase A at 256 steps;
 - SigLIP-2 Phase B at 1,536 additional steps;

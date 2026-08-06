@@ -85,8 +85,9 @@
     },
     {
       "id": "h100_batch_calibration",
-      "status": "NOT_AUTHORIZED",
-      "evidence": "historical calibration exists, but no new calibration was launched in the bounded audit task"
+      "status": "PASS",
+      "job_id": 208050,
+      "evidence": "real H100 calibration tested physical batches 8, 16 and 32 for two steps each; all candidates were finite and OOM-free; selected batch 32 with accumulation 4"
     },
     {
       "id": "georsclip_256_step_baseline",

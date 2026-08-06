@@ -84,6 +84,19 @@
     },
     "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED",
     "full_gallery_evaluation": "NOT_RUN",
+    "h100_batch_calibration": {
+      "job_id": 208050,
+      "status": "PASS",
+      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_h100_calibration_96c7366_20260806",
+      "tested_physical_batches": [8, 16, 32],
+      "steps_per_candidate": 2,
+      "selected_physical_batch_size": 32,
+      "selected_gradient_accumulation": 4,
+      "logical_physical_batch": 128,
+      "peak_reserved_gib_batch_32": 2.7109375,
+      "finite_gradients": true,
+      "oom": false
+    },
     "scientific_interpretation": "technical integration smoke only; no retrieval-quality claim"
   },
   "historical_artifacts_modified": false,
@@ -101,6 +114,7 @@
   "p2_allowed": false,
   "readiness": {
     "B1_CONTROL": "VERIFIED",
+    "SIGLIP2_H100_CALIBRATION": "PASS_BATCH_32_ACCUMULATION_4",
     "MODEL_V3_MAIN": "NOT_AUTHORIZED",
     "MODEL_V3_MECHANISM": "READY_FOR_AUTHORIZATION",
     "MODEL_V3_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",

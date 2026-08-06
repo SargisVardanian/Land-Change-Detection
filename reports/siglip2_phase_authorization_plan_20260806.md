@@ -18,10 +18,9 @@ not establish a trained retrieval improvement.
 The following remain intentionally unlaunched because the current task
 explicitly limits GPU jobs to at most 32 steps:
 
-1. H100 batch calibration beyond the completed historical calibration.
-2. Frozen GeoRSCLIP temporal-head baseline at 256 steps.
-3. SigLIP-2 Phase A at 256 steps.
-4. SigLIP-2 Phase B at 1,536 additional steps.
+1. Frozen GeoRSCLIP temporal-head baseline at 256 steps.
+2. SigLIP-2 Phase A at 256 steps.
+3. SigLIP-2 Phase B at 1,536 additional steps.
 
 No mechanism pilot, main training run, P2 run, or unrestricted production
 training was submitted.
@@ -47,6 +46,7 @@ technical smoke.
 SIGLIP2_REAL_INTEGRATION_SMOKE = PASS_TECHNICAL_SMOKE
 SIGLIP2_COMMON_GALLERY_STEP0 = PASS
 GEORSCLIP_STEP0 = PASS_FROZEN_EVALUATION
+H100_CALIBRATION = PASS_BATCH_32_ACCUMULATION_4
 GEORSCLIP_256_STEP_BASELINE = NOT_AUTHORIZED
 SIGLIP2_PHASE_A = NOT_AUTHORIZED
 SIGLIP2_PHASE_B = NOT_AUTHORIZED

@@ -35,7 +35,7 @@
       "candidate_physical_microbatches": [8, 16, 32],
       "steps_per_candidate": 2,
       "total_step_cap": 32,
-      "status": "HISTORICAL_CALIBRATION_AVAILABLE; NEW_RUN_NOT_AUTHORIZED"
+      "status": "PASS_JOB_208050; SELECTED_BATCH_32_ACCUMULATION_4"
     },
     {
       "name": "georsclip_temporal_head_baseline",
