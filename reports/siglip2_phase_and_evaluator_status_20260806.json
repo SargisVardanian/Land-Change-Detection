@@ -12,7 +12,8 @@
     "phase_a_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
     "phase_b_driver": "IMPLEMENTED_GUARDED_NOT_RUN",
     "common_gallery_evaluator": "PASS_JOB_208021_FULL_GALLERY",
-    "top_k_evidence_reranking": "PASS_JOB_208021"
+    "top_k_evidence_reranking": "PASS_JOB_208021",
+    "georsclip_step0_evaluator": "PASS_JOB_208024_FULL_GALLERY"
   },
   "validation": {
     "full_pytest": "643 passed, 3 skipped, 16 warnings",
@@ -67,6 +68,19 @@
     "ranking_integrity": "PASS",
     "peak_allocated_gib": 9.647034168243408,
     "peak_reserved_gib": 27.837890625
+  },
+  "georsclip_step0_208024": {
+    "status": "PASS",
+    "query_count": 6310,
+    "gallery_count": 1928,
+    "score_shape": [6310, 1928],
+    "evaluation_run": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_georsclip_common_eval_step0_3615494_20260806",
+    "full_mrr": 0.003682836890220642,
+    "hit_at_10": 0.0030110934749245644,
+    "optimizer_steps": 0,
+    "ranking_integrity": "PASS",
+    "peak_allocated_gib": 1.405825138092041,
+    "peak_reserved_gib": 3.681640625
   },
   "constraint": "No >32-step job, mechanism pilot, main training, GeoRSCLIP training or P2 job was launched in this task."
 }

@@ -118,13 +118,27 @@
       "repository": "Zilun/GeoRSCLIP",
       "revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
       "status": "RESEARCH_BASELINE_ONLY",
-      "weights_only": "PASS"
+      "weights_only": "PASS",
+      "step0_evaluation": {
+        "job_id": 208024,
+        "status": "PASS_FROZEN_EVALUATION",
+        "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_georsclip_common_eval_step0_3615494_20260806",
+        "query_count": 6310,
+        "gallery_count": 1928,
+        "score_shape": [6310, 1928],
+        "full_mrr": 0.003682836890220642,
+        "hit_at_10": 0.0030110934749245644,
+        "peak_allocated_gib": 1.405825138092041,
+        "peak_reserved_gib": 3.681640625,
+        "optimizer_steps": 0
+      }
     },
     "main_training_allowed": false,
     "p2_allowed": false,
     "readiness": {
       "GEORSCLIP_BASELINE_VALID": false,
-      "GEORSCLIP_WRAPPER_CONTRACT": "PASS_BASELINE_NOT_RUN",
+      "GEORSCLIP_STEP0_VALID": true,
+      "GEORSCLIP_WRAPPER_CONTRACT": "PASS_STEP0_BASELINE_NOT_TRAINED",
       "MODEL_V3_MAIN": "NOT_AUTHORIZED",
       "P2": "BLOCKED",
       "SIGLIP2_DOWNLOAD_VALID": true,
@@ -142,6 +156,7 @@
       "module_gradient_audit": "IMPLEMENTED_CPU_TESTED",
       "common_gallery_evaluator": "PASS_JOB_208021",
       "top_k_evidence_reranking": "PASS_JOB_208021",
+      "georsclip_step0_evaluator": "PASS_JOB_208024",
       "full_gallery_rankings": "AVAILABLE_JOB_208021",
       "long_run_authorization": "REQUIRED_EXPLICITLY"
     },
