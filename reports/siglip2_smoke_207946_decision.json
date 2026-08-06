@@ -1,0 +1,58 @@
+{
+  "job_id": "207946",
+  "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_smoke_999eae4_20260806",
+  "code_sha": "999eae4cb37067306b05c6b726f4ed871a72b2a1",
+  "state": "COMPLETED",
+  "exit_code": "0:0",
+  "node": "gpu05",
+  "status": "MODEL_V3_SIGLIP2_REAL_SMOKE_PASS",
+  "scientific_scope": "bounded real integration smoke only; no retrieval-quality claim",
+  "contract": {
+    "steps": 16,
+    "physical_batch_size": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "visual_tokens": [8, 512, 768],
+    "text_tokens": [16, 64],
+    "multi_positive_runtime": "MULTI_POSITIVE_RUNTIME_NOT_EXERCISED"
+  },
+  "runtime": {
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "peak_allocated_gib": 1.3931632041931152,
+    "peak_reserved_gib": 1.650390625,
+    "cpu_peak_rss_gib": 3.3183517456054688,
+    "total_wall_seconds": 1.8393236752599478,
+    "image_decode_and_processor_seconds": 0.3176752310246229,
+    "checkpoint_write_seconds": 2.480691382661462
+  },
+  "checkpoint": {
+    "sha256": "194bbb6b61e4fa7eb1ccb918b72bec97ef5a426df02afcd65c053b47789d97b6",
+    "roundtrip": "PASS",
+    "max_abs_score_difference": 0.0
+  },
+  "evidence": {
+    "zero_evidence_score_change": 1.254191517829895,
+    "query_swap_score_change": 0.00390625,
+    "query_swap_map_l1": 0.0002668501401785761,
+    "query_swap_map_cosine": 0.9853665828704834,
+    "time_reversal_score_change_max": 0.0078125,
+    "time_reversal_passed": true,
+    "top_evidence_deletion_passed": false,
+    "top_evidence_score_drop": -0.015880167484283447,
+    "bottom_evidence_score_drop": 0.013008296489715576,
+    "mechanism_status": "BLOCKED_EVIDENCE_DELETION"
+  },
+  "integrity": {
+    "checkpoint_roundtrip": "PASS",
+    "no_nan_or_oom": true,
+    "sha256sums": "PASS_AFTER_EXPLICIT_POST_RUN_REPAIR",
+    "artifact_repair": {
+      "scope": "checksum_manifest_only",
+      "reason": "Slurm stderr received final process warnings after the in-process checksum was written"
+    },
+    "evaluation": "NOT_RUN",
+    "full_rankings": "NOT_RUN"
+  },
+  "decision": "TECHNICAL_SMOKE_PASS; MECHANISM_BLOCKED; NO_TRAINING_QUALITY_CLAIM"
+}
