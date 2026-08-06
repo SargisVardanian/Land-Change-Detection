@@ -6,6 +6,7 @@ from typing import Any
 
 import torch
 from torch import Tensor, nn
+from torch.utils.checkpoint import checkpoint
 from transformers import AutoModel
 from transformers.models.siglip.modeling_siglip import (
     create_bidirectional_mask as create_siglip_mask,
@@ -56,6 +57,7 @@ class Siglip2Backbone(nn.Module):
         if int(self.text_model.config.hidden_size) != self.hidden_size:
             raise ValueError("SigLIP vision/text hidden sizes differ")
         self.phase_b_top_blocks = 0
+        self.gradient_checkpointing = False
         self.freeze_all()
 
     def freeze_all(self) -> None:
@@ -81,11 +83,14 @@ class Siglip2Backbone(nn.Module):
                 for p in module.parameters():
                     p.requires_grad = True
 
-    def enable_phase_b_top_blocks(self, top_blocks: int = 2) -> None:
+    def enable_phase_b_top_blocks(
+        self, top_blocks: int = 2, *, gradient_checkpointing: bool = False
+    ) -> None:
         self.freeze_all()
         self._set_block_scope(self.vision_model, top_blocks, ("post_layernorm", "head"))
         self._set_block_scope(self.text_model, top_blocks, ("final_layer_norm", "head"))
         self.phase_b_top_blocks = top_blocks
+        self.gradient_checkpointing = gradient_checkpointing
         self.model.eval()
         for tower, names in (
             (self.vision_model, ("post_layernorm", "head")),
@@ -144,8 +149,17 @@ class Siglip2Backbone(nn.Module):
         with torch.no_grad():
             for layer in layers[: -self.phase_b_top_blocks]:
                 hidden = layer(hidden, attention)
+        if self.gradient_checkpointing:
+            hidden = hidden.detach().requires_grad_(True)
         for layer in layers[-self.phase_b_top_blocks :]:
-            hidden = layer(hidden, attention)
+            if self.gradient_checkpointing:
+                hidden = checkpoint(
+                    lambda value, module=layer: module(value, attention),
+                    hidden,
+                    use_reentrant=False,
+                )
+            else:
+                hidden = layer(hidden, attention)
         hidden = tower.post_layernorm(hidden)
         if getattr(tower, "use_head", True):
             try:
@@ -176,8 +190,17 @@ class Siglip2Backbone(nn.Module):
         with torch.no_grad():
             for layer in layers[: -self.phase_b_top_blocks]:
                 hidden = layer(hidden, attention)
+        if self.gradient_checkpointing:
+            hidden = hidden.detach().requires_grad_(True)
         for layer in layers[-self.phase_b_top_blocks :]:
-            hidden = layer(hidden, attention)
+            if self.gradient_checkpointing:
+                hidden = checkpoint(
+                    lambda value, module=layer: module(value, attention),
+                    hidden,
+                    use_reentrant=False,
+                )
+            else:
+                hidden = layer(hidden, attention)
         hidden = tower.final_layer_norm(hidden)
         pooled = tower.head(hidden[:, -1, :])
         return type(
@@ -241,5 +264,6 @@ class Siglip2Backbone(nn.Module):
             "vision_backbone": report(self.vision_model),
             "text_backbone": report(self.text_model),
             "phase_b_top_blocks": self.phase_b_top_blocks,
+            "gradient_checkpointing": self.gradient_checkpointing,
             "frozen_lower_blocks": self.phase_b_top_blocks > 0,
         }

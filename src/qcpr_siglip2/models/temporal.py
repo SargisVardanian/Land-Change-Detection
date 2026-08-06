@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor, nn
 from torch.nn import functional as F
+from torch.utils.checkpoint import checkpoint
 
 from ..config.schema import Siglip2TemporalConfig
 
@@ -148,7 +149,10 @@ class TemporalTransformerAdapter(nn.Module):
             )
         hidden = torch.cat(seq, dim=1)
         for block in self.blocks:
-            hidden = block(hidden)
+            if self.training and self.config.gradient_checkpointing:
+                hidden = checkpoint(block, hidden, use_reentrant=False)
+            else:
+                hidden = block(hidden)
         pair = F.normalize(hidden[:, 0], dim=-1)
         frames = []
         patches = []

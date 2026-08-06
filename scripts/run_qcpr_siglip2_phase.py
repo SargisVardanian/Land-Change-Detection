@@ -26,7 +26,11 @@ from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.loader import ExactBatch, make_exact_batches
 from qcpr_siglip2.data.manifest import load_exact_pair_rows, ordered_id_sha256
-from qcpr_siglip2.data.runtime import build_relevance_masks
+from qcpr_siglip2.data.runtime import (
+    _device_autocast,
+    build_relevance_masks,
+    encode_real_features,
+)
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.exposure import ExposureLedger
 from qcpr_siglip2.training.gradcache import logical_listwise_step
@@ -180,6 +184,85 @@ def load_checkpoint_weights(
     return payload
 
 
+def checkpoint_roundtrip(
+    model: Siglip2TemporalRetrievalModel,
+    backbone: Siglip2Backbone,
+    processor: Any,
+    checkpoint: Path,
+    checkpoint_payload: dict[str, Any],
+    model_config: Siglip2TemporalConfig,
+    siglip2_model: str,
+    phase: str,
+    batch: ExactBatch,
+    device: torch.device,
+) -> dict[str, Any]:
+    """Reload the saved model in a fresh model/backbone and compare scores."""
+
+    model.eval()
+    features = encode_real_features(
+        backbone,
+        processor,
+        batch.pair_rows,
+        batch.query_rows,
+        device,
+        dtype=torch.bfloat16,
+        no_grad=True,
+    )
+    with torch.no_grad(), _device_autocast(device, torch.bfloat16):
+        reference = model.forward_from_features(
+            features.frame_tokens,
+            features.frame_embeddings,
+            features.text_tokens,
+            features.text_embeddings,
+            features.text_mask,
+        ).score_matrix.float()
+
+    fresh_backbone = Siglip2Backbone(
+        siglip2_model, local_files_only=True, torch_dtype=torch.bfloat16
+    )
+    if phase == "B":
+        fresh_backbone.enable_phase_b_top_blocks(
+            2, gradient_checkpointing=model_config.gradient_checkpointing
+        )
+    fresh_model = Siglip2TemporalRetrievalModel(
+        fresh_backbone, model_config
+    ).to(device)
+    fresh_model.load_state_dict(checkpoint_payload["model_state"], strict=True)
+    fresh_model.eval()
+    fresh_features = encode_real_features(
+        fresh_backbone,
+        processor,
+        batch.pair_rows,
+        batch.query_rows,
+        device,
+        dtype=torch.bfloat16,
+        no_grad=True,
+    )
+    with torch.no_grad(), _device_autocast(device, torch.bfloat16):
+        reloaded = fresh_model.forward_from_features(
+            fresh_features.frame_tokens,
+            fresh_features.frame_embeddings,
+            fresh_features.text_tokens,
+            fresh_features.text_embeddings,
+            fresh_features.text_mask,
+        ).score_matrix.float()
+    difference = (reference - reloaded).abs()
+    max_difference = float(difference.max())
+    tolerance = 2e-4
+    result = {
+        "status": "PASS" if max_difference <= tolerance else "CHECKPOINT_ROUNDTRIP_MISMATCH",
+        "fresh_model": True,
+        "checkpoint": str(checkpoint),
+        "score_shape": list(reference.shape),
+        "max_abs_score_difference": max_difference,
+        "tolerance": tolerance,
+    }
+    if result["status"] != "PASS":
+        raise RuntimeError("CHECKPOINT_ROUNDTRIP_MISMATCH")
+    del fresh_model, fresh_backbone, fresh_features, features
+    return result
+
+
 def main() -> int:
     args = parse_args()
     run = Path(args.output_dir)
@@ -237,7 +320,9 @@ def main() -> int:
         initial_payload = None
         if args.phase == "B":
             assert model.backbone is not None
-            model.backbone.enable_phase_b_top_blocks(2)
+            model.backbone.enable_phase_b_top_blocks(
+                2, gradient_checkpointing=model_config.gradient_checkpointing
+            )
             initial_payload = load_checkpoint_weights(model, args.initial_checkpoint)
             steps_start = int(initial_payload.get("global_step", 256)) if initial_payload else 256
             if steps_start != 256:
@@ -335,6 +420,7 @@ def main() -> int:
         metric_rows: list[dict[str, Any]] = []
         total_start = time.perf_counter()
         global_step = steps_start
+        last_batch: ExactBatch | None = None
         for local_step in range(steps):
             batch, epoch, batch_index = select_logical_batch(
                 train_rows,
@@ -343,6 +429,7 @@ def main() -> int:
                 step=local_step,
                 seed=args.seed,
             )
+            last_batch = batch
             positive, ignored, relevance = build_relevance_masks(
                 batch.query_rows, batch.pair_rows, device
             )
@@ -407,6 +494,21 @@ def main() -> int:
             f"{sha256(checkpoint)}  {checkpoint.name}\n"
         )
         write_json(run / "exposure_accounting.json", ledger.to_dict())
+        if last_batch is None:
+            raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
+        roundtrip = checkpoint_roundtrip(
+            model,
+            backbone,
+            processor,
+            checkpoint,
+            checkpoint_state,
+            model_config,
+            args.siglip2_model,
+            args.phase,
+            last_batch,
+            device,
+        )
+        write_json(run / "checkpoint_roundtrip.json", roundtrip)
         write_json(
             run / "gradient_diagnostics.json",
             {
@@ -424,6 +526,42 @@ def main() -> int:
                 "cpu_peak_rss_gib": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
                 / (1024**2),
                 "steps_per_second": steps / max(elapsed, 1e-9),
+            },
+        )
+        write_json(
+            run / "cuda_memory.json",
+            {
+                "gpu": torch.cuda.get_device_name(device),
+                "peak_allocated_gib": torch.cuda.max_memory_allocated(device)
+                / (1024**3),
+                "peak_reserved_gib": torch.cuda.max_memory_reserved(device)
+                / (1024**3),
+                "current_allocated_gib": torch.cuda.memory_allocated(device)
+                / (1024**3),
+                "current_reserved_gib": torch.cuda.memory_reserved(device)
+                / (1024**3),
+            },
+        )
+        write_json(
+            run / "embedding_diagnostics.json",
+            metric_rows[-1]["embedding_diagnostics"],
+        )
+        write_json(
+            run / "evidence_diagnostics.json",
+            metric_rows[-1]["evidence_diagnostics"],
+        )
+        write_json(
+            run / "model_contract.json",
+            {
+                "model_config": model_config.to_dict(),
+                "runtime_class": backbone.runtime_class,
+                "hidden_size": model_config.hidden_size,
+                "expected_patch_tokens": model_config.expected_patch_tokens,
+                "phase_b_top_blocks": backbone.phase_b_top_blocks,
+                "gradient_checkpointing": {
+                    "temporal": model_config.gradient_checkpointing,
+                    "pretrained_top_blocks": backbone.gradient_checkpointing,
+                },
             },
         )
         not_run = {

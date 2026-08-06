@@ -250,6 +250,13 @@ def logical_listwise_step(
     if not torch.isfinite(flat).all():
         raise FloatingPointError("NONFINITE_GRADIENT")
     gradient_norm = float(flat.norm())
+    scores = output.score_matrix.detach().float()
+    positive_scores = scores.masked_select(positive_mask)
+    negative_mask = ~positive_mask & ~ignored_mask
+    negative_scores = scores.masked_select(negative_mask)
+    weights = output.evidence.evidence_weights.detach().float()
+    entropy = -(weights.clamp_min(1e-12) * weights.clamp_min(1e-12).log()).sum(-1)
+    effective_tokens = entropy.exp()
     torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_norm)
     optimizer.step()
     if scheduler is not None:
@@ -262,4 +269,30 @@ def logical_listwise_step(
         "physical_microbatches": len(pair_rows) // physical_batch_size,
         "multi_positive_queries": int((positive_mask.sum(dim=1) > 1).sum()),
         "gradient_report": gradient_report,
+        "embedding_diagnostics": {
+            "pair_cls_norm_mean": float(output.pair_cls.detach().float().norm(dim=-1).mean()),
+            "text_embedding_norm_mean": float(
+                output.text_embedding.detach().float().norm(dim=-1).mean()
+            ),
+            "positive_score_mean": float(positive_scores.mean())
+            if positive_scores.numel()
+            else None,
+            "negative_score_mean": float(negative_scores.mean())
+            if negative_scores.numel()
+            else None,
+            "score_mean": float(scores.mean()),
+            "score_std": float(scores.std(unbiased=False)),
+        },
+        "evidence_diagnostics": {
+            "entropy_mean": float(entropy.mean()),
+            "effective_token_count_mean": float(effective_tokens.mean()),
+            "near_uniform_fraction": float(
+                (effective_tokens > (weights.shape[-1] * 0.9)).float().mean()
+            ),
+            "single_token_collapse_fraction": float(
+                (effective_tokens < 2.0).float().mean()
+            ),
+            "evidence_gate": float(output.evidence.evidence_gate.detach()),
+            "evidence_temperature": float(model.config.evidence_temperature),
+        },
     }

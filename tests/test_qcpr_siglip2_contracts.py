@@ -59,6 +59,10 @@ def test_config_is_minimal_two_layer_contract():
     cfg = Siglip2TemporalConfig()
     assert cfg.validate().temporal_layers == 2
     assert cfg.mlp_size == 4 * cfg.hidden_size
+    assert cfg.gradient_checkpointing is False
+    assert Siglip2TemporalConfig.from_dict(
+        {"gradient_checkpointing": True}
+    ).gradient_checkpointing is True
 
 
 def test_model_outputs_causal_evidence_and_map():
@@ -354,6 +358,19 @@ def test_temporal_adapter_supports_variable_sequence_lengths_and_reversal():
     assert torch.allclose(forward.pair_cls, restored.pair_cls)
 
 
+def test_temporal_gradient_checkpointing_preserves_backward_contract():
+    config = Siglip2TemporalConfig(gradient_checkpointing=True)
+    adapter = TemporalTransformerAdapter(config)
+    adapter.train()
+    frame_tokens, frame_embeddings, *_ = _features(q=1, p=1)
+    frame_tokens = frame_tokens[:1].requires_grad_()
+    frame_embeddings = frame_embeddings[:1].requires_grad_()
+    output = adapter(frame_tokens, frame_embeddings)
+    output.pair_cls.sum().backward()
+    assert frame_tokens.grad is not None
+    assert adapter.blocks[0].attn_scale.grad is not None
+
+
 def test_evidence_diagnostics_report_entropy_and_effective_tokens():
     weights = torch.full((2, 4), 0.25)
     assert torch.allclose(evidence_entropy(weights), torch.log(torch.full((2,), 4.0)))
@@ -510,3 +527,12 @@ def test_phase_driver_requires_explicit_long_run_authorization(monkeypatch):
     monkeypatch.setenv("QCPR_ALLOW_LONG_TRAINING", "1")
     assert resolve_steps(Namespace(phase="A", steps=256, authorize_long_run=True)) == 256
     assert resolve_steps(args) == 8
+
+
+def test_batch_calibration_launcher_has_hard_step_budget():
+    from pathlib import Path
+
+    launcher = Path("cluster/ysu/submit_qcpr_siglip2_batch_calibration.sh").read_text()
+    assert "TOTAL_STEPS=$((STEPS_PER_CANDIDATE * $#))" in launcher
+    assert 'test "$TOTAL_STEPS" -le 32' in launcher
+    assert "batch-sizes" in launcher

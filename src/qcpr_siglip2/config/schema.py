@@ -14,6 +14,7 @@ class Siglip2TemporalConfig:
     attention_heads: int = 12
     mlp_size: int = 3072
     dropout: float = 0.0
+    gradient_checkpointing: bool = False
     layer_scale_init: float = 1e-4
     max_frames: int = 8
     evidence_temperature: float = 0.07
@@ -36,6 +37,8 @@ class Siglip2TemporalConfig:
             raise ValueError("the minimal track requires an FFN ratio of four")
         if not 0.0 <= self.dropout < 1.0:
             raise ValueError("dropout must be in [0, 1)")
+        if not isinstance(self.gradient_checkpointing, bool):
+            raise TypeError("gradient_checkpointing must be a boolean")
         if self.layer_scale_init <= 0.0 or self.layer_scale_init > 1.0:
             raise ValueError("layer_scale_init must be in (0, 1]")
         if self.max_frames < 2:
