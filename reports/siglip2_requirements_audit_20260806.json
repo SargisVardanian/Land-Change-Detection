@@ -15,7 +15,7 @@
     {
       "id": "immutable_lineage",
       "status": "PASS",
-      "evidence": "local, remote, PR #7 and cluster worktree all equal f05124f3838e00c8fe283bfbec38693c9acb9b37; both worktrees clean"
+      "evidence": "local, remote, PR #7 and cluster worktree all equal a23866d243ffd44820315bc9d9ad803bae2f953d; both worktrees clean"
     },
     {
       "id": "official_siglip2_source",
