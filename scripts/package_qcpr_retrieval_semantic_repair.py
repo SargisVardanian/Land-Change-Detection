@@ -33,6 +33,53 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         return [json.loads(line) for line in handle if line.strip()]
 
 
+def build_rsrcc_parent_overlap_audit(
+    parent_registry: Path,
+    child_manifest: Path,
+    supplemental_parent_registry: Path | None = None,
+) -> dict[str, Any]:
+    """Compare RSRCC image hashes with the physical parent registry.
+
+    RSRCC is derived from LEVIR-CD according to the published paper, so a
+    child-source license claim is not enough to promote its image text into
+    training.  This audit is deliberately hash-based and does not infer
+    semantic relevance from filenames or event identity.
+    """
+    parent_rows = read_jsonl(parent_registry)
+    parent_paths = [str(parent_registry)]
+    if supplemental_parent_registry is not None and supplemental_parent_registry.exists():
+        supplemental_rows = read_jsonl(supplemental_parent_registry)
+        parent_rows.extend(supplemental_rows)
+        parent_paths.append(str(supplemental_parent_registry))
+    parent_item_ids = {str(row.get("item_id")) for row in parent_rows if row.get("item_id")}
+    parent_frame_hashes = {
+        str(frame.get("sha256"))
+        for row in parent_rows
+        for frame in (row.get("frames") or [])
+        if isinstance(frame, dict) and frame.get("sha256")
+    }
+    child_rows = read_jsonl(child_manifest)
+    child_hashes = {
+        str(row.get("sha256"))
+        for row in child_rows
+        if row.get("sha256")
+    }
+    shared = sorted(child_hashes & parent_frame_hashes)
+    return {
+        "schema_version": "qcpr-rsrcc-parent-overlap-audit-v1",
+        "status": "PASS_NO_SHARED_FRAME_HASHES" if not shared else "HOLD_SHARED_PARENT_FRAME_HASHES",
+        "child_dataset": "google/RSRCC",
+        "child_manifest": "source_reports/retrieval_semantic_repair/rsrcc_physical_asset_manifest.jsonl",
+        "child_manifest_row_count": len(child_rows),
+        "child_unique_sha256_count": len(child_hashes),
+        "parent_registry_paths": parent_paths,
+        "parent_item_count": len(parent_item_ids),
+        "parent_frame_hash_count": len(parent_frame_hashes),
+        "shared_frame_hash_count": len(shared),
+        "shared_frame_hash_examples": shared[:20],
+    }
+
+
 def write_relevance_graph(path: Path, query_rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Materialize one deterministic positive edge per query/item relation."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,6 +224,24 @@ def main() -> int:
     rsrcc_gate_report = read_json(args.repair_output / "source_reports/official_source_acquisition_audit.json", {})
     rsrcc_gate = (rsrcc_gate_report.get("sources") or {}).get("RSRCC", {})
     if rsrcc_acquisition and rsrcc_validation and rsrcc_manifest.exists():
+        parent_overlap = build_rsrcc_parent_overlap_audit(
+            args.base_release / "registries/physical_items.jsonl",
+            rsrcc_manifest,
+            args.repair_output / "registries/forest_physical_items.jsonl",
+        )
+        parent_provenance = {
+            "schema_version": "qcpr-rsrcc-parent-provenance-audit-v1",
+            "status": "HOLD_PARENT_DATA_TERMS_REVIEW",
+            "child_dataset": "google/RSRCC",
+            "child_license_claim": "Apache-2.0 (official HF dataset card)",
+            "child_license_source": "https://huggingface.co/datasets/google/RSRCC",
+            "parent_dataset": "LEVIR-CD",
+            "parent_provenance_source": "https://arxiv.org/abs/2604.20623",
+            "parent_terms_source": "https://justchenhao.github.io/LEVIR/",
+            "parent_terms_status": "Official parent page states Google Earth terms apply and academic-only/non-commercial use.",
+            "overlap_audit": parent_overlap,
+            "training_enabled": False,
+        }
         rsrcc_path = args.output / "source_reports/rsrcc_source_audit.json"
         rsrcc_audit = read_json(rsrcc_path, {})
         rsrcc_physical = dict(rsrcc_audit.get("physical_asset_audit") or {})
@@ -195,7 +260,8 @@ def main() -> int:
                 "missing_count": rsrcc_validation.get("missing_count"),
                 "hash_mismatch_count": rsrcc_validation.get("hash_mismatch_count"),
             },
-            "parent_overlap_audit": "PENDING_REAUDIT_AFTER_PHYSICAL_ACQUISITION",
+            "parent_overlap_audit": parent_overlap["status"],
+            "parent_overlap_details": parent_overlap,
         })
         rsrcc_audit.update({
             "status": "PHYSICAL_ASSETS_COMPLETE_LICENSE_HOLD",
@@ -214,8 +280,11 @@ def main() -> int:
             "license_status": rsrcc_gate.get("license_status") or rsrcc_audit.get("license_status"),
             "training_enabled": False,
             "integration_status": "NOT_INTEGRATED_LICENSE_AND_PARENT_DATA_REVIEW_REQUIRED",
+            "parent_overlap_audit": parent_overlap["status"],
+            "parent_provenance_audit": parent_provenance,
         })
         write_json(rsrcc_path, rsrcc_audit)
+        write_json(args.output / "source_reports/rsrcc_parent_provenance_audit.json", parent_provenance)
     # Keep Forest's deterministic scene-component split as a canonical source
     # report as well as a repair-package artifact.  The physical split is
     # materialized, but captions remain held until provenance/review gates
