@@ -537,7 +537,9 @@ def main() -> int:
                 )
                 milestone_records.append(save_milestone(run, current_payload, global_step))
 
-        if last_batch is None or global_step != 256:
+        if last_batch is None:
+            raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
+        if global_step != 256:
             raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
         final_payload = checkpoint_payload(
             model,
