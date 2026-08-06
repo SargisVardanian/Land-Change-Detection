@@ -142,8 +142,11 @@ def _evidence_deletion(
     bottom_score = _score_from_weights(
         model, output, query_index, pair_index, bottom_weights
     )
-    top_drop = float((normal - top_score).cpu())
-    bottom_drop = float((normal - bottom_score).cpu())
+    normal = normal.float()
+    top_score = top_score.float()
+    bottom_score = bottom_score.float()
+    top_drop = float((normal - top_score).detach().cpu())
+    bottom_drop = float((normal - bottom_score).detach().cpu())
     return {
         "top_fraction": 0.10,
         "top_score_drop": top_drop,
@@ -216,16 +219,23 @@ def _query_and_temporal_diagnostics(
         "query_swap_map_l1": query_swap_map_l1(first_map, second_map),
         "query_swap_map_cosine": query_swap_map_cosine(first_map, second_map),
         "score_change_after_query_swap": float(
-            (output.score_matrix[query_a, pair_index]
-             - output.score_matrix[query_b, pair_index]).abs().cpu()
+            (
+                output.score_matrix[query_a, pair_index].float()
+                - output.score_matrix[query_b, pair_index].float()
+            )
+            .abs()
+            .detach()
+            .cpu()
         ),
         "score_with_zero_evidence": float(zero_score.detach().cpu()),
         "normal_score": float(normal_score.detach().cpu()),
         "score_change_after_evidence_zeroing": float(
-            (normal_score - zero_score).abs().detach().cpu()
+            (normal_score.float() - zero_score.float()).abs().detach().cpu()
         ),
         "evidence_zeroing_passed": bool(
-            not torch.allclose(normal_score, zero_score, atol=1e-7, rtol=1e-6)
+            not torch.allclose(
+                normal_score.float(), zero_score.float(), atol=1e-7, rtol=1e-6
+            )
         ),
         "deletion": deletion,
         "detach": detach,
@@ -234,8 +244,13 @@ def _query_and_temporal_diagnostics(
         ),
         "query_conditioned_passed": bool(
             query_swap_map_l1(first_map, second_map) > 1e-7
-            and abs(float(output.score_matrix[query_a, pair_index]
-                        - output.score_matrix[query_b, pair_index])) > 1e-7
+            and abs(
+                float(
+                    output.score_matrix[query_a, pair_index].float()
+                    - output.score_matrix[query_b, pair_index].float()
+                )
+            )
+            > 1e-7
         ),
         "temporal_direction_passed": bool(
             time_reversal_score_change(
