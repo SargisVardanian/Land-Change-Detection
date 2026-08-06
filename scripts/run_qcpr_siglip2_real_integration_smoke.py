@@ -158,14 +158,16 @@ def _detach_diagnostic(
     text_inputs: dict[str, torch.Tensor],
 ) -> dict[str, float | bool]:
     model.train()
-    output = model(**image_inputs, **text_inputs)
+    with _device_autocast(torch.device("cuda"), torch.bfloat16):
+        output = model(**image_inputs, **text_inputs)
     output.evidence.evidence_vector.retain_grad()
     output.score_matrix[0, 0].backward()
     gradient = output.evidence.evidence_vector.grad
     gradient_norm = float(gradient.detach().float().norm()) if gradient is not None else 0.0
     model.zero_grad(set_to_none=True)
 
-    detached_output = model(**image_inputs, **text_inputs)
+    with _device_autocast(torch.device("cuda"), torch.bfloat16):
+        detached_output = model(**image_inputs, **text_inputs)
     detached_output.evidence.evidence_vector.retain_grad()
     detached_vector = detached_output.evidence.evidence_vector.detach()
     detached_pair = F.normalize(
@@ -173,12 +175,13 @@ def _detach_diagnostic(
         + detached_output.evidence.evidence_gate * detached_vector,
         dim=-1,
     )
-    detached_score = (
-        torch.einsum(
-            "qd,qpd->qp", detached_output.text_embedding, detached_pair
+    with _device_autocast(torch.device("cuda"), torch.bfloat16):
+        detached_score = (
+            torch.einsum(
+                "qd,qpd->qp", detached_output.text_embedding, detached_pair
+            )
+            / model.retrieval_temperature
         )
-        / model.retrieval_temperature
-    )
     detached_score[0, 0].backward()
     detached_gradient = detached_output.evidence.evidence_vector.grad
     model.zero_grad(set_to_none=True)
