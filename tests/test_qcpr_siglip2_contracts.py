@@ -294,6 +294,37 @@ def test_manifest_loader_keeps_generic_no_change_out_of_exact_pair_view(tmp_path
     assert [row["caption_id"] for row in load_exact_pair_rows(path)] == ["q1"]
 
 
+def test_common_gallery_keeps_generic_only_physical_pairs_as_candidates():
+    from qcpr_siglip2.evaluation.common_gallery import (
+        canonical_pair_rows,
+        exact_relevance_masks,
+    )
+
+    core_rows = [
+        {
+            "canonical_pair_id": "p_exact",
+            "caption_id": "q_exact",
+            "query_scope": "exact_pair",
+        },
+        {
+            "canonical_pair_id": "p_generic_only",
+            "caption_id": "q_generic",
+            "query_scope": "generic_no_change",
+        },
+    ]
+    exact_rows = [core_rows[0]]
+    pair_rows = canonical_pair_rows(core_rows)
+    positive, ignored = exact_relevance_masks(exact_rows, pair_rows)
+
+    assert [row["canonical_pair_id"] for row in pair_rows] == [
+        "p_exact",
+        "p_generic_only",
+    ]
+    assert positive.shape == (1, 2)
+    assert positive.tolist() == [[True, False]]
+    assert not ignored.any()
+
+
 def test_phase_a_optimizer_scope_is_temporal_only():
     model = Siglip2TemporalRetrievalModel(None)
     optimizer, report, scheduler = build_adamw(model, phase="A", total_steps=256)

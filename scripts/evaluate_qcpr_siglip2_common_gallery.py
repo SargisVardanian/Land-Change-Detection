@@ -25,7 +25,7 @@ from transformers import AutoProcessor
 
 from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
-from qcpr_siglip2.data.manifest import load_exact_pair_rows, ordered_id_sha256
+from qcpr_siglip2.data.manifest import load_exact_core_rows, ordered_id_sha256
 from qcpr_siglip2.data.runtime import encode_real_images, encode_real_text
 from qcpr_siglip2.evaluation.common_gallery import (
     audit_ranking_integrity,
@@ -297,9 +297,18 @@ def main() -> int:
         if device.type == "cuda":
             torch.cuda.reset_peak_memory_stats(device)
 
-        rows = load_exact_pair_rows(manifest, split="development")
-        assert_mask_free(rows)
-        pair_rows = canonical_pair_rows(rows)
+        # The query set is exact-only, but the physical gallery is the full
+        # development core.  Generic no-change rows are excluded from the
+        # primary exact query set; their physical pairs must remain valid
+        # gallery negatives.  Filtering the gallery to exact-caption pairs
+        # would silently remove 666 physical candidates from the approved
+        # 1,928-pair common benchmark.
+        core_rows = load_exact_core_rows(manifest, split="development")
+        rows = [row for row in core_rows if row.get("query_scope") == "exact_pair"]
+        if not rows:
+            raise ValueError("development manifest has no exact_pair queries")
+        assert_mask_free(core_rows)
+        pair_rows = canonical_pair_rows(core_rows)
         positive, ignored = exact_relevance_masks(rows, pair_rows)
         if len(pair_rows) != len(
             {row["canonical_pair_id"] for row in pair_rows}
