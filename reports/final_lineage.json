@@ -1,15 +1,15 @@
 {
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "local_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
-  "remote_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "local_sha": "24640e57eea66a6e24ea92592f61f6ff2583dbc7",
+  "remote_sha": "24640e57eea66a6e24ea92592f61f6ff2583dbc7",
   "pr_number": 7,
-  "pr_head_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "pr_head_sha": "24640e57eea66a6e24ea92592f61f6ff2583dbc7",
   "pr_base": "codex/qcpr-model-v3-temporal-retrieval",
   "pr_state": "OPEN",
   "pr_is_draft": true,
-  "cluster_worktree_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "cluster_worktree_sha": "24640e57eea66a6e24ea92592f61f6ff2583dbc7",
   "worktree_clean": true,
-  "parent_sha": "6c56e740fb2cb5d35a83f53312167bdb9079d7b7",
-  "commit_timestamp": "2026-08-06T18:06:33+04:00",
+  "parent_sha": "a68b760c82a6006296e22d342e5c13ff72c39c3f",
+  "commit_timestamp": "2026-08-06T18:37:05+04:00",
   "lineage_status": "FINAL_LINEAGE_MATCH"
 }
