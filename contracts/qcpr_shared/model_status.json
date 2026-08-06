@@ -2,10 +2,10 @@
   "agent": "model",
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "63415742decc981a20d963e00bbd70585c944609",
+  "code_sha": "9263296b0c26ccfff1628ea76daafb75676f9e38",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "633 passed, 3 skipped, 16 warnings",
+    "full_pytest": "634 passed, 3 skipped, 16 warnings",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
     "shell_syntax": "PASS"
@@ -56,6 +56,7 @@
     "Job 207560 is classified as ENGINEERING_RUNTIME_DIAGNOSTIC_BUG: the real backbone and eight optimizer steps completed, but post-training evidence deletion indexing raised IndexError.",
     "The 207560 checkpoint roundtrip passed in a fresh process with zero score difference.",
     "The post-smoke repair adds a safe flattened temporal-spatial token deletion helper and a regression test; no second H100 job was submitted.",
+    "The next bounded smoke now records explicit temporal-reversal score sensitivity and peak CPU RSS; these diagnostics were not retroactively added to immutable job 207780.",
     "No scientific retrieval improvement is claimed."
   ],
   "owner": "model",
@@ -71,7 +72,7 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "63415742decc981a20d963e00bbd70585c944609",
+    "code_sha": "9263296b0c26ccfff1628ea76daafb75676f9e38",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
