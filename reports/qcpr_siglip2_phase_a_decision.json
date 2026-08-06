@@ -1,0 +1,70 @@
+{
+  "status": "PHASE_A_BOUNDED_PILOT_COMPLETE_PHASE_B_BLOCKED",
+  "code_sha": "ddc25d2bd21922544ee9ef217e5b3f4b62896e18",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "pull_request": 7,
+  "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "dataset_release_sha256": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+  "common_gallery": {"queries": 6310, "physical_pairs": 1928, "score_matrix": [6310, 1928], "mask_free": true},
+  "georsclip_temporal_256": {
+    "training_job": 208085,
+    "evaluation_jobs": [208086, 208087, 208088],
+    "training_steps": 256,
+    "physical_microbatch": 32,
+    "logical_physical_batch": 128,
+    "score_matrix": [256, 128],
+    "checkpoint_sha256": "07ac01bde9ce62b46ee901ce6f5f7a051a457a728bb3810d797cfa12bd2a3518",
+    "checkpoint_roundtrip": "PASS",
+    "milestone_metrics": {
+      "0": {"mrr_full": 0.003682836890220642, "hit_at_10": 0.0030110934749245644, "mean_rank": 914.34423828125, "median_rank": 892.0},
+      "128": {"mrr_full": 0.007764218375086784, "hit_at_10": 0.012678288854658604, "mean_rank": 783.6804809570312, "median_rank": 728.0},
+      "256": {"mrr_full": 0.008139566518366337, "hit_at_10": 0.013470681384205818, "mean_rank": 814.8823852539062, "median_rank": 767.0}
+    }
+  },
+  "siglip2_phase_a": {
+    "training_job": 208161,
+    "milestone_evaluation_job": 208232,
+    "evaluation_oom_job": 208211,
+    "evaluation_oom_status": "ENGINEERING_EVALUATION_MEMORY_FAILURE",
+    "evaluation_retry": "rerank_query_batch_size=1",
+    "training_steps": 256,
+    "physical_microbatch": 32,
+    "logical_physical_batch": 128,
+    "score_matrix": [256, 128],
+    "peak_allocated_gib": 10.489477157592773,
+    "peak_reserved_gib": 13.306640625,
+    "checkpoint_roundtrip": "PASS",
+    "milestone_metrics": {
+      "0": {"mrr_full": 0.005997858941555023, "hit_at_10": 0.008716323412954807, "mean_rank": 892.8903198242188, "median_rank": 860.0},
+      "128": {"mrr_full": 0.013832825236022472, "hit_at_10": 0.020919175818562508, "mean_rank": 402.4863586425781, "median_rank": 265.0},
+      "256": {"mrr_full": 0.014155825600028038, "hit_at_10": 0.023137876763939857, "mean_rank": 407.569091796875, "median_rank": 278.0}
+    },
+    "evidence_diagnostics_step_256": {
+      "map_shape": [6310, 2, 16, 16],
+      "effective_token_count_mean": 493.0390625,
+      "near_uniform_fraction_95pct": 1.0,
+      "top_k_reranking_delta": "negligible",
+      "interpretation": "global retrieval pathway improved; evidence pathway not scientifically validated"
+    }
+  },
+  "tests": {
+    "full_pytest": "650 passed, 3 skipped, 16 warnings",
+    "focused_siglip2_contracts": "38 passed, 2 warnings",
+    "compileall": "PASS",
+    "shell_syntax": "PASS",
+    "git_diff_check": "PASS",
+    "pyright": "0 errors, 0 warnings",
+    "ruff": "NOT_INSTALLED_ON_CLUSTER"
+  },
+  "readiness": {
+    "B1_CONTROL": "VERIFIED",
+    "GEORSCLIP_TEMPORAL_256": "PASS_BOUNDED_COMMON_GALLERY_PILOT",
+    "SIGLIP2_PHASE_A": "PASS_BOUNDED_COMMON_GALLERY_PILOT",
+    "SIGLIP2_PHASE_B": "NOT_AUTHORIZED_REQUIRES_DECISION_PACKAGE",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  },
+  "scientific_claim": "No final model improvement or state-of-the-art claim is made from this single-seed bounded pilot."
+}
