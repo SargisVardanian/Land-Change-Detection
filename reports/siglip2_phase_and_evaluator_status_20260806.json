@@ -1,5 +1,5 @@
 {
-  "code_sha": "a68b760c82a6006296e22d342e5c13ff72c39c3f",
+  "code_sha": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
   "evaluation_code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
   "branch": "codex/qcpr-siglip2-temporal-training",
   "pr": 7,
@@ -16,8 +16,8 @@
     "georsclip_step0_evaluator": "PASS_JOB_208024_FULL_GALLERY"
   },
   "validation": {
-    "full_pytest": "643 passed, 3 skipped, 16 warnings",
-    "focused_siglip2_contracts": "31 passed, 2 warnings",
+    "full_pytest": "644 passed, 3 skipped, 16 warnings in 317.43s",
+    "focused_siglip2_contracts": "32 passed, 2 warnings",
     "pyright": "0 errors, 0 warnings",
     "compileall": "PASS",
     "targeted_ruff": "NOT_AVAILABLE_ON_CLUSTER",

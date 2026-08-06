@@ -1,15 +1,16 @@
 {
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "local_sha": "02137e0df98c115ccf7caf4ea35ce06c54254412",
-  "remote_sha": "02137e0df98c115ccf7caf4ea35ce06c54254412",
+  "audit_target_sha": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
+  "local_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
+  "remote_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
   "pr_number": 7,
-  "pr_head_sha": "02137e0df98c115ccf7caf4ea35ce06c54254412",
+  "pr_head_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
   "pr_base": "codex/qcpr-model-v3-temporal-retrieval",
-  "pr_state": "OPEN",
-  "pr_is_draft": true,
-  "cluster_worktree_sha": "02137e0df98c115ccf7caf4ea35ce06c54254412",
-  "worktree_clean": true,
-  "parent_sha": "24640e57eea66a6e24ea92592f61f6ff2583dbc7",
-  "commit_timestamp": "2026-08-06T18:39:40+04:00",
-  "lineage_status": "FINAL_LINEAGE_MATCH"
+  "pr_state_at_audit": "OPEN",
+  "pr_is_draft_at_audit": true,
+  "cluster_worktree_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
+  "worktree_clean_at_audit": true,
+  "parent_sha": "3615494db61548ff1a8d42c176f9d99809affdec",
+  "lineage_status_at_audit": "FINAL_LINEAGE_MATCH",
+  "note": "This is an immutable pre-audit-change snapshot. The final published SHA is verified externally after the audit commit and push."
 }
