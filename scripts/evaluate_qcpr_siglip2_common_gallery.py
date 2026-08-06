@@ -142,15 +142,17 @@ def _autocast(device: torch.device):
     return nullcontext()
 
 
-def encode_gallery(
+def encode_gallery_features(
     model: Siglip2TemporalRetrievalModel,
     backbone: Siglip2Backbone,
     processor: Any,
     pair_rows: list[dict[str, Any]],
     device: torch.device,
     batch_size: int,
-) -> Tensor:
-    embeddings: list[torch.Tensor] = []
+) -> tuple[Tensor, Tensor, Tensor]:
+    frame_tokens: list[torch.Tensor] = []
+    frame_embeddings: list[torch.Tensor] = []
+    pair_embeddings: list[torch.Tensor] = []
     for start in range(0, len(pair_rows), batch_size):
         image = encode_real_images(
             backbone, processor, pair_rows[start : start + batch_size], device
@@ -159,8 +161,16 @@ def encode_gallery(
             temporal = model.temporal_adapter(
                 image.patch_tokens, image.pooled_embedding
             )
-        embeddings.append(torch.nn.functional.normalize(temporal.pair_cls.float(), dim=-1).cpu())
-    return torch.cat(embeddings, dim=0)
+        frame_tokens.append(image.patch_tokens.detach().to("cpu"))
+        frame_embeddings.append(image.pooled_embedding.detach().to("cpu"))
+        pair_embeddings.append(
+            torch.nn.functional.normalize(temporal.pair_cls.float(), dim=-1).cpu()
+        )
+    return (
+        torch.cat(frame_tokens, dim=0),
+        torch.cat(frame_embeddings, dim=0),
+        torch.cat(pair_embeddings, dim=0),
+    )
 
 
 def encode_queries(
@@ -169,22 +179,31 @@ def encode_queries(
     query_rows: list[dict[str, Any]],
     device: torch.device,
     batch_size: int,
-) -> torch.Tensor:
-    embeddings: list[torch.Tensor] = []
+) -> tuple[Tensor, Tensor, Tensor]:
+    token_embeddings: list[torch.Tensor] = []
+    pooled_embeddings: list[torch.Tensor] = []
+    attention_masks: list[torch.Tensor] = []
     for start in range(0, len(query_rows), batch_size):
         text = encode_real_text(
             backbone, processor, query_rows[start : start + batch_size], device
         )
-        embeddings.append(torch.nn.functional.normalize(text.pooled_embedding.float(), dim=-1).cpu())
-    return torch.cat(embeddings, dim=0)
+        token_embeddings.append(text.token_embeddings.detach().to("cpu"))
+        pooled_embeddings.append(text.pooled_embedding.detach().to("cpu"))
+        attention_masks.append(text.attention_mask.detach().to("cpu"))
+    return (
+        torch.cat(token_embeddings, dim=0),
+        torch.cat(pooled_embeddings, dim=0),
+        torch.cat(attention_masks, dim=0),
+    )
 
 
 def rerank_top_k(
     model: Siglip2TemporalRetrievalModel,
-    backbone: Siglip2Backbone,
-    processor: Any,
-    pair_rows: list[dict[str, Any]],
-    query_rows: list[dict[str, Any]],
+    gallery_frame_tokens: Tensor,
+    gallery_frame_embeddings: Tensor,
+    query_token_embeddings: Tensor,
+    query_pooled_embeddings: Tensor,
+    query_attention_masks: Tensor,
     global_scores: torch.Tensor,
     device: torch.device,
     *,
@@ -197,23 +216,33 @@ def rerank_top_k(
     reranked = global_scores.clone()
     top1_maps: list[torch.Tensor] = []
     model.eval()
-    for start in range(0, len(query_rows), query_batch_size):
-        end = min(start + query_batch_size, len(query_rows))
+    query_count = int(query_token_embeddings.shape[0])
+    for start in range(0, query_count, query_batch_size):
+        end = min(start + query_batch_size, query_count)
         candidate_block = candidates[start:end]
         unique_indices = sorted(
             {int(value) for value in candidate_block.reshape(-1).tolist()}
         )
         local_index = {value: index for index, value in enumerate(unique_indices)}
-        candidate_rows = [pair_rows[index] for index in unique_indices]
-        image = encode_real_images(backbone, processor, candidate_rows, device)
-        text = encode_real_text(backbone, processor, query_rows[start:end], device)
+        local_indices = torch.tensor(unique_indices, dtype=torch.long)
+        frame_tokens = gallery_frame_tokens[local_indices].to(
+            device, non_blocking=True
+        )
+        frame_embeddings = gallery_frame_embeddings[local_indices].to(
+            device, non_blocking=True
+        )
+        text_tokens = query_token_embeddings[start:end].to(device, non_blocking=True)
+        text_embeddings = query_pooled_embeddings[start:end].to(
+            device, non_blocking=True
+        )
+        text_mask = query_attention_masks[start:end].to(device, non_blocking=True)
         with torch.no_grad(), _autocast(device):
             output = model.forward_from_features(
-                image.patch_tokens,
-                image.pooled_embedding,
-                text.token_embeddings,
-                text.pooled_embedding,
-                text.attention_mask,
+                frame_tokens,
+                frame_embeddings,
+                text_tokens,
+                text_embeddings,
+                text_mask,
             )
         local_candidates = torch.tensor(
             [[local_index[int(value)] for value in row] for row in candidate_block.tolist()],
@@ -293,7 +322,7 @@ def main() -> int:
         backbone.freeze_all()
 
         started = time.perf_counter()
-        gallery_embeddings = encode_gallery(
+        gallery_frame_tokens, gallery_frame_embeddings, gallery_embeddings = encode_gallery_features(
             model,
             backbone,
             processor,
@@ -301,12 +330,15 @@ def main() -> int:
             device,
             args.gallery_batch_size,
         )
-        query_embeddings = encode_queries(
+        query_token_embeddings, query_pooled_embeddings, query_attention_masks = encode_queries(
             backbone,
             processor,
             rows,
             device,
             args.query_batch_size,
+        )
+        query_embeddings = torch.nn.functional.normalize(
+            query_pooled_embeddings.float(), dim=-1
         )
         temperature = float(model.retrieval_temperature.detach().cpu())
         raw_global_scores = global_stage_scores(
@@ -321,10 +353,11 @@ def main() -> int:
         max_k = min(max(args.rerank_k), len(pair_rows))
         max_reranked_scores, evidence_maps = rerank_top_k(
             model,
-            backbone,
-            processor,
-            pair_rows,
-            rows,
+            gallery_frame_tokens,
+            gallery_frame_embeddings,
+            query_token_embeddings,
+            query_pooled_embeddings,
+            query_attention_masks,
             global_scores,
             device,
             max_k=max_k,
@@ -391,7 +424,8 @@ def main() -> int:
                 "checkpoint_sha256": _sha256_file(checkpoint_path),
                 "siglip2_model": str(args.siglip2_model),
                 "runtime_class": backbone.runtime_class,
-                "native_visual_tokens": list(gallery_embeddings.shape),
+                "native_visual_tokens": list(gallery_frame_tokens.shape),
+                "pair_embedding_shape": list(gallery_embeddings.shape),
                 "text_embedding_shape": list(query_embeddings.shape),
                 "temperature": temperature,
                 "rerank_k": sorted(set(args.rerank_k)),
