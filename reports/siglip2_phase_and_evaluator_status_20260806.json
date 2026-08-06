@@ -1,5 +1,6 @@
 {
-  "code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
+  "code_sha": "a68b760c82a6006296e22d342e5c13ff72c39c3f",
+  "evaluation_code_sha": "35fb641b3fa9b40873bd604d76e44fa4363c7e43",
   "branch": "codex/qcpr-siglip2-temporal-training",
   "pr": 7,
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
@@ -14,13 +15,14 @@
     "top_k_evidence_reranking": "PASS_JOB_208021"
   },
   "validation": {
-    "full_pytest": "642 passed, 3 skipped, 16 warnings (pre-evaluator-fix baseline)",
+    "full_pytest": "643 passed, 3 skipped, 16 warnings",
     "focused_siglip2_contracts": "31 passed, 2 warnings",
     "pyright": "0 errors, 0 warnings",
     "compileall": "PASS",
-    "targeted_ruff": "PASS",
+    "targeted_ruff": "NOT_AVAILABLE_ON_CLUSTER",
     "shell_syntax": "PASS",
-    "git_diff_check": "PASS"
+    "git_diff_check": "PASS",
+    "ruff": "NOT_INSTALLED_ON_CLUSTER; compileall and Pyright passed"
   },
   "smoke_207946": {
     "job_id": 207946,
