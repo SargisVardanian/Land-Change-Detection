@@ -72,6 +72,17 @@
     "stage_b_minus_stage_a_probe_delta": -0.0010376095771789107,
     "interpretation": "Stage B did not increase source separability, but source identity remains highly predictable and requires cross-source evaluation."
   },
+  "final_handoff_validator": {
+    "script": "scripts/validate_temporal_siglip_final_handoff.py",
+    "missing_handoff_result": "WAIT_DATASET_FINAL_HANDOFF",
+    "focused_test": "3 passed",
+    "primary_manifest_mask_scan": "enforced_when_handoff_exists"
+  },
+  "resolution_selection": {
+    "report": "reports/resolution_selection.json",
+    "status": "PROVISIONAL_KEEP_SIGLIP2_B16_256",
+    "comparison_384": "NOT_RUN"
+  },
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "dataset_release_sha": "ff4e71f0733c7c4c69d39b557f4f925bc8a07a1657430489f405b6fc837b1cf1",
   "tokenizer_compatibility": {
