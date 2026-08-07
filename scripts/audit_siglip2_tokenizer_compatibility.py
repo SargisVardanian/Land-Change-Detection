@@ -10,6 +10,7 @@ has validated and synchronized special-token ids.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -38,6 +39,14 @@ def load_source_config(model_path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("model config must be a JSON object")
     return value
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def main() -> int:
@@ -82,11 +91,20 @@ def main() -> int:
         name: source_text_config.get(name)
         for name in ("bos_token_id", "eos_token_id", "pad_token_id")
     }
+    inherited_defaults = {
+        "bos_token_id": 49406,
+        "eos_token_id": 49407,
+        "pad_token_id": 1,
+    }
+    unpatched_effective_ids = {
+        name: raw_ids[name] if raw_ids[name] is not None else default
+        for name, default in inherited_defaults.items()
+    }
     tokenizer_ids = contract["special_token_ids"]
     inherited_config_warning = any(
         isinstance(value, int)
         and value >= 32000
-        for name, value in raw_ids.items()
+        for name, value in unpatched_effective_ids.items()
         if name in {"bos_token_id", "eos_token_id"}
     )
     report: dict[str, Any] = {
@@ -96,10 +114,13 @@ def main() -> int:
         else "FAIL",
         "model_path": str(model_path),
         "runtime_class": backbone.runtime_class,
+        "weights_sha256": file_sha256(model_path / "model.safetensors"),
         "source_config": {
             "model_type": source_config.get("model_type"),
             "text_vocab_size": source_text_config.get("vocab_size"),
-            "inherited_special_token_ids": raw_ids,
+            "raw_special_token_ids": raw_ids,
+            "inherited_siglip_defaults": inherited_defaults,
+            "unpatched_effective_special_token_ids": unpatched_effective_ids,
             "upstream_constructor_warning_expected": inherited_config_warning,
         },
         "tokenizer": {
