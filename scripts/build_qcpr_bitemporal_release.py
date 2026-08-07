@@ -81,7 +81,13 @@ def source_of(row: Mapping[str, Any]) -> str:
     if row.get("source") or row.get("source_dataset"):
         return str(row.get("source") or row.get("source_dataset"))
     provenance = row.get("provenance")
-    return str(provenance.get("source_dataset") or "") if isinstance(provenance, Mapping) else ""
+    if isinstance(provenance, Mapping) and (provenance.get("source_dataset") or provenance.get("source")):
+        return str(provenance.get("source_dataset") or provenance.get("source"))
+    for key in ("source_pair_id", "source_item_id", "item_id"):
+        value = str(row.get(key) or "")
+        if ":" in value:
+            return value.split(":", 1)[0]
+    return ""
 
 
 def source_pair(row: Mapping[str, Any]) -> str:
@@ -428,6 +434,103 @@ def graph(queries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str
     }
 
 
+def semantic_candidates(queries: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Build attribute-only semantic candidates without promoting them.
+
+    The source captions provide deterministic attribute candidates, but they
+    are not independent visual adjudications.  These groups therefore remain
+    HOLD-only and are never inserted into the exact training relevance matrix.
+    Grouping uses changed object, direction and change type only; source,
+    event, split and dataset identity are deliberately excluded.
+    """
+    eligible = [
+        query for query in queries
+        if query.get("query_scope") == "exact"
+        and query.get("verification") in {"human", "human_rewritten", "human_adjudicated"}
+    ]
+
+    def attr_tuple(query: Mapping[str, Any], key: str) -> tuple[str, ...]:
+        value = (query.get("attributes") or {}).get(key)
+        if isinstance(value, (list, tuple, set)):
+            return tuple(sorted(str(item).strip().casefold() for item in value if str(item).strip()))
+        if value not in (None, ""):
+            return (str(value).strip().casefold(),)
+        return ()
+
+    fine_groups: dict[tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]], list[dict[str, Any]]] = collections.defaultdict(list)
+    type_groups: dict[tuple[str, ...], list[dict[str, Any]]] = collections.defaultdict(list)
+    object_groups: dict[tuple[str, ...], list[dict[str, Any]]] = collections.defaultdict(list)
+    for query in eligible:
+        obj = attr_tuple(query, "changed_object")
+        direction = attr_tuple(query, "change_direction")
+        change_type = attr_tuple(query, "change_type")
+        if obj and direction and change_type:
+            fine_groups[(obj, direction, change_type)].append(query)
+        if change_type:
+            type_groups[change_type].append(query)
+        if obj:
+            object_groups[obj].append(query)
+
+    groups: list[dict[str, Any]] = []
+    query_sets: list[dict[str, Any]] = []
+
+    def add_groups(
+        pools: Mapping[Any, list[dict[str, Any]]],
+        grade: int,
+        kind: str,
+    ) -> None:
+        for key, members in sorted(pools.items(), key=lambda item: str(item[0])):
+            physical_ids = sorted({str(query["source_item_id"]) for query in members})
+            if len(physical_ids) < 2:
+                continue
+            group_id = f"semantic_candidate:{kind}:{stable_hash([key, physical_ids])}"
+            groups.append({
+                "semantic_group_id": group_id,
+                "candidate_grade": grade,
+                "candidate_kind": kind,
+                "query_ids": sorted(str(query["query_id"]) for query in members),
+                "physical_item_ids": physical_ids,
+                "physical_item_count": len(physical_ids),
+                "attribute_key": key,
+                "verification_status": "ATTRIBUTE_CANDIDATE_UNVERIFIED",
+                "training_enabled": False,
+                "relevance_status": "HOLD_ATTRIBUTE_MATCH_REVIEW_REQUIRED",
+                "source_event_identity_used": False,
+                "policy": "candidate only; independent visual review required before semantic positive promotion",
+            })
+            if grade == 3:
+                for query in members:
+                    positive_ids = [item_id for item_id in physical_ids if item_id != query["source_item_id"]]
+                    query_sets.append({
+                        "query_id": query["query_id"],
+                        "candidate_semantic_group_id": group_id,
+                        "candidate_grade": 3,
+                        "candidate_positive_item_ids": positive_ids,
+                        "verification_status": "ATTRIBUTE_CANDIDATE_UNVERIFIED",
+                        "training_enabled": False,
+                    })
+
+    add_groups(fine_groups, 3, "object_direction_type")
+    add_groups(type_groups, 2, "change_type")
+    add_groups(object_groups, 1, "changed_object")
+    groups.sort(key=lambda row: row["semantic_group_id"])
+    query_sets.sort(key=lambda row: row["query_id"])
+    return groups, query_sets, {
+        "schema_version": "qcpr-semantic-candidate-audit-v1",
+        "candidate_query_count": len(eligible),
+        "candidate_group_count": len(groups),
+        "candidate_grade_3_group_count": sum(row["candidate_grade"] == 3 for row in groups),
+        "candidate_grade_2_group_count": sum(row["candidate_grade"] == 2 for row in groups),
+        "candidate_grade_1_group_count": sum(row["candidate_grade"] == 1 for row in groups),
+        "candidate_query_set_count": len(query_sets),
+        "verified_group_count": 0,
+        "verified_grade_2_edge_count": 0,
+        "training_enabled": False,
+        "source_event_identity_used": False,
+        "status": "HOLD_INDEPENDENT_VISUAL_REVIEW_REQUIRED",
+    }
+
+
 def distribution(values: Iterable[float | int]) -> dict[str, Any]:
     data = sorted(float(value) for value in values)
     if not data:
@@ -716,37 +819,168 @@ def real_batch(output: Path, items: list[dict[str, Any]], queries: list[dict[str
     return batch
 
 
-def difficulty(items: list[dict[str, Any]], queries: list[dict[str, Any]], edges: list[dict[str, Any]]) -> dict[str, Any]:
+def difficulty(
+    items: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    generic: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     gallery = max(1, len(items))
-    resolutions = collections.Counter((frame.get("width"), frame.get("height")) for item in items for frame in item.get("frames") or [] if frame.get("width"))
-    scopes = []
-    for scope in ("exact", "semantic", "localized", "direction", "stable", "long_series"):
-        rows = [q for q in queries if q["query_scope"] == scope or scope in q.get("roles", [])]
-        texts = [norm(q["text"]) for q in rows]
-        scores = [q["provenance"].get("identifiability_score") for q in rows if q["provenance"].get("identifiability_score") is not None]
-        scopes.append({
-            "query_scope": scope,
-            "pair_sequence_count": len({q["source_item_id"] for q in rows}),
+    item_map = {str(item["item_id"]): item for item in items}
+    resolutions = collections.Counter(
+        (frame.get("width"), frame.get("height"))
+        for item in items
+        for frame in item.get("frames") or []
+        if frame.get("width") and frame.get("height")
+    )
+    sha_to_items: dict[str, set[str]] = collections.defaultdict(set)
+    for item in items:
+        for frame in item.get("frames") or []:
+            if frame.get("sha256"):
+                sha_to_items[str(frame["sha256"])].add(str(item["item_id"]))
+    near_duplicate_hashes = {sha for sha, ids in sha_to_items.items() if len(ids) > 1}
+
+    def summary(label: str, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        texts = [norm(row.get("text")) for row in rows]
+        text_counts = collections.Counter(texts)
+        item_ids = {str(row.get("source_item_id")) for row in rows}
+        item_rows = [item_map[item_id] for item_id in item_ids if item_id in item_map]
+        scores = [
+            row.get("provenance", {}).get("identifiability_score")
+            for row in rows
+            if row.get("provenance", {}).get("identifiability_score") is not None
+        ]
+        change_status = collections.Counter()
+        for row in rows:
+            status = str(row.get("provenance", {}).get("source_change_status") or "")
+            if not status:
+                status = "no_change" if row.get("query_scope") == "stable" else "changed" if row.get("query_scope") in {"exact", "localized", "long_series"} else "unknown"
+            change_status[status] += 1
+        frame_resolutions = collections.Counter(
+            (frame.get("width"), frame.get("height"))
+            for item in item_rows
+            for frame in item.get("frames") or []
+            if frame.get("width") and frame.get("height")
+        )
+        gsd_values = sorted({
+            frame.get("gsd")
+            for item in item_rows
+            for frame in item.get("frames") or []
+            if frame.get("gsd") is not None
+        })
+        events = collections.Counter(
+            str(item.get("event_id"))
+            for item in item_rows
+            if item.get("event_id") is not None
+        )
+        localized_count = sum("localized" in row.get("roles", []) for row in rows)
+        directional_count = sum("directional" in row.get("roles", []) for row in rows)
+        return {
+            "query_scope": label,
+            "pair_sequence_count": len(item_ids),
             "query_count": len(rows),
-            "caption_entropy_bits": round(-sum((n / len(texts)) * math.log2(n / len(texts)) for n in collections.Counter(texts).values()) if texts else 0.0, 6),
-            "normalized_duplicate_rate": round(1 - len(set(texts)) / max(1, len(texts)), 6),
+            "caption_entropy_bits": round(
+                -sum((count / len(texts)) * math.log2(count / len(texts)) for count in text_counts.values())
+                if texts else 0.0,
+                6,
+            ),
+            "normalized_duplicate_rate": round(1 - len(text_counts) / max(1, len(texts)), 6),
             "generic_no_change_rate": 0.0,
             "identifiability_distribution": distribution(scores),
-            "positive_set_size_distribution": distribution(len(q["positive_item_ids"]) for q in rows),
-            "spatial_detail_coverage": {"localized": sum("localized" in q.get("roles", []) for q in rows), "directional": sum("directional" in q.get("roles", []) for q in rows)},
-            "source_counts": dict(collections.Counter(source_of(q) for q in rows)),
-        })
+            "positive_set_size_distribution": distribution(len(row.get("positive_item_ids") or []) for row in rows),
+            "image_resolution_distribution": {str(key): value for key, value in frame_resolutions.items()},
+            "gsd_values": gsd_values,
+            "change_no_change_balance": dict(change_status),
+            "spatial_detail_coverage": {
+                "localized_count": localized_count,
+                "localized_rate": round(localized_count / max(1, len(rows)), 6),
+                "directional_count": directional_count,
+                "directional_rate": round(directional_count / max(1, len(rows)), 6),
+            },
+            "source_counts": dict(collections.Counter(source_of(row) for row in rows)),
+            "event_counts": dict(events),
+            "event_ids_available": sum(events.values()),
+        }
+
+    scope_roles = {
+        "exact": {"exact_source_candidate"},
+        "semantic": set(),
+        "localized": {"localized"},
+        "direction": {"directional"},
+        "stable": {"stable"},
+        "long_series": {"long_series"},
+    }
+    scopes = []
+    for scope in ("exact", "semantic", "localized", "direction", "stable", "long_series"):
+        if scope == "semantic":
+            rows = [row for row in queries if row.get("query_scope") == "exact" and row.get("verification") in {"human", "human_rewritten", "human_adjudicated"}]
+        else:
+            rows = [
+                row for row in queries
+                if row.get("query_scope") == scope or any(role in row.get("roles", []) for role in scope_roles[scope])
+            ]
+        scopes.append(summary(scope, rows))
+
+    sources = sorted({str(item.get("source") or "") for item in items})
+    per_source = []
+    for source in sources:
+        rows = [row for row in queries if source_of(row) == source]
+        record = summary(source, rows)
+        record["physical_item_count"] = sum(str(item.get("source") or "") == source for item in items)
+        record["physical_frame_count"] = sum(
+            len(item.get("frames") or []) for item in items if str(item.get("source") or "") == source
+        )
+        per_source.append(record)
+
+    source_events = collections.Counter(
+        str(item.get("event_id")) for item in items if item.get("event_id") is not None
+    )
     return {
-        "schema_version": "qcpr-dataset-difficulty-report-v2",
+        "schema_version": "qcpr-dataset-difficulty-report-v3",
         "physical_gallery_count": len(items),
+        "per_source": per_source,
         "per_scope": scopes,
         "frame_resolution_distribution": {str(key): value for key, value in resolutions.items()},
-        "gsd_footprint": {"gsd_values": sorted({frame.get("gsd") for item in items for frame in item.get("frames") or [] if frame.get("gsd") is not None}), "footprint_available": False},
-        "visual_near_duplicate_proxy": {"definition": "identical frame SHA across distinct items", "count": 0},
-        "random_retrieval_baseline": {"hit_at_1": 1 / gallery, "hit_at_10": min(10, gallery) / gallery, "mrr": None},
+        "gsd_footprint": {
+            "gsd_values": sorted({
+                frame.get("gsd")
+                for item in items
+                for frame in item.get("frames") or []
+                if frame.get("gsd") is not None
+            }),
+            "footprint_available": any(
+                frame.get("footprint") is not None
+                for item in items
+                for frame in item.get("frames") or []
+            ),
+        },
+        "visual_near_duplicate_proxy": {
+            "definition": "identical frame SHA across distinct physical items",
+            "duplicate_frame_sha_count": len(near_duplicate_hashes),
+            "duplicate_frame_sha_rate": round(len(near_duplicate_hashes) / max(1, len(sha_to_items)), 6),
+        },
+        "generic_no_change": {
+            "disabled_count": len(generic or []),
+            "active_query_count": len(queries),
+            "active_rate": 0.0,
+            "source_counts": dict(collections.Counter(source_of(row) for row in (generic or []))),
+        },
+        "random_retrieval_baseline": {
+            "hit_at_1": 1 / gallery,
+            "hit_at_10": min(10, gallery) / gallery,
+            "mrr": None,
+        },
         "frozen_anchor_baseline": {"status": "NOT_RUN_MODEL_DEPENDENT"},
-        "source_event_imbalance": {"source_counts": dict(collections.Counter(item["source"] for item in items)), "event_ids_available": sum(bool(item.get("event_id")) for item in items)},
-        "relevance_edge_counts": dict(collections.Counter("IGNORE" if edge["relevance_status"].startswith("IGNORE") else f"grade_{edge['relevance_grade']}" for edge in edges)),
+        "source_event_imbalance": {
+            "source_counts": dict(collections.Counter(str(item.get("source") or "") for item in items)),
+            "event_counts": dict(source_events),
+            "event_ids_available": sum(source_events.values()),
+            "max_event_fraction": round(max(source_events.values()) / max(1, len(items)), 6) if source_events else 0.0,
+        },
+        "relevance_edge_counts": dict(collections.Counter(
+            "IGNORE" if edge["relevance_status"].startswith("IGNORE") else f"grade_{edge['relevance_grade']}"
+            for edge in edges
+        )),
     }
 
 
@@ -862,6 +1096,7 @@ def main() -> int:
             query["training_enabled"] = False
     generic = generic_rows(source_rows, read_jsonl(args.input_release / "registries/generic_no_change_diagnostic.jsonl"))
     edges, collision = graph(queries)
+    semantic_groups, semantic_query_sets, semantic_candidate_audit = semantic_candidates(queries)
     by_item: dict[str, list[str]] = collections.defaultdict(list)
     for query in queries:
         by_item[query["source_item_id"]].append(query["query_id"])
@@ -903,6 +1138,9 @@ def main() -> int:
     write_jsonl(args.output / "registries/query_to_pair_relevance.jsonl", edges)
     collision_groups = collision.pop("collision_groups", [])
     write_jsonl(args.output / "registries/relevance_collision_groups.jsonl", collision_groups)
+    write_jsonl(args.output / "registries/semantic_candidate_groups.jsonl", semantic_groups)
+    write_jsonl(args.output / "registries/semantic_candidate_query_sets.jsonl", semantic_query_sets)
+    write_json(args.output / "semantic_candidate_audit.json", semantic_candidate_audit)
 
     view_counts = {
         "exact": view(
@@ -1080,7 +1318,8 @@ def main() -> int:
         "real_batch_source_quotas": batch["source_quotas"],
         "physical_source_counts": dict(collections.Counter(item["source"] for item in items)),
     })
-    difficulty_report = difficulty(items, queries, edges)
+    difficulty_report = difficulty(items, queries, edges, generic)
+    difficulty_report["semantic_candidates"] = semantic_candidate_audit
     write_json(args.output / "dataset_difficulty_report.json", difficulty_report)
     review = reviews(args.output, queries, generic)
 
@@ -1188,6 +1427,13 @@ def main() -> int:
             "path": str(args.output / "false_negative_audit.json"),
             "status": "CALIBRATION_PENDING",
         },
+        "semantic_candidates": {
+            "path": str(args.output / "registries/semantic_candidate_groups.jsonl"),
+            "query_sets_path": str(args.output / "registries/semantic_candidate_query_sets.jsonl"),
+            "audit_path": str(args.output / "semantic_candidate_audit.json"),
+            "status": semantic_candidate_audit["status"],
+            "verified_group_count": semantic_candidate_audit["verified_group_count"],
+        },
         "extension_audit_snapshot_path": str(args.output / "source_reports/extension_audit_snapshot.json"),
         "integrity": {
             "split_leakage_passed": leak["passed"],
@@ -1228,6 +1474,8 @@ def main() -> int:
             "verified_exact_query_count": len(core),
             "verified_exact_candidate_train_query_count": len(candidate_queries),
             "verified_semantic_group_count": 0,
+            "semantic_candidate_group_count": semantic_candidate_audit["candidate_group_count"],
+            "semantic_candidate_query_set_count": semantic_candidate_audit["candidate_query_set_count"],
             "verified_semantic_grade_2_edge_count": grade_counts.get("2", 0),
             "localized_query_count": hold_counts.get("localized", 0),
             "stable_query_count": hold_counts.get("stable", 0),
@@ -1255,6 +1503,9 @@ def main() -> int:
             "dense_evaluation_sidecars": sha256_file(args.output / "evaluation_sidecars/dense.jsonl"),
             "false_negative_audit": sha256_file(args.output / "false_negative_audit.json"),
             "extension_audit_snapshot": sha256_file(args.output / "source_reports/extension_audit_snapshot.json"),
+            "semantic_candidate_groups": sha256_file(args.output / "registries/semantic_candidate_groups.jsonl"),
+            "semantic_candidate_query_sets": sha256_file(args.output / "registries/semantic_candidate_query_sets.jsonl"),
+            "semantic_candidate_audit": sha256_file(args.output / "semantic_candidate_audit.json"),
         },
         "gate_status": {
             "exact_scope_precision": review["metrics"]["exact_scope_precision"],
@@ -1270,6 +1521,8 @@ def main() -> int:
         "Source-trusted LEVIR/SECOND bitemporal retrieval candidate track for TemporalSigLIP.\n\n"
         "Generic no-change text is diagnostic-only. Relevance is a sparse graph; "
         "normalized collisions are represented as IGNORE collision groups, not negatives. "
+        "Attribute-only semantic candidate groups are materialized separately and remain HOLD "
+        "until independent visual review; they are not exact-loss positives. "
         "The exact and direction views remain HOLD until the required human exact-scope "
         "precision gate is adjudicated. Semantic grade-2, localized, stable, Forest, RSCC, "
         "RSRCC, TAMMs and external benchmark tracks remain on explicit HOLD/EVAL_ONLY states.\n\n"
