@@ -60,6 +60,16 @@ def test_temporalsiglip_supports_three_frames_and_query_independent_pairs():
     assert torch.equal(first.pair_embedding, second.pair_embedding)
 
 
+def test_score_path_promotes_mixed_bfloat16_and_float32_features():
+    model = TemporalSigLIP(config=_config())
+    text = torch.randn(2, 16, dtype=torch.bfloat16)
+    pair = torch.randn(3, 16, dtype=torch.float32)
+    scores = model.score_embeddings(text, pair)
+    assert scores.shape == (2, 3)
+    assert scores.dtype == torch.float32
+    assert torch.isfinite(scores).all()
+
+
 def test_symmetric_clip_loss_uses_both_directions_and_multi_positive_masks():
     scores = torch.tensor(
         [[4.0, 1.0, 0.0], [0.5, 3.0, 1.0], [0.0, 0.5, 2.5]],

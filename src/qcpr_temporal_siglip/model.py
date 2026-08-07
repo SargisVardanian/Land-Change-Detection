@@ -82,6 +82,9 @@ class TemporalSigLIP(nn.Module):
         pair = F.normalize(pair_embedding, dim=-1)
         if text.ndim != 2 or pair.ndim != 2 or text.shape[-1] != pair.shape[-1]:
             raise ValueError("embeddings must be [Q,D] and [P,D]")
+        score_dtype = torch.promote_types(text.dtype, pair.dtype)
+        text = text.to(dtype=score_dtype)
+        pair = pair.to(dtype=score_dtype)
         return self.effective_logit_scale * (text @ pair.transpose(0, 1))
 
     def forward_from_features(
