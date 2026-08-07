@@ -3,8 +3,8 @@
   "active_model": {
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
-    "status": "STAGE_B_1536_PILOT_COMPLETE_WAIT_DATASET_FINAL_HANDOFF",
-    "published_code_sha": "b804533431505b9959516f719261052d0b45ef57",
+    "status": "STAGE_B_1536_PILOT_SOURCE_AUDIT_PASS_WAIT_DATASET_FINAL_HANDOFF",
+    "published_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
@@ -48,8 +48,8 @@
   },
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "b804533431505b9959516f719261052d0b45ef57",
-  "evaluation_code_sha": "b804533431505b9959516f719261052d0b45ef57",
+  "code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+  "evaluation_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
   "executable_smoke_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
   "cpu_gate": {
     "compileall": "PASS",
@@ -60,6 +60,18 @@
     "shell_syntax": "PASS"
   },
   "dataset_contract_status": "MISSING",
+  "source_shortcut_audit": {
+    "job_id": "209878",
+    "status": "PASS_NO_LARGE_STAGE_B_DELTA",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_source_audit_5e49864b_20260808",
+    "report": "reports/temporal_siglip_source_dependence.json",
+    "report_sha256": "81e0e7f971196cdd4ad1bb74cb5307da66edd5e6db1aa3071e67066e14be4077",
+    "stage_a_probe_accuracy": 0.9994818687438964,
+    "stage_b_step1024_probe_accuracy": 0.9984455943107605,
+    "stage_b_step2048_probe_accuracy": 0.9984442591667175,
+    "stage_b_minus_stage_a_probe_delta": -0.0010376095771789107,
+    "interpretation": "Stage B did not increase source separability, but source identity remains highly predictable and requires cross-source evaluation."
+  },
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "dataset_release_sha": "ff4e71f0733c7c4c69d39b557f4f925bc8a07a1657430489f405b6fc837b1cf1",
   "tokenizer_compatibility": {
@@ -186,8 +198,8 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "b804533431505b9959516f719261052d0b45ef57",
-    "evaluation_code_sha": "b804533431505b9959516f719261052d0b45ef57",
+    "code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+    "evaluation_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",

@@ -1,0 +1,26 @@
+{
+  "status": "BLOCKED_FINAL_DATASET_HANDOFF",
+  "evaluated_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+  "provisional_architecture": "TemporalSigLIP_STAGE_B",
+  "unique_pair_presentation_policy": {
+    "target_presentations_per_pair": "30-35",
+    "hard_ceiling_presentations_per_pair": 40,
+    "selection_rule": "count unique physical-pair presentations, not epochs"
+  },
+  "pilot_contract": {
+    "physical_microbatch": 32,
+    "logical_physical_batch": 128,
+    "captions_per_pair": 2,
+    "logical_query_count": 256,
+    "score_matrix": [256, 128],
+    "feature_recompute_microbatches": 4,
+    "precision": "BF16",
+    "optimizer": "AdamW",
+    "warmup_fraction": 0.05,
+    "weight_decay": 0.05,
+    "gradient_clip_norm": 1.0,
+    "hard_negative_mining": false,
+    "early_stopping": false
+  },
+  "why_not_final": "The final Dataset Agent handoff and training-enabled exact/semantic capability contract are absent. No final three-seed budget is authorized."
+}
