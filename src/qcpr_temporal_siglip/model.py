@@ -102,7 +102,18 @@ class TemporalSigLIP(nn.Module):
         text_embedding, tokens, mask = self.encode_query_from_features(
             text_tokens, text_embeddings, text_mask
         )
-        scores = self.score_embeddings(text_embedding, pair.pair_embedding)
+        # Both outputs are already L2-normalized by the encoder methods.  Use
+        # them directly here so the active forward path is exactly the stated
+        # scaled cosine score rather than a numerically different second
+        # normalization pass.
+        score_dtype = torch.promote_types(text_embedding.dtype, pair.pair_embedding.dtype)
+        scale = self.effective_logit_scale.to(
+            device=text_embedding.device, dtype=score_dtype
+        )
+        scores = scale * (
+            text_embedding.to(dtype=score_dtype)
+            @ pair.pair_embedding.to(dtype=score_dtype).transpose(0, 1)
+        )
         return TemporalSigLIPOutput(
             score_matrix=scores,
             pair_embedding=pair.pair_embedding,
