@@ -801,6 +801,45 @@ def checksums(output: Path) -> str:
     target.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return sha256_file(target)
 
+
+def extension_audit_snapshot(input_release: Path) -> dict[str, Any]:
+    """Carry forward source-specific audit evidence without promoting it.
+
+    The bitemporal release is immutable, so the source-extension state used to
+    make a HOLD decision must be copied into the release itself.  This keeps
+    Forest/RSCC/RSRCC/TAMMs provenance and license evidence auditable even if
+    the upstream audit workspace changes later.
+    """
+    paths = {
+        "forest_caption_level_audit": "source_reports/forest/caption_level_audit.json",
+        "forest_hold_status": "source_reports/forest/forest_hold_status.json",
+        "forest_split_integrity": "source_reports/forest/forest_split_integrity.json",
+        "forest_license_record": "source_reports/forest/forest_license_record.json",
+        "rscc_verified_text_audit": "source_reports/retrieval_semantic_repair/rscc_verified_text_audit.json",
+        "rscc_review_packet_status": "source_reports/retrieval_semantic_repair/human_review_packet_status.json",
+        "review_packet_evidence_audit": "source_reports/retrieval_semantic_repair/review_packet_evidence_audit.json",
+        "rsrcc_physical_asset_acquisition": "source_reports/retrieval_semantic_repair/rsrcc_physical_asset_acquisition.json",
+        "tamms_long_series_audit": "source_reports/retrieval_semantic_repair/tamms_long_series_audit.json",
+    }
+    artifacts = []
+    for name, relative in paths.items():
+        path = input_release / relative
+        record: dict[str, Any] = {
+            "name": name,
+            "relative_path": relative,
+            "present": path.exists(),
+        }
+        if path.exists():
+            record["sha256"] = sha256_file(path)
+            record["payload"] = read_json(path, {})
+        artifacts.append(record)
+    return {
+        "schema_version": "qcpr-extension-audit-snapshot-v1",
+        "input_release": str(input_release),
+        "promotion_policy": "source-specific text remains disabled unless provenance, license and human verification gates pass",
+        "artifacts": artifacts,
+    }
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-release", type=Path, default=DEFAULT_INPUT)
@@ -920,6 +959,7 @@ def main() -> int:
             "TERRA-CD": "DEFERRED_LICENSE_ASSET_AUDIT",
         },
     })
+    write_json(args.output / "source_reports/extension_audit_snapshot.json", extension_audit_snapshot(args.input_release))
     leak = leakage(items)
     write_json(args.output / "split_leakage_audit.json", leak)
     mask = mask_free(queries, sidecars)
@@ -989,6 +1029,36 @@ def main() -> int:
     batch = real_batch(args.output, items, queries, edges)
     train_queries = [query for query in queries if query["training_enabled"]]
     candidate_queries = [query for query in queries if query.get("candidate_training_enabled", False)]
+    collision_group_sizes = [int(group.get("physical_item_count", 0)) for group in collision_groups]
+    source_pair_grade_3_count = sum(edge["relevance_grade"] == 3 for edge in edges)
+    loader_ignore_count = int(batch["audit"]["ambiguous_ignore_count"])
+    write_json(args.output / "false_negative_audit.json", {
+        "schema_version": "qcpr-false-negative-audit-v2",
+        "status": "CALIBRATION_PENDING",
+        "decision": "HOLD",
+        "scope": "candidate exact retrieval matrix and sparse semantic relevance graph",
+        "candidate_exact_query_count": sum(query.get("candidate_training_enabled", False) for query in queries if query["query_scope"] == "exact"),
+        "candidate_train_query_count": len(candidate_queries),
+        "generic_no_change_disabled_count": len(generic),
+        "source_pair_grade_3_edge_count": source_pair_grade_3_count,
+        "verified_grade_2_edge_count": sum(edge["relevance_grade"] == 2 for edge in edges),
+        "verified_grade_1_edge_count": sum(edge["relevance_grade"] == 1 for edge in edges),
+        "explicit_grade_0_edge_count": sum(edge["relevance_grade"] == 0 for edge in edges),
+        "collision_group_count": len(collision_groups),
+        "collision_group_size_distribution": distribution(collision_group_sizes),
+        "ambiguous_query_pair_cells_estimate": sum(
+            int(group.get("query_count", 0)) * max(0, int(group.get("physical_item_count", 0)) - 1)
+            for group in collision_groups
+        ),
+        "explicit_ignore_edge_count": 0,
+        "loader_derived_ignore_cells_in_real_batch": loader_ignore_count,
+        "same_pair_captions_never_negative": batch["audit"]["same_pair_captions_never_negative"],
+        "false_negative_rate": None,
+        "false_negative_rate_95_ci": None,
+        "human_calibration_status": "PENDING_EXTERNAL_REVIEW",
+        "review_requirement": "reviewers must adjudicate semantic-neighbour controls before any exact or grade-2 promotion",
+        "interpretation": "Absent relevance cells are unlabeled, not verified negatives; normalized collision groups are IGNORE; no grade-2 relation is inferred from text collision or event identity.",
+    })
     write_json(args.output / "source_balance.json", {
         "schema_version": "qcpr-source-balance-v2",
         "training_query_count": len(train_queries),
@@ -1114,6 +1184,11 @@ def main() -> int:
             "path": str(args.output / "loader/temporal_siglip_batch_128x256.json"),
             "audit": batch["audit"],
         },
+        "false_negative_audit": {
+            "path": str(args.output / "false_negative_audit.json"),
+            "status": "CALIBRATION_PENDING",
+        },
+        "extension_audit_snapshot_path": str(args.output / "source_reports/extension_audit_snapshot.json"),
         "integrity": {
             "split_leakage_passed": leak["passed"],
             "mask_free_passed": mask["passed"],
@@ -1178,6 +1253,8 @@ def main() -> int:
             "generic_no_change": sha256_file(args.output / "registries/generic_no_change_diagnostic.jsonl"),
             "disabled_rows": sha256_file(args.output / "registries/disabled_query_rows.jsonl"),
             "dense_evaluation_sidecars": sha256_file(args.output / "evaluation_sidecars/dense.jsonl"),
+            "false_negative_audit": sha256_file(args.output / "false_negative_audit.json"),
+            "extension_audit_snapshot": sha256_file(args.output / "source_reports/extension_audit_snapshot.json"),
         },
         "gate_status": {
             "exact_scope_precision": review["metrics"]["exact_scope_precision"],
