@@ -27,7 +27,7 @@
     }
   },
   "dataset_final_handoff_path": "/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-dataset-v2-final/contracts/qcpr_shared/handoff/dataset_final_to_model.json",
-  "dataset_final_handoff_sha256": "5ac1a0d81e195cc63de050c6e4ec0326fe54f25fcaded474a9e3acae411c05af",
+  "dataset_final_handoff_sha256": "2693b2d01d56c6dcae565f5683efafc7bdc7124b6b2677502f63c252d347cd77",
   "dataset_head_sha": "4efb00fd8a0bdf82e457ad17d717357f8dbc9a27",
   "direction": {
     "development_queries": 2184,
@@ -250,9 +250,9 @@
     "relevance_graph_sha256": "7d523e1165119cd11a3f9ffd00b2f010d09b3581e84e2d9a07d55c7e91b2c187",
     "training_enabled": 0
   },
-  "release_code_sha": "a9ffd895c3c413782ea212551fdef561c3a1222a",
+  "release_code_sha": "87d6a8b5a41ad66b9e6663b2a47de51c152fa3b0",
   "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18",
-  "release_sha256": "2014a91edbb65e0f2c637fb20f78494b59a39144f8a7885e91e87c9ec6d4f8df",
+  "release_sha256": "99dd5f6f30d7cf2d12bca11075e9738b4b7d26c9211883e2cc0133d944fbbe07",
   "release_state": "FINAL_EXACT_AUTHORIZED_EXTENSION_HOLD",
   "schema_version": "qcpr-dataset-capabilities-v2-final",
   "semantic": {
