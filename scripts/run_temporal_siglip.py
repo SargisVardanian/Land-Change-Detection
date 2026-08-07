@@ -330,16 +330,16 @@ def logical_step(
     forward_seconds = time.perf_counter() - forward_start
     backward_start = time.perf_counter()
     loss.backward()
-    endpoint_grads = (
-        endpoints.frame_tokens.grad,
-        endpoints.frame_embeddings.grad,
-        endpoints.text_tokens.grad,
-        endpoints.text_embeddings.grad,
-    )
+    # The active direct model consumes native visual patch tokens and the
+    # pooled text embedding.  Pooled visual features and text token features
+    # are retained in RawFeatureBatch for the shared loader contract, but are
+    # not inputs to TemporalSigLIP.forward_from_features and therefore must
+    # not be treated as required Stage-B gradient endpoints.
+    endpoint_grads = (endpoints.frame_tokens.grad, endpoints.text_embeddings.grad)
     if stage_b:
         if any(value is None for value in endpoint_grads):
             raise RuntimeError("FEATURE_ENDPOINT_NO_GRADIENT")
-        frame_grad, frame_embedding_grad, text_grad, text_embedding_grad = (
+        frame_grad, text_embedding_grad = (
             cast(torch.Tensor, value) for value in endpoint_grads
         )
         captions_per_pair = len(batch.query_rows) // len(batch.pair_rows)
@@ -363,8 +363,6 @@ def logical_step(
             query_end = end * captions_per_pair
             surrogate = (
                 (recomputed.frame_tokens * frame_grad[start:end]).sum()
-                + (recomputed.frame_embeddings * frame_embedding_grad[start:end]).sum()
-                + (recomputed.text_tokens * text_grad[query_start:query_end]).sum()
                 + (recomputed.text_embeddings * text_embedding_grad[query_start:query_end]).sum()
             )
             surrogate.backward()
@@ -513,7 +511,7 @@ def main() -> int:
                 args.logical_physical_batch_size + args.physical_batch_size - 1
             ) // args.physical_batch_size,
             "feature_recompute_microbatch_sizes": [
-                min(args.physical_batch_size, start + args.physical_batch_size) - start
+                min(args.physical_batch_size, args.logical_physical_batch_size - start)
                 for start in range(0, args.logical_physical_batch_size, args.physical_batch_size)
             ],
             "one_symmetric_clip_loss": True,
