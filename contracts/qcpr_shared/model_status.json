@@ -3,8 +3,8 @@
   "active_model": {
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
-    "status": "IMPLEMENTED_CPU_CONTRACT_NOT_GPU_AUTHORIZED",
-    "published_code_sha": "a6f6ecdcfdc5d73c8720b36904b0e4c06ab4f377",
+    "status": "REAL_INTEGRATION_SMOKE_PASS_MECHANISM_NOT_AUTHORIZED",
+    "published_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
@@ -12,9 +12,14 @@
     "mandatory_reranker": false,
     "active_evidence_branch": false,
     "post_retrieval_soft_map": "LayerNorm(T2_temporal_tokens - T1_temporal_tokens) dot text_embedding",
-    "stage_a_gpu": "NOT_RUN",
+    "stage_a_gpu": "NOT_RUN_FULL_512_STEP_STAGE",
     "stage_b_gpu": "NOT_RUN",
-    "main_training": "NOT_AUTHORIZED"
+    "main_training": "NOT_AUTHORIZED",
+    "real_integration_smoke": {
+      "job_id": "209852",
+      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_real_smoke_c4be84d_20260807",
+      "status": "PASS_32_STEP_REAL_SIGLIP2_EXACT_CORE"
+    }
   },
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
