@@ -1,4 +1,6 @@
 {
+  "core_benchmark_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_core_benchmark_v1_r18",
+  "core_benchmark_sha256": "ac213877e93bd0ceb689b460451cfa42c0df1fd014d5d06aa7dc33334ba0d329",
   "data_only_comparison": {
     "artifact": "audits/retrieval_semantic_repair/data_only_D0_D3_comparison.json",
     "checkpoint_sha256": "3b6d89e6c37c25302f8af8f57e3f873564a301070ce47f96a8f611caeffc6e2b",
@@ -7,23 +9,25 @@
     "improvement_claim": false,
     "metrics": {
       "D0_current_exact_core_mrr": 0.011405529,
+      "D1_direction_mrr": 0.013184458,
+      "D1_localized_mrr": 0.085803951,
       "D1_repaired_exact_mrr": 0.023338435,
       "D1_semantic_mAP": 0.052813482,
       "D1_semantic_nDCG_at_10": 0.032703617,
-      "D1_stable_scene_mrr": 0.141913119,
-      "D1_localized_mrr": 0.085803951,
-      "D1_direction_mrr": 0.013184458
+      "D1_stable_scene_mrr": 0.141913119
     },
     "paired_bootstrap_query_count": 606,
     "same_frozen_model_required": true,
     "status": "PASS_FROZEN_B1_DATA_ONLY_METRICS",
     "verified_additions": {
       "forest": 0,
-      "rscc": 0,
       "localized": 0,
-      "long_series": 0
+      "long_series": 0,
+      "rscc": 0
     }
   },
+  "dataset_final_handoff_path": "/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-dataset-v2-final/contracts/qcpr_shared/handoff/dataset_final_to_model.json",
+  "dataset_final_handoff_sha256": "5ac1a0d81e195cc63de050c6e4ec0326fe54f25fcaded474a9e3acae411c05af",
   "dataset_head_sha": "4efb00fd8a0bdf82e457ad17d717357f8dbc9a27",
   "direction": {
     "development_queries": 2184,
@@ -45,6 +49,115 @@
     "training_enabled": false,
     "verified": false
   },
+  "extension_benchmark_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_extension_benchmark_v1_r18",
+  "extension_benchmark_sha256": "dee35eb9834452d86c442efcec11908fd94144e7038dd36061d80e46198dba42",
+  "final_readiness": {
+    "AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING": true,
+    "BITEMPORAL_EXACT_READY": {
+      "decision": true,
+      "evidence": [
+        "exact_training_integrity_audit.json",
+        "real_batch_relevance_audit.json",
+        "core_benchmark_integrity.json",
+        "audits/validate_qcpr_release_contract.json"
+      ],
+      "status": "READY_FINAL_EXACT_CORE",
+      "training_enabled": true
+    },
+    "DUBAI_EXTERNAL_READY": {
+      "decision": false,
+      "evidence": [
+        "extension/external_benchmarks/dubai_cc_audit.json"
+      ],
+      "status": "ACQUISITION_LICENSE_MANIFEST_HOLD",
+      "training_enabled": false
+    },
+    "FOREST_TRAIN_READY": {
+      "decision": false,
+      "evidence": [
+        "source_reports/extension_audit_snapshot.json"
+      ],
+      "status": "PHYSICAL_TEXT_PROVENANCE_HOLD",
+      "training_enabled": false
+    },
+    "LOCALIZED_EVAL_READY": {
+      "decision": false,
+      "evidence": [
+        "extension/evaluation/localized_evaluation.jsonl",
+        "evaluation_sidecars/dense.jsonl"
+      ],
+      "status": "HOLD_VERIFIED_LANGUAGE",
+      "training_enabled": false
+    },
+    "LOCALIZED_TRAIN_READY": {
+      "decision": false,
+      "evidence": [
+        "manifests/localized_train.jsonl"
+      ],
+      "status": "NO_VERIFIED_LOCALIZED_TRAINING_TEXT",
+      "training_enabled": false
+    },
+    "LONG_SERIES_READY": {
+      "decision": false,
+      "evidence": [
+        "extension/extension_readiness.json"
+      ],
+      "status": "LICENSE_TEMPORAL_REVIEW_HOLD",
+      "training_enabled": false
+    },
+    "RSCC_TRAIN_READY": {
+      "decision": false,
+      "evidence": [
+        "source_reports/extension_audit_snapshot.json"
+      ],
+      "status": "PHYSICAL_ONLY_HUMAN_REVIEW_REQUIRED",
+      "training_enabled": false
+    },
+    "RSRCC_READY": {
+      "decision": false,
+      "evidence": [
+        "source_reports/source_terms_audit.json"
+      ],
+      "status": "PARENT_PROVENANCE_HOLD",
+      "training_enabled": false
+    },
+    "SEMANTIC_EVAL_READY": {
+      "decision": false,
+      "evidence": [
+        "extension/extension_readiness.json",
+        "extension/evaluation/semantic_human_adjudication.jsonl"
+      ],
+      "status": "HOLD_IMMUTABLE_HUMAN_ADJUDICATION_MISSING",
+      "training_enabled": false
+    },
+    "SEMANTIC_TRAIN_READY": {
+      "decision": false,
+      "evidence": [
+        "manifests/semantic_train.jsonl"
+      ],
+      "status": "NO_VERIFIED_GRADE_2_OR_SEMANTIC_GOLD",
+      "training_enabled": false
+    },
+    "STABLE_EVAL_READY": {
+      "decision": false,
+      "evidence": [
+        "extension/extension_readiness.json"
+      ],
+      "status": "HOLD_STABLE_HUMAN_GATE",
+      "training_enabled": false
+    },
+    "gate_inputs": {
+      "core_benchmark_passed": true,
+      "exact_training_integrity_passed": true,
+      "full_path_decode_passed": true,
+      "real_batch_passed": true,
+      "reversed_leakage_passed": true,
+      "validator_passed": true
+    },
+    "schema_version": "qcpr-final-readiness-states-v1",
+    "training_launched": false
+  },
+  "final_training_authorized": true,
   "limitations": [
     "All six final views are non-empty and immutable, but every row is training-disabled pending review/evaluation gates.",
     "The exact view is a candidate view only; no exact-scope precision or 95% CI is available until the 300-row review is completed.",
@@ -132,16 +245,16 @@
     "generic_no_change_disabled": 28516,
     "manifest_queries": 60880,
     "mask_sidecars": 3473,
+    "registry_rows": 89396,
     "relevance_graph_edges": 11013564,
     "relevance_graph_sha256": "7d523e1165119cd11a3f9ffd00b2f010d09b3581e84e2d9a07d55c7e91b2c187",
-    "registry_rows": 89396,
     "training_enabled": 0
   },
-  "release_code_sha": "4efb00fd8a0bdf82e457ad17d717357f8dbc9a27",
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_retrieval_semantic_repair_4efb00f_20260805",
-  "release_sha256": "04330331d5a3c2982e03ed78013caa53adbb56826c8731a0001b0f6bf8ed6fa7",
-  "release_state": "DATA_QUALITY_HOLD",
-  "schema_version": "qcpr-dataset-capabilities-v1",
+  "release_code_sha": "a9ffd895c3c413782ea212551fdef561c3a1222a",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18",
+  "release_sha256": "2014a91edbb65e0f2c637fb20f78494b59a39144f8a7885e91e87c9ec6d4f8df",
+  "release_state": "FINAL_EXACT_AUTHORIZED_EXTENSION_HOLD",
+  "schema_version": "qcpr-dataset-capabilities-v2-final",
   "semantic": {
     "development_queries": 3765,
     "groups": 2166,
@@ -245,5 +358,6 @@
     "train_queries": 76,
     "training_enabled": false
   },
-  "training_authorized": false
+  "training_authorized": false,
+  "training_launched": false
 }
