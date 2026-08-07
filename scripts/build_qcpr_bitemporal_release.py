@@ -1074,6 +1074,222 @@ def extension_audit_snapshot(input_release: Path) -> dict[str, Any]:
         "artifacts": artifacts,
     }
 
+
+def source_terms_snapshot() -> dict[str, Any]:
+    """Record the source-term findings that affect promotion decisions.
+
+    This is an evidence register, not a legal opinion.  A dataset-card or
+    repository license does not automatically license upstream imagery or
+    generated annotations, so unresolved parent terms remain HOLD states.
+    """
+    return {
+        "schema_version": "qcpr-source-terms-audit-v1",
+        "observed_at_utc": datetime.now(timezone.utc).isoformat(),
+        "records": [
+            {
+                "source": "RSRCC",
+                "official_source": "https://huggingface.co/datasets/google/RSRCC",
+                "observed_dataset_card_license": "Apache-2.0",
+                "parent_imagery_terms": "UNRESOLVED",
+                "promotion_status": "HOLD_PARENT_PROVENANCE_AND_HUMAN_REVIEW",
+                "note": "Dataset card license covers the hosted dataset metadata/repository claim; image parent provenance and generated text verification remain separate gates.",
+            },
+            {
+                "source": "TAMMs",
+                "official_source": "https://huggingface.co/datasets/IceInPot/TAMMs",
+                "observed_hub_license": "Apache-2.0",
+                "observed_dataset_terms": "research purposes only; base imagery follows fMoW terms; Qwen annotations non-commercial academic evaluation only",
+                "promotion_status": "HOLD_CONFLICTING_RESEARCH_ONLY_TERMS",
+                "note": "The permissive Hub field cannot override the more restrictive dataset-card terms or upstream fMoW terms.",
+            },
+            {
+                "source": "TERRA-CD",
+                "official_source": "https://github.com/omkarsoak/TERRA-CD",
+                "observed_repository_license": "CC-BY-4.0",
+                "dataset_asset_terms": "NOT_PINNED",
+                "promotion_status": "ACQUISITION_AND_DATA_LICENSE_HOLD",
+                "note": "Repository license was observed; release assets and Sentinel-2 redistribution terms still require a pinned manifest-level audit.",
+            },
+            {
+                "source": "DUBAI-CC",
+                "official_source": "https://service.tib.eu/ldmservice/dataset/dubai-cc--a-dataset-for-remote-sensing-change-captioning",
+                "observed_license": "NOT_OBSERVED",
+                "promotion_status": "ACQUISITION_AND_LICENSE_HOLD",
+                "note": "Official metadata page was not accessible during this audit; no asset or license is promoted.",
+            },
+            {
+                "source": "DynamicEarthNet",
+                "official_source": "https://mediatum.ub.tum.de/1650201",
+                "observed_license": "CC-BY-SA-4.0",
+                "promotion_status": "ARCHIVE_NOT_ACQUIRED",
+                "note": "License record exists in the prior audit, but the official archive, hashes, loader and manifest are not integrated.",
+            },
+            {
+                "source": "SpaceNet 7",
+                "official_source": "https://spacenet.ai/sn7-challenge/",
+                "observed_license": "NOT_PINNED",
+                "promotion_status": "ARCHIVE_NOT_ACQUIRED",
+                "note": "Challenge/AWS source terms require an asset-level license and checksum audit before integration.",
+            },
+            {
+                "source": "Forest-Change",
+                "official_source": "https://huggingface.co/datasets/JimmyBrocko/Forest-Change",
+                "observed_dataset_card_license": "MIT with academic-reuse note",
+                "promotion_status": "PHYSICAL_READY_TEXT_PROVENANCE_HOLD",
+                "note": "All five caption levels remain mixed/unresolved; no generated-looking text is promoted as human-authored.",
+            },
+        ],
+        "policy": "license fields, parent imagery terms and annotation provenance are separate gates; unresolved records remain disabled",
+    }
+
+
+def render_release_report(
+    *,
+    release_path: Path,
+    code_sha: str,
+    model_contract: Path,
+    items: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+    candidate_queries: list[dict[str, Any]],
+    generic: list[dict[str, Any]],
+    disabled: list[dict[str, Any]],
+    edges: list[dict[str, Any]],
+    collision_groups: list[dict[str, Any]],
+    semantic_candidate_audit: dict[str, Any],
+    view_counts: dict[str, dict[str, Any]],
+    review: dict[str, Any],
+    decisions: dict[str, dict[str, Any]],
+    complete: dict[str, Any],
+    batch: dict[str, Any],
+    leak: dict[str, Any],
+    mask: dict[str, Any],
+) -> str:
+    physical_counts = collections.Counter(str(item.get("source") or "") for item in items)
+    query_counts = collections.Counter(source_of(query) for query in queries)
+    candidate_counts = collections.Counter(source_of(query) for query in candidate_queries)
+    disabled_counts = collections.Counter(str(row.get("query_classification") or "") for row in disabled)
+    view_lines = []
+    for name in ("exact", "semantic", "localized", "direction", "stable", "long_series"):
+        counts = view_counts[name]
+        view_lines.append(
+            f"| {name} | {counts.get('train', 0)} | {counts.get('development', 0)} | {counts.get('test', 0)} | {counts.get('status', '')} |"
+        )
+    source_lines = []
+    for source in sorted(physical_counts):
+        source_lines.append(
+            f"| {source} | {physical_counts[source]} | {query_counts.get(source, 0)} | {candidate_counts.get(source, 0)} |"
+        )
+    completeness_lines = []
+    for row in complete.get("official_vs_current", []):
+        official = row.get("official_physical_pairs", row.get("official_sequences", ""))
+        completeness_lines.append(f"| {row.get('source', '')} | {official} | {row.get('current', '')} |")
+    decision_lines = [
+        f"| {name} | {value.get('decision')} | {value.get('status', '')} |"
+        for name, value in decisions.items()
+    ]
+    return f"""# QCPR retrieval-semantic repair release
+
+This is the immutable release-level report for `{release_path}`.
+
+## Executive decision
+
+- code SHA: `{code_sha}`
+- model contract: `{model_contract}`
+- training authorized: `false`
+- training launched: `false`
+- release state: `BITEMPORAL_EXACT_PRECISION_GATE_HOLD_SEMANTIC_AND_EXTENSIONS_HOLD`
+- exact-scope precision gate: pending two-reviewer visual adjudication
+
+The package is structurally valid and reproducible, but it is a HOLD candidate, not an authorization to launch expanded training.
+
+## Canonical data model
+
+Each physical record is a bitemporal pair or long-series item with paths, timestamps, SHA256 frame hashes, source, split, physical group and provenance. Each canonical query keeps one text string, one physical positive pair, a non-exclusive role set and atomic attributes: changed object, direction, change type, spatial relation, surface type, verified count when available, and temporal extent.
+
+The six manifests are projections over the canonical registry. A query may therefore appear in more than one view; this is intentional and is checked as a projection repeat, not as a duplicate data row.
+
+## Inventory
+
+| quantity | count |
+|---|---:|
+| physical items | {len(items)} |
+| frames | {sum(len(item.get('frames') or []) for item in items)} |
+| canonical queries | {len(queries)} |
+| candidate exact-train queries | {len(candidate_queries)} |
+| exact-loss training-enabled queries | 0 |
+| diagnostic generic no-change rows | {len(generic)} |
+| disabled rows | {len(disabled)} |
+| sparse source-pair relevance edges | {len(edges)} |
+| normalized collision groups | {len(collision_groups)} |
+
+### Source composition
+
+| source | physical items | canonical queries | candidate queries |
+|---|---:|---:|---:|
+{chr(10).join(source_lines)}
+
+The core candidate track is LEVIR-MCI plus SECOND-CC. Forest-Change, RSCC-EBD, S2Looking and TAMMs are present as physical/evaluation or HOLD tracks; their unverified text is not promoted into training.
+
+## Query construction and text policy
+
+- exact/discriminative captions come from source-authored LEVIR/SECOND text after deterministic quality filtering; the exact view remains disabled until precision review passes;
+- generic “no change” variants are `generic_no_change`, diagnostic-only and excluded from exact loss;
+- stable-scene text uses factual anchors supported independently in T1 and T2, never a bare “no change” statement; it remains HOLD pending review;
+- localized text is retained only as evaluation/HOLD text; masks are evaluation sidecars and never source captions;
+- direction is a separate role/view over captions with directional attributes;
+- long-series text preserves temporal fields but TAMMs Qwen text is unverified and disabled;
+- unsupported cause, severity, count and location claims are not promoted.
+
+## View materialization
+
+| view | train | development | test | decision |
+|---|---:|---:|---:|---|
+{chr(10).join(view_lines)}
+
+### Disabled and semantic candidates
+
+- disabled rows by classification: `{dict(sorted(disabled_counts.items()))}`;
+- attribute-only semantic candidates: {semantic_candidate_audit.get('candidate_group_count', 0)} groups, including {semantic_candidate_audit.get('candidate_grade_3_group_count', 0)} grade-3 candidates, {semantic_candidate_audit.get('candidate_grade_2_group_count', 0)} grade-2 candidates and {semantic_candidate_audit.get('candidate_grade_1_group_count', 0)} grade-1 candidates;
+- semantic candidate query positive sets: {semantic_candidate_audit.get('candidate_query_set_count', 0)};
+- verified semantic groups: 0; verified grade-2 edges: 0.
+
+Candidate groups use only attributes and deliberately do not use event ID, source, split or dataset identity. They are not training positives until independent visual review and adjudication.
+
+## Relevance and false-negative safeguards
+
+Every canonical query has a grade-3 source-pair edge. Absent cells are unlabeled defaults, not asserted negatives. Normalized text collisions are represented as sparse IGNORE groups; same-pair captions never become negatives. The real loader batch is 128 physical pairs × 256 text queries with 64 LEVIR + 64 SECOND source quotas; its grade-3, collision and same-pair audits pass.
+
+The release records `{len(collision_groups)}` collision groups and the false-negative audit in `false_negative_audit.json`. The measured false-negative rate is intentionally null until reviewers adjudicate semantic-neighbour controls.
+
+## Source completeness and extension states
+
+| source | official inventory | current inventory |
+|---|---:|---:|
+{chr(10).join(completeness_lines)}
+
+Forest physical assets have a deterministic scene-component-disjoint candidate split with zero cross-component leakage, but all five caption levels remain provenance HOLD. RSCC has physical/evidence packets but no completed Reviewer A/B/adjudication. RSRCC has acquired physical assets but parent-image provenance and text verification remain HOLD. TAMMs preserves the 489-sequence pilot and temporal fields, but license/annotation review is unresolved. DUBAI-CC, DynamicEarthNet, SpaceNet 7 and TERRA-CD are not integrated.
+
+## Verification gates
+
+| capability | decision | status |
+|---|---:|---|
+{chr(10).join(decision_lines)}
+
+- split leakage: `{'PASS' if leak.get('passed') else 'FAIL'}`;
+- mask-free integrity: `{'PASS' if mask.get('passed') else 'FAIL'}`;
+- human calibration packets: {review.get('status')}; exact precision and 95% CI are null;
+- source terms audit: `source_reports/source_terms_audit.json`;
+- extension provenance snapshot: `source_reports/extension_audit_snapshot.json`.
+
+## Data-only comparison
+
+D0–D3 is recorded as `NOT_RUN; no improvement claim`. A valid comparison requires one frozen model checkpoint, the same gallery/evaluation protocol and frozen manifests for all four tracks. No dataset-size, training-loss or generated-only improvement claim is made.
+
+## Model Agent handoff
+
+Use `handoff/retrieval_semantic_repair/model_agent_handoff.json` and `handoff/dataset_to_model.jsonl`. The handoff contains exact counts, candidate semantic counts, localized/stable/direction/long-series counts, disabled generic rows, mask sidecar count and artifact hashes. Main expanded training is not authorized.
+"""
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input-release", type=Path, default=DEFAULT_INPUT)
@@ -1198,6 +1414,7 @@ def main() -> int:
         },
     })
     write_json(args.output / "source_reports/extension_audit_snapshot.json", extension_audit_snapshot(args.input_release))
+    write_json(args.output / "source_reports/source_terms_audit.json", source_terms_snapshot())
     leak = leakage(items)
     write_json(args.output / "split_leakage_audit.json", leak)
     mask = mask_free(queries, sidecars)
@@ -1371,6 +1588,30 @@ def main() -> int:
         text=True,
     ).strip()
     model_contract = MODEL_ROOT / "contracts/qcpr_shared/model_requirements.json"
+    report_path = args.output / "source_reports/retrieval_semantic_repair_report.md"
+    report_path.write_text(
+        render_release_report(
+            release_path=args.output,
+            code_sha=code_sha,
+            model_contract=model_contract,
+            items=items,
+            queries=queries,
+            candidate_queries=candidate_queries,
+            generic=generic,
+            disabled=disabled,
+            edges=edges,
+            collision_groups=collision_groups,
+            semantic_candidate_audit=semantic_candidate_audit,
+            view_counts=view_counts,
+            review=review,
+            decisions=decisions,
+            complete=complete,
+            batch=batch,
+            leak=leak,
+            mask=mask,
+        ),
+        encoding="utf-8",
+    )
     package = {
         "schema_version": "qcpr-bitemporal-v2-decision-package-v1",
         "release_name": "QCPR_BITEMPORAL_V2_TRAIN",
@@ -1435,6 +1676,8 @@ def main() -> int:
             "verified_group_count": semantic_candidate_audit["verified_group_count"],
         },
         "extension_audit_snapshot_path": str(args.output / "source_reports/extension_audit_snapshot.json"),
+        "source_terms_audit_path": str(args.output / "source_reports/source_terms_audit.json"),
+        "human_readable_report_path": str(report_path),
         "integrity": {
             "split_leakage_passed": leak["passed"],
             "mask_free_passed": mask["passed"],
@@ -1506,6 +1749,8 @@ def main() -> int:
             "semantic_candidate_groups": sha256_file(args.output / "registries/semantic_candidate_groups.jsonl"),
             "semantic_candidate_query_sets": sha256_file(args.output / "registries/semantic_candidate_query_sets.jsonl"),
             "semantic_candidate_audit": sha256_file(args.output / "semantic_candidate_audit.json"),
+            "source_terms_audit": sha256_file(args.output / "source_reports/source_terms_audit.json"),
+            "human_readable_report": sha256_file(report_path),
         },
         "gate_status": {
             "exact_scope_precision": review["metrics"]["exact_scope_precision"],
@@ -1526,6 +1771,7 @@ def main() -> int:
         "The exact and direction views remain HOLD until the required human exact-scope "
         "precision gate is adjudicated. Semantic grade-2, localized, stable, Forest, RSCC, "
         "RSRCC, TAMMs and external benchmark tracks remain on explicit HOLD/EVAL_ONLY states.\n\n"
+        "The full release analysis is in source_reports/retrieval_semantic_repair_report.md.\n\n"
         "Training is not launched or authorized by this package.\n",
         encoding="utf-8",
     )
