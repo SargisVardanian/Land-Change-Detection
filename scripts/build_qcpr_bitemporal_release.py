@@ -1175,6 +1175,7 @@ def render_release_report(
     batch: dict[str, Any],
     leak: dict[str, Any],
     mask: dict[str, Any],
+    data_only_comparison: dict[str, Any] | None,
 ) -> str:
     physical_counts = collections.Counter(str(item.get("source") or "") for item in items)
     query_counts = collections.Counter(source_of(query) for query in queries)
@@ -1207,6 +1208,17 @@ def render_release_report(
         f"| {name} | {value.get('decision')} | {value.get('status', '')} |"
         for name, value in decisions.items()
     ]
+    exact_training_count = sum(
+        bool(query.get("training_enabled"))
+        for query in queries
+        if query.get("query_scope") == "exact"
+    )
+    comparison = data_only_comparison or {
+        "status": "NOT_RUN",
+        "scientific_claim": "NO_MODEL_IMPROVEMENT_CLAIM",
+    }
+    comparison_status = str(comparison.get("status") or "NOT_RUN")
+    comparison_claim = str(comparison.get("scientific_claim") or "NO_MODEL_IMPROVEMENT_CLAIM")
     return f"""# QCPR retrieval-semantic repair release
 
 This is the immutable release-level report for `{release_path}`.
@@ -1236,7 +1248,7 @@ The six manifests are projections over the canonical registry. A query may there
 | frames | {sum(len(item.get('frames') or []) for item in items)} |
 | canonical queries | {len(queries)} |
 | candidate exact-train queries | {len(candidate_queries)} |
-| exact-loss training-enabled queries | 0 |
+| exact-loss training-enabled queries | {exact_training_count} |
 | diagnostic generic no-change rows | {len(generic)} |
 | disabled rows | {len(disabled)} |
 | sparse source-pair relevance edges | {len(edges)} |
@@ -1303,11 +1315,11 @@ Forest physical assets have a deterministic scene-component-disjoint candidate s
 
 ## Data-only comparison
 
-D0–D3 is recorded as `NOT_RUN; no improvement claim`. A valid comparison requires one frozen model checkpoint, the same gallery/evaluation protocol and frozen manifests for all four tracks. No dataset-size, training-loss or generated-only improvement claim is made.
+D0–D1 status: `{comparison_status}`. `{comparison_claim}`. The matched audit uses one frozen checkpoint, identical frame pixels/text and a fixed 995-pair/3314-query evaluation population; the D0/D1 difference is the relevance-ignore contract, not a model-training improvement. D2/D3 remain HOLD until their source gates pass.
 
 ## Model Agent handoff
 
-Use `handoff/retrieval_semantic_repair/model_agent_handoff.json` and `handoff/dataset_to_model.jsonl`. The handoff contains exact counts, candidate semantic counts, localized/stable/direction/long-series counts, disabled generic rows, mask sidecar count and artifact hashes. Main expanded training is not authorized.
+Use `handoff/retrieval_semantic_repair/model_agent_handoff.json` and `handoff/dataset_to_model.jsonl`. The handoff contains exact counts, candidate semantic counts, localized/stable/direction/long-series counts, disabled generic rows, mask sidecar count and artifact hashes. Tier-A bitemporal dataset authorization is recorded, but model training remains unlaunched; semantic/localized/expanded extension training is not authorized.
 """
 
 def main() -> int:
@@ -1319,6 +1331,11 @@ def main() -> int:
         "--promote-tier-a-core",
         action="store_true",
         help="Enable source-trusted LEVIR/SECOND exact train rows for TemporalSigLIP while keeping extension tracks held.",
+    )
+    parser.add_argument(
+        "--data-only-comparison",
+        type=Path,
+        help="Materialize a completed frozen-model D0/D1 comparison artifact into the immutable release.",
     )
     args = parser.parse_args()
     if args.output.exists():
@@ -1626,6 +1643,16 @@ def main() -> int:
             "decision": False, "status": "ACQUISITION_HOLD", "training_enabled": False,
         },
     }
+    data_only_comparison: dict[str, Any] | None = None
+    data_only_path: Path | None = None
+    if args.data_only_comparison is not None:
+        if not args.data_only_comparison.exists():
+            raise SystemExit(f"data-only comparison does not exist: {args.data_only_comparison}")
+        data_only_comparison = read_json(args.data_only_comparison)
+        if not isinstance(data_only_comparison, dict):
+            raise SystemExit("data-only comparison must be a JSON object")
+        data_only_path = args.output / "source_reports/data_only_comparison.json"
+        write_json(data_only_path, data_only_comparison)
     code_sha = subprocess.check_output(
         ["git", "-C", str(ROOT / "code/project-qcpr-dataset-v2-final"), "rev-parse", "HEAD"],
         text=True,
@@ -1654,6 +1681,7 @@ def main() -> int:
             batch=batch,
             leak=leak,
             mask=mask,
+            data_only_comparison=data_only_comparison,
         ),
         encoding="utf-8",
     )
@@ -1732,11 +1760,18 @@ def main() -> int:
             "mask_derived_training_count": 0,
         },
         "data_only_comparison": {
+            "artifact_path": str(data_only_path) if data_only_path else None,
+            "artifact_sha256": sha256_file(data_only_path) if data_only_path else None,
             "D0": "previous immutable exact core",
             "D1": "this trusted LEVIR/SECOND release",
             "D2": "blocked pending verified Forest",
             "D3": "blocked pending verified RSCC/localized",
-            "status": "D0_D1_MATCHED_AUDIT_EXTERNAL; D2_D3_HOLD; no improvement claim",
+            "status": str((data_only_comparison or {}).get("status") or "NOT_RUN"),
+            "scientific_claim": str((data_only_comparison or {}).get("scientific_claim") or "NO_MODEL_IMPROVEMENT_CLAIM"),
+            "checkpoint_sha256": (data_only_comparison or {}).get("checkpoint_sha256"),
+            "matched_contract": (data_only_comparison or {}).get("matched_contract", {}),
+            "primary_metrics": (data_only_comparison or {}).get("primary_metrics", {}),
+            "per_source": (data_only_comparison or {}).get("per_source", {}),
         },
     }
     write_json(args.output / "dataset_capabilities.json", decisions)
@@ -1797,6 +1832,7 @@ def main() -> int:
             "semantic_candidate_audit": sha256_file(args.output / "semantic_candidate_audit.json"),
             "source_terms_audit": sha256_file(args.output / "source_reports/source_terms_audit.json"),
             "human_readable_report": sha256_file(report_path),
+            **({"data_only_comparison": sha256_file(data_only_path)} if data_only_path else {}),
         },
         "gate_status": {
             "exact_scope_precision": review["metrics"]["exact_scope_precision"],

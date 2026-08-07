@@ -102,7 +102,19 @@ def main() -> int:
                 query_errors.append(f"{path.name}:{index}: parse error: {exc}")
     counts = Counter(str(row.get("query_scope")) for row in query_rows)
     projection_conflicts: list[str] = []
-    projection_only_keys = {"view_scope", "view_status"}
+    # The canonical registry stores one query with non-exclusive roles, while
+    # each manifest is a task projection.  Readiness/training gates are
+    # therefore projection-local: the exact projection may be READY while the
+    # semantic/stable/localized projections of the same canonical caption are
+    # HOLD or EVAL_ONLY.  Compare all canonical evidence, but do not treat
+    # projection metadata as a canonical-record conflict.
+    projection_only_keys = {
+        "view_scope",
+        "view_status",
+        "training_enabled",
+        "candidate_training_enabled",
+        "training_gate",
+    }
     for query_id, records in rows_by_query_id.items():
         if len(records) < 2:
             continue
