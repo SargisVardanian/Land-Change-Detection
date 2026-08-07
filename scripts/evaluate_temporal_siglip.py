@@ -62,6 +62,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-code-sha", required=True)
     parser.add_argument("--pair-batch-size", type=int, default=32)
     parser.add_argument("--query-batch-size", type=int, default=256)
+    parser.add_argument(
+        "--include-generic-diagnostic",
+        action="store_true",
+        help="rank generic_no_change queries too; keep them diagnostic-only",
+    )
     return parser.parse_args()
 
 
@@ -97,10 +102,10 @@ def main() -> int:
         if not required.exists():
             raise FileNotFoundError(required)
     all_rows = load_exact_core_rows(manifest, split="development")
-    rows = load_exact_pair_rows(manifest, split="development")
+    exact_rows = load_exact_pair_rows(manifest, split="development")
     groups = group_rows_by_pair(all_rows)
     pair_rows = [group[0] for group in groups.values()]
-    query_rows = rows
+    query_rows = all_rows if args.include_generic_diagnostic else exact_rows
     device = torch.device("cuda")
     processor = AutoProcessor.from_pretrained(args.siglip2_model, local_files_only=True)
     backbone = TemporalSigLIPBackbone(
