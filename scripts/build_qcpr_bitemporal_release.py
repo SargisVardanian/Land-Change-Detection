@@ -1168,11 +1168,19 @@ def render_release_report(
     query_counts = collections.Counter(source_of(query) for query in queries)
     candidate_counts = collections.Counter(source_of(query) for query in candidate_queries)
     disabled_counts = collections.Counter(str(row.get("query_classification") or "") for row in disabled)
+    view_status = {
+        "exact": decisions["BITEMPORAL_EXACT_READY"]["status"],
+        "semantic": decisions["BITEMPORAL_SEMANTIC_READY"]["status"],
+        "localized": decisions["LOCALIZED_READY"]["status"],
+        "direction": decisions["DIRECTION_READY"]["status"],
+        "stable": decisions["STABLE_READY"]["status"],
+        "long_series": decisions["TAMMS_LONGSERIES_READY"]["status"],
+    }
     view_lines = []
     for name in ("exact", "semantic", "localized", "direction", "stable", "long_series"):
         counts = view_counts[name]
         view_lines.append(
-            f"| {name} | {counts.get('train', 0)} | {counts.get('development', 0)} | {counts.get('test', 0)} | {counts.get('status', '')} |"
+            f"| {name} | {counts.get('train', 0)} | {counts.get('development', 0)} | {counts.get('test', 0)} | {view_status[name]} |"
         )
     source_lines = []
     for source in sorted(physical_counts):
