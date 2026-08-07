@@ -2,8 +2,9 @@
 
 Status: `PHASE_A_REPAIR_REQUIRES_RERUN`
 
-The repair is published at commit `16ccd12a5ec04d9c9b10daf720c974ff4adef0ce` on
-`codex/qcpr-siglip2-temporal-training` (PR #7 remains draft).
+The repair is published on `codex/qcpr-siglip2-temporal-training` at final
+commit `c146d74052ca8caa6c15aba5e1c2d54a6c67b420` (the code repair itself is
+`16ccd12a5ec04d9c9b10daf720c974ff4adef0ce`; PR #7 remains draft).
 
 ## Changes
 
