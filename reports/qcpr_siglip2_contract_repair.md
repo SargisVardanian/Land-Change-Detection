@@ -3,7 +3,7 @@
 Status: `PHASE_A_REPAIR_REQUIRES_RERUN`
 
 The repair is published on `codex/qcpr-siglip2-temporal-training` at final
-commit `ab69df276265f74bbdb11c379bc5f811020af2f4` (the temporal contract
+commit `29f6503c81638dfb277411472b8faccd8a190749` (the temporal contract
 repair itself is `16ccd12a5ec04d9c9b10daf720c974ff4adef0ce`; PR #7 remains
 draft).
 

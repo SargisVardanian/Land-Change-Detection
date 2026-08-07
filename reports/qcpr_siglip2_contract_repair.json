@@ -1,6 +1,6 @@
 {
   "status": "PHASE_A_REPAIR_REQUIRES_RERUN",
-  "code_sha": "ab69df276265f74bbdb11c379bc5f811020af2f4",
+  "code_sha": "29f6503c81638dfb277411472b8faccd8a190749",
   "branch": "codex/qcpr-siglip2-temporal-training",
   "pull_request": 7,
   "dataset_release_unchanged": true,
