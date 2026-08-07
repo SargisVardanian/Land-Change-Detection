@@ -65,7 +65,11 @@ def main() -> int:
     ids = encoded["input_ids"]
     attention = encoded.get("attention_mask")
     if attention is None:
-        raise ValueError("tokenizer did not return attention_mask")
+        pad_token_id = int(tokenizer.pad_token_id)
+        attention = ids.ne(pad_token_id)
+        attention_source = "derived_from_pad_token_id"
+    else:
+        attention_source = "tokenizer_output"
     valid_ids = ids[attention.bool()]
     embedding_vocab_size = int(contract["model_embedding_vocab_size"])
     token_ids_in_range = bool(
@@ -115,6 +119,7 @@ def main() -> int:
             "max_valid_token_id": int(valid_ids.max()),
             "valid_token_ids_in_range": token_ids_in_range,
             "attention_mask_sum": int(attention.sum()),
+            "attention_mask_source": attention_source,
         },
         "warning_policy": {
             "observed_issue": "inherited SigLIP config uses out-of-range BOS/EOS defaults",
