@@ -90,4 +90,10 @@ class TemporalSigLIPBackbone(nn.Module):
             "vision_trainable_count": sum(p.numel() for p in vision if p.requires_grad),
             "text_parameter_count": sum(p.numel() for p in text),
             "text_trainable_count": sum(p.numel() for p in text if p.requires_grad),
+            "phase_b_top_blocks": self.phase_b_top_blocks,
+            "phase_b_scope": (
+                "last_two_transformer_blocks_plus_final_norms_and_projections"
+                if self.phase_b_top_blocks
+                else "frozen"
+            ),
         }

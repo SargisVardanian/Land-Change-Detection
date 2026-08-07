@@ -257,12 +257,12 @@ def encode_chunks(
     device: torch.device,
     no_grad: bool,
 ) -> RawFeatureBatch:
-    if len(batch.pair_rows) % physical_batch_size:
-        raise ValueError("logical pair batch must divide physical microbatch")
+    if physical_batch_size <= 0:
+        raise ValueError("physical_batch_size must be positive")
     chunks: list[RawFeatureBatch] = []
     captions_per_pair = len(batch.query_rows) // len(batch.pair_rows)
     for start in range(0, len(batch.pair_rows), physical_batch_size):
-        end = start + physical_batch_size
+        end = min(start + physical_batch_size, len(batch.pair_rows))
         chunks.append(
             encode_real_features(
                 backbone,
@@ -344,7 +344,7 @@ def logical_step(
         )
         captions_per_pair = len(batch.query_rows) // len(batch.pair_rows)
         for start in range(0, len(batch.pair_rows), physical_batch_size):
-            end = start + physical_batch_size
+            end = min(start + physical_batch_size, len(batch.pair_rows))
             micro = ExactBatch(
                 pair_rows=batch.pair_rows[start:end],
                 query_rows=batch.query_rows[start * captions_per_pair : end * captions_per_pair],
@@ -410,8 +410,8 @@ def main() -> int:
     steps = resolve_steps(args)
     if args.phase == "B" and not args.initial_checkpoint:
         raise ValueError("Phase B requires the accepted Stage-A checkpoint")
-    if args.logical_physical_batch_size % args.physical_batch_size:
-        raise ValueError("logical batch must divide into physical microbatches")
+    if args.physical_batch_size > args.logical_physical_batch_size:
+        raise ValueError("physical microbatch cannot exceed logical physical batch")
     if args.captions_per_pair <= 0:
         raise ValueError("captions_per_pair must be positive")
     if steps <= 0:
@@ -509,7 +509,13 @@ def main() -> int:
                 args.logical_physical_batch_size * args.captions_per_pair,
                 args.logical_physical_batch_size,
             ],
-            "feature_recompute_microbatches": args.logical_physical_batch_size // args.physical_batch_size,
+            "feature_recompute_microbatches": (
+                args.logical_physical_batch_size + args.physical_batch_size - 1
+            ) // args.physical_batch_size,
+            "feature_recompute_microbatch_sizes": [
+                min(args.physical_batch_size, start + args.physical_batch_size) - start
+                for start in range(0, args.logical_physical_batch_size, args.physical_batch_size)
+            ],
             "one_symmetric_clip_loss": True,
         })
         write_json(run / "environment.json", {

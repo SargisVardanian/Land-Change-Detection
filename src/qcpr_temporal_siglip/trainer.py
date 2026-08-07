@@ -108,6 +108,8 @@ def build_optimizer(
         "trainable_parameter_count": sum(item["parameter_count"] for item in report_groups),
         "new_optimizer_at_stage_transition": stage == "B",
     }
+    if model.backbone is not None:
+        report["backbone_scope"] = model.backbone.trainable_scope()
     return optimizer, scheduler, report
 
 
