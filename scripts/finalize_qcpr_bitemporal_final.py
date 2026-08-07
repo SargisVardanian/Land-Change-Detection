@@ -674,16 +674,28 @@ def build_core_benchmark(base: Path, release: Path, destination: Path) -> dict[s
 
 def lexical_candidate_rows(query_rows: list[dict[str, Any]], limit: int = 8) -> list[dict[str, Any]]:
     token_re = __import__("re").compile(r"[a-z0-9]+")
+    stopwords = {
+        "some", "there", "with", "from", "into", "that", "this", "have", "been",
+        "were", "are", "the", "and", "for", "part", "appears", "image", "images",
+        "area", "areas", "scene", "visible", "shown", "seen", "changed", "change",
+    }
     token_sets: dict[str, set[str]] = {}
     postings: dict[str, list[str]] = collections.defaultdict(list)
     source_item: dict[str, str] = {}
     for row in query_rows:
         query_id = str(row.get("query_id"))
-        tokens = set(token_re.findall(str(row.get("text", "")).lower()))
+        tokens = {
+            token
+            for token in token_re.findall(str(row.get("text", "")).lower())
+            if len(token) >= 4 and token not in stopwords
+        }
         token_sets[query_id] = tokens
         source_item[query_id] = str(row.get("source_item_id"))
         for token in tokens:
-            postings[token].append(query_id)
+            # Cap highly frequent words so this remains a deterministic
+            # candidate generator rather than a quadratic all-pairs join.
+            if len(postings[token]) < 400:
+                postings[token].append(query_id)
     output: list[dict[str, Any]] = []
     for query_id, tokens in token_sets.items():
         candidates: dict[str, int] = collections.Counter()
