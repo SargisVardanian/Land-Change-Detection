@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -7,7 +8,7 @@ from typing import Any
 import torch
 from torch import Tensor, nn
 from torch.utils.checkpoint import checkpoint
-from transformers import AutoModel
+from transformers import AutoModel, AutoTokenizer
 from transformers.models.siglip.modeling_siglip import (
     create_bidirectional_mask as create_siglip_mask,
 )
@@ -33,6 +34,126 @@ class TextEncoding:
     attention_mask: Tensor
 
 
+def _scalar_token_id(value: Any, *, name: str) -> int:
+    """Validate a tokenizer special-token id at the model boundary."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < 0:
+        raise ValueError(f"{name} must be non-negative, got {value}")
+    return value
+
+
+def validate_tokenizer_contract(tokenizer: Any, embedding_vocab_size: int) -> dict[str, Any]:
+    """Return a checked tokenizer/embedding vocabulary contract.
+
+    The pinned checkpoint has a Gemma tokenizer with a 256k vocabulary while
+    its inherited SigLIP config contains the old 32k special-token defaults.
+    This boundary check makes the discrepancy explicit and rejects an unsafe
+    tokenizer rather than silently clipping or remapping token ids.
+    """
+
+    if embedding_vocab_size <= 0:
+        raise ValueError("embedding_vocab_size must be positive")
+    tokenizer_vocab_size = int(getattr(tokenizer, "vocab_size"))
+    if tokenizer_vocab_size != embedding_vocab_size:
+        raise ValueError(
+            "tokenizer and model embedding vocabularies differ: "
+            f"{tokenizer_vocab_size} != {embedding_vocab_size}"
+        )
+    ids = {
+        "bos_token_id": _scalar_token_id(
+            getattr(tokenizer, "bos_token_id", None), name="bos_token_id"
+        ),
+        "eos_token_id": _scalar_token_id(
+            getattr(tokenizer, "eos_token_id", None), name="eos_token_id"
+        ),
+        "pad_token_id": _scalar_token_id(
+            getattr(tokenizer, "pad_token_id", None), name="pad_token_id"
+        ),
+    }
+    invalid = {name: value for name, value in ids.items() if value >= embedding_vocab_size}
+    if invalid:
+        raise ValueError(
+            "tokenizer special-token ids exceed the model vocabulary: "
+            f"{invalid} >= {embedding_vocab_size}"
+        )
+    return {
+        "tokenizer_class": type(tokenizer).__name__,
+        "tokenizer_vocab_size": tokenizer_vocab_size,
+        "model_embedding_vocab_size": embedding_vocab_size,
+        "special_token_ids": ids,
+        "special_token_ids_in_range": True,
+    }
+
+
+def synchronize_tokenizer_config(model: Any, contract: dict[str, Any]) -> dict[str, Any]:
+    """Synchronize runtime text-config metadata with the validated tokenizer.
+
+    This changes configuration metadata only.  It does not alter checkpoint
+    weights or token embeddings.  The before/after values are returned so the
+    compatibility report can distinguish the upstream config warning from the
+    verified runtime contract.
+    """
+
+    ids = contract.get("special_token_ids")
+    if not isinstance(ids, dict):
+        raise ValueError("tokenizer contract has no special_token_ids")
+    text_model = getattr(model, "text_model", None)
+    text_config = getattr(text_model, "config", None)
+    model_config = getattr(getattr(model, "config", None), "text_config", None)
+    if text_config is None or model_config is None:
+        raise ValueError("SigLIP model has no text configuration")
+    before = {
+        name: getattr(text_config, name, None)
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id")
+    }
+    for name, value in ids.items():
+        setattr(text_config, name, int(value))
+        setattr(model_config, name, int(value))
+    after = {
+        name: getattr(text_config, name, None)
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id")
+    }
+    if after != {name: int(value) for name, value in ids.items()}:
+        raise RuntimeError("runtime text configuration did not synchronize")
+    return {"config_ids_before_sync": before, "config_ids_after_sync": after}
+
+
+def _load_patched_local_config(model_path: str | Path, tokenizer_contract: dict[str, Any]) -> Any | None:
+    """Build a corrected local SigLIP config before model construction.
+
+    Transformers 5.x validates the inherited SigLIP defaults while parsing
+    the checkpoint config.  Constructing the nested text config with the
+    already-validated tokenizer ids avoids creating an invalid runtime config
+    for the local pinned checkpoint.  If a non-local identifier is supplied,
+    the normal AutoModel path remains available and the post-load sync still
+    enforces the contract.
+    """
+
+    config_path = Path(model_path) / "config.json"
+    if not config_path.is_file():
+        return None
+    from transformers.models.siglip.configuration_siglip import (
+        SiglipConfig,
+        SiglipTextConfig,
+        SiglipVisionConfig,
+    )
+
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    text_raw = dict(raw.get("text_config", {}))
+    vision_raw = dict(raw.get("vision_config", {}))
+    text_raw.update(
+        {
+            name: int(value)
+            for name, value in tokenizer_contract["special_token_ids"].items()
+        }
+    )
+    text_config = SiglipTextConfig(**text_raw)
+    vision_config = SiglipVisionConfig(**vision_raw)
+    return SiglipConfig(text_config=text_config, vision_config=vision_config)
+
+
 class Siglip2Backbone(nn.Module):
     """Pinned SigLIP-2 repository loaded through the checkpoint's native class."""
 
@@ -44,8 +165,34 @@ class Siglip2Backbone(nn.Module):
         torch_dtype: torch.dtype | None = None,
     ):
         super().__init__()
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(model_path), local_files_only=local_files_only
+        )
+        # The tokenizer is loaded before the model so the model constructor can
+        # be supplied a corrected nested text config for the pinned local
+        # checkpoint.  The actual embedding size is checked again after load.
+        tokenizer_vocab_size = int(getattr(tokenizer, "vocab_size"))
+        tokenizer_contract = {
+            "tokenizer_class": type(tokenizer).__name__,
+            "tokenizer_vocab_size": tokenizer_vocab_size,
+            "special_token_ids": {
+                "bos_token_id": _scalar_token_id(
+                    getattr(tokenizer, "bos_token_id", None), name="bos_token_id"
+                ),
+                "eos_token_id": _scalar_token_id(
+                    getattr(tokenizer, "eos_token_id", None), name="eos_token_id"
+                ),
+                "pad_token_id": _scalar_token_id(
+                    getattr(tokenizer, "pad_token_id", None), name="pad_token_id"
+                ),
+            },
+        }
+        config = _load_patched_local_config(model_path, tokenizer_contract)
         self.model = AutoModel.from_pretrained(
-            str(model_path), local_files_only=local_files_only, dtype=torch_dtype
+            str(model_path),
+            local_files_only=local_files_only,
+            dtype=torch_dtype,
+            **({"config": config} if config is not None else {}),
         )
         self.runtime_class = type(self.model).__name__
         self.is_fixed_siglip = self.runtime_class == "SiglipModel"
@@ -56,6 +203,12 @@ class Siglip2Backbone(nn.Module):
         self.hidden_size = int(self.vision_model.config.hidden_size)
         if int(self.text_model.config.hidden_size) != self.hidden_size:
             raise ValueError("SigLIP vision/text hidden sizes differ")
+        embedding_vocab_size = int(self.text_model.get_input_embeddings().num_embeddings)
+        checked_contract = validate_tokenizer_contract(tokenizer, embedding_vocab_size)
+        checked_contract.update(synchronize_tokenizer_config(self.model, checked_contract))
+        checked_contract["runtime_config_ids_valid"] = True
+        self.tokenizer_contract = checked_contract
+        self.tokenizer = tokenizer
         self.phase_b_top_blocks = 0
         self.gradient_checkpointing = False
         self.freeze_all()
