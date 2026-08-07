@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import torch
 from torch import Tensor, nn
@@ -146,7 +147,7 @@ class TemporalSigLIP(nn.Module):
             raise RuntimeError("Stage B requires an attached pretrained backbone")
         self.backbone.enable_stage_b(top_blocks=2)
 
-    def trainable_parameter_report(self) -> dict[str, dict[str, int]]:
+    def trainable_parameter_report(self) -> dict[str, dict[str, Any]]:
         names = {
             "temporal_pair": self.temporal_pair,
             "logit_scale": nn.ParameterList([self.logit_scale]),
