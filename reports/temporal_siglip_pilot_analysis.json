@@ -1,0 +1,172 @@
+{
+  "arms": {
+    "stage_a": {
+      "by_query_scope": {
+        "exact_pair": {
+          "hit_at_1": 0.015689381933438985,
+          "hit_at_10": 0.09397781299524564,
+          "hit_at_100": 0.45673534072900157,
+          "hit_at_5": 0.05309033280507131,
+          "hit_at_50": 0.3006339144215531,
+          "mean_rank": 242.70364500792394,
+          "median_rank": 117.0,
+          "mrr_full": 0.046174289706708734,
+          "query_count": 6310
+        }
+      },
+      "by_source": {
+        "levir_mci": {
+          "hit_at_1": 0.018290854572713643,
+          "hit_at_10": 0.10134932533733133,
+          "hit_at_100": 0.42488755622188906,
+          "hit_at_5": 0.056371814092953526,
+          "hit_at_50": 0.29985007496251875,
+          "mean_rank": 258.45877061469264,
+          "median_rank": 138,
+          "mrr_full": 0.04909608130486668,
+          "query_count": 3335
+        },
+        "second_cc": {
+          "hit_at_1": 0.012773109243697478,
+          "hit_at_10": 0.08571428571428572,
+          "hit_at_100": 0.492436974789916,
+          "hit_at_5": 0.04941176470588235,
+          "hit_at_50": 0.3015126050420168,
+          "mean_rank": 225.0420168067227,
+          "median_rank": 103,
+          "mrr_full": 0.0428989367723031,
+          "query_count": 2975
+        }
+      },
+      "overall": {
+        "hit_at_1": 0.015689381933438985,
+        "hit_at_10": 0.09397781299524564,
+        "hit_at_100": 0.45673534072900157,
+        "hit_at_5": 0.05309033280507131,
+        "hit_at_50": 0.3006339144215531,
+        "mean_rank": 242.70364500792394,
+        "median_rank": 117.0,
+        "mrr_full": 0.046174289706708734,
+        "query_count": 6310
+      },
+      "ranking_path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_common_eval_stage_a_reval_eb96463_20260808/full_rankings.pt",
+      "ranking_sha256": "6b3bf5f1be4202f19f744ee51d011ae92494144f41da717d17529460a9bbbb6c"
+    },
+    "stage_b_step1024": {
+      "by_query_scope": {
+        "exact_pair": {
+          "hit_at_1": 0.020760697305863707,
+          "hit_at_10": 0.11695721077654517,
+          "hit_at_100": 0.5206022187004754,
+          "hit_at_5": 0.0694136291600634,
+          "hit_at_50": 0.34833597464342314,
+          "mean_rank": 213.0391442155309,
+          "median_rank": 93.0,
+          "mrr_full": 0.057708475032430505,
+          "query_count": 6310
+        }
+      },
+      "by_source": {
+        "levir_mci": {
+          "hit_at_1": 0.022488755622188907,
+          "hit_at_10": 0.12833583208395802,
+          "hit_at_100": 0.535832083958021,
+          "hit_at_5": 0.0752623688155922,
+          "hit_at_50": 0.37631184407796103,
+          "mean_rank": 209.04947526236882,
+          "median_rank": 87,
+          "mrr_full": 0.061918737066178994,
+          "query_count": 3335
+        },
+        "second_cc": {
+          "hit_at_1": 0.018823529411764704,
+          "hit_at_10": 0.10420168067226891,
+          "hit_at_100": 0.5035294117647059,
+          "hit_at_5": 0.06285714285714286,
+          "hit_at_50": 0.3169747899159664,
+          "mean_rank": 217.51159663865548,
+          "median_rank": 99,
+          "mrr_full": 0.052988735912245226,
+          "query_count": 2975
+        }
+      },
+      "overall": {
+        "hit_at_1": 0.020760697305863707,
+        "hit_at_10": 0.11695721077654517,
+        "hit_at_100": 0.5206022187004754,
+        "hit_at_5": 0.0694136291600634,
+        "hit_at_50": 0.34833597464342314,
+        "mean_rank": 213.0391442155309,
+        "median_rank": 93.0,
+        "mrr_full": 0.057708475032430505,
+        "query_count": 6310
+      },
+      "ranking_path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_common_eval_stage_b_step1024_eb96463_20260808/full_rankings.pt",
+      "ranking_sha256": "2c642a795c00bd2a9c1ad38d9f55e77c8e86b187ac124a8315aeac6985495633"
+    },
+    "stage_b_step2048": {
+      "by_query_scope": {
+        "exact_pair": {
+          "hit_at_1": 0.018700475435816166,
+          "hit_at_10": 0.12202852614896989,
+          "hit_at_100": 0.49809825673534075,
+          "hit_at_5": 0.07321711568938194,
+          "hit_at_50": 0.3367670364500792,
+          "mean_rank": 239.6055467511886,
+          "median_rank": 101.0,
+          "mrr_full": 0.05668956330490509,
+          "query_count": 6310
+        }
+      },
+      "by_source": {
+        "levir_mci": {
+          "hit_at_1": 0.021289355322338832,
+          "hit_at_10": 0.135832083958021,
+          "hit_at_100": 0.5112443778110944,
+          "hit_at_5": 0.0830584707646177,
+          "hit_at_50": 0.3661169415292354,
+          "mean_rank": 225.89895052473764,
+          "median_rank": 95,
+          "mrr_full": 0.06333133446202034,
+          "query_count": 3335
+        },
+        "second_cc": {
+          "hit_at_1": 0.015798319327731094,
+          "hit_at_10": 0.1065546218487395,
+          "hit_at_100": 0.48336134453781515,
+          "hit_at_5": 0.06218487394957983,
+          "hit_at_50": 0.3038655462184874,
+          "mean_rank": 254.970756302521,
+          "median_rank": 106,
+          "mrr_full": 0.04924408202457589,
+          "query_count": 2975
+        }
+      },
+      "overall": {
+        "hit_at_1": 0.018700475435816166,
+        "hit_at_10": 0.12202852614896989,
+        "hit_at_100": 0.49809825673534075,
+        "hit_at_5": 0.07321711568938194,
+        "hit_at_50": 0.3367670364500792,
+        "mean_rank": 239.6055467511886,
+        "median_rank": 101.0,
+        "mrr_full": 0.05668956330490509,
+        "query_count": 6310
+      },
+      "ranking_path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_common_eval_stage_b_step2048_eb96463_20260808/full_rankings.pt",
+      "ranking_sha256": "7fd0dfb46cf0c24513b1b69b5398f8faeeb70edc5a2f231dfb739ab2ed6f1c93"
+    }
+  },
+  "development_manifest": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802/manifests/retrieval_exact_development_v2.jsonl",
+  "development_manifest_sha256": "89a69e144033957ce9c0756502b12c6e56a90f62801e7152d0001bfb339c30a9",
+  "gallery_includes_generic_no_change_pairs": true,
+  "gallery_size": 1928,
+  "limitations": {
+    "generic_no_change_primary_metric": "NOT_APPLICABLE_exact_manifest_excludes_it",
+    "metric_labels": "hit_at_k_is_hit_rate; mrr_full_is_full_gallery_MRR",
+    "source_classification_separability": "NOT_RUN_rankings_do_not_contain_embeddings"
+  },
+  "pair_id_order": "group_rows_by_pair(first-seen order)",
+  "protocol": "QCPR_EXACT_FULL_GALLERY_DIRECT_TEMPORALSIGLIP",
+  "query_count": 6310
+}

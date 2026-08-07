@@ -3,8 +3,8 @@
   "active_model": {
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
-    "status": "STAGE_A_512_COMMON_GALLERY_PASS_DECISION_PENDING",
-    "published_code_sha": "1c201990eae777a41c370194d73099cb54481eed",
+    "status": "STAGE_B_1536_PILOT_COMPLETE_WAIT_DATASET_FINAL_HANDOFF",
+    "published_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
@@ -13,13 +13,13 @@
     "active_evidence_branch": false,
     "post_retrieval_soft_map": "LayerNorm(T2_temporal_tokens - T1_temporal_tokens) dot text_embedding",
     "stage_a_gpu": "PASS_JOB_209853_512_STEPS_COMMON_GALLERY_EVALUATED",
-    "stage_b_gpu": "NOT_RUN",
+    "stage_b_gpu": "PASS_JOB_209871_1536_STEPS_COMMON_GALLERY_EVALUATED",
     "main_training": "NOT_AUTHORIZED",
     "real_integration_smoke": {
-      "code_sha": "ed96db2d2bf357c21c32657df4b4590f9ea51d54",
-      "job_id": "209868",
-      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_real_smoke_ed96db2_20260807",
-      "status": "PASS_8_STEP_REAL_SIGLIP2_EXACT_CORE_CURRENT_SHA"
+      "code_sha": "7f962c23e0f9f281012033f05a78e3fdeefa6eb1",
+      "job_id": "209877",
+      "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_integration_smoke_7f962c2_20260808",
+      "status": "PASS_8_STEP_REAL_SIGLIP2_EXACT_CORE_HARDENED_SHA"
     },
     "stage_a_run": {
       "job_id": "209853",
@@ -48,8 +48,8 @@
   },
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "1c201990eae777a41c370194d73099cb54481eed",
-  "evaluation_code_sha": "1c201990eae777a41c370194d73099cb54481eed",
+  "code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "evaluation_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
   "executable_smoke_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
   "cpu_gate": {
     "compileall": "PASS",
@@ -61,7 +61,16 @@
   },
   "dataset_contract_status": "MISSING",
   "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
-  "dataset_release_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+  "dataset_release_sha": "ff4e71f0733c7c4c69d39b557f4f925bc8a07a1657430489f405b6fc837b1cf1",
+  "tokenizer_compatibility": {
+    "status": "PASS",
+    "report": "reports/siglip2_tokenizer_compatibility.json",
+    "tokenizer_class": "GemmaTokenizer",
+    "vocab_size": 256000,
+    "special_token_ids": {"bos_token_id": 2, "eos_token_id": 1, "pad_token_id": 0},
+    "upstream_warning": "recorded_without_suppression; runtime contract valid",
+    "weights_changed": false
+  },
   "h100_smoke": {
     "real_integration": {
       "backbone_forward_backward": "executed",
@@ -167,9 +176,9 @@
     "B1_CONTROL": "VERIFIED",
     "SIGLIP2_H100_CALIBRATION": "PASS_BATCH_32_ACCUMULATION_4",
     "SIGLIP2_PHASE_A": "PASS_512_STEPS_COMMON_GALLERY_EVALUATED",
-    "SIGLIP2_PHASE_B": "NOT_AUTHORIZED_REQUIRES_DECISION_PACKAGE",
+    "SIGLIP2_PHASE_B": "PASS_1536_BOUNDED_PILOT_WAIT_DATASET_FINAL_HANDOFF",
     "MODEL_V3_MAIN": "NOT_AUTHORIZED",
-    "MODEL_V3_MECHANISM": "BLOCKED_POST_RETRIEVAL_MAP_NOT_TRAINED",
+    "MODEL_V3_MECHANISM": "READY_FOR_AUTHORIZATION_ONLY",
     "MODEL_V3_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
     "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
     "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT",
@@ -177,8 +186,8 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "1c201990eae777a41c370194d73099cb54481eed",
-    "evaluation_code_sha": "1c201990eae777a41c370194d73099cb54481eed",
+    "code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+    "evaluation_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
@@ -232,7 +241,7 @@
       "P2": "BLOCKED",
       "SIGLIP2_DOWNLOAD_VALID": true,
       "SIGLIP2_PHASE_A_VALID": "PASS_256_STEPS_COMMON_GALLERY_EVALUATED",
-      "SIGLIP2_PHASE_B_VALID": "NOT_RUN_REQUIRES_DECISION_PACKAGE",
+      "SIGLIP2_PHASE_B_VALID": "PASS_1536_BOUNDED_PILOT_WAIT_DATASET_FINAL_HANDOFF",
       "SIGLIP2_SMOKE_PASS": true,
       "SIGLIP2_HISTORICAL_SMOKE_207706": "PASS",
       "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",

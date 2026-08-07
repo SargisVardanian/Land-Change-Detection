@@ -1,0 +1,188 @@
+{
+  "audit_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "pr": {
+    "number": 7,
+    "state": "OPEN",
+    "draft": true,
+    "base": "codex/qcpr-model-v3-temporal-retrieval"
+  },
+  "lineage": {
+    "local_sha_before_report_commit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+    "remote_sha_before_report_commit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+    "cluster_sha_before_report_commit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+    "worktree_clean_before_report_commit": true,
+    "historical_artifacts_modified": false
+  },
+  "dataset": {
+    "release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+    "release_content_sha256": "ff4e71f0733c7c4c69d39b557f4f925bc8a07a1657430489f405b6fc837b1cf1",
+    "train_manifest_sha256": "1d1813c91c9ba39e2ae3a27daad5c55ded8d64d40685dcf592c16c334e3c9f45",
+    "development_manifest_sha256": "89a69e144033957ce9c0756502b12c6e56a90f62801e7152d0001bfb339c30a9",
+    "semantic_localized_long_series_handoff": "MISSING",
+    "training_sources": ["LEVIR-MCI", "SECOND-CC"],
+    "generated_unverified_text": false,
+    "mask_access_in_training": false
+  },
+  "architecture": {
+    "model": "TemporalSigLIP",
+    "visual_backbone": "google/siglip2-base-patch16-256",
+    "visual_runtime_class": "SiglipModel",
+    "visual_weights_sha256": "6125cacc01fa93bdc98a0c5101cefcd69b2ed1f8ab4f38d86f4ad5984f5dc863",
+    "visual_native_tokens": 256,
+    "visual_hidden_size": 768,
+    "text_tower": "same pinned SigLIP2 text tower; Jina v5 is not used in this direct track",
+    "text_tokens": 64,
+    "temporal_blocks": 2,
+    "temporal_input": "[B,T,256,768]",
+    "pair_embedding": "query-independent normalized 768-D vector",
+    "score": "exp(clamped_logit_scale) * cosine(text_embedding, pair_embedding)",
+    "primary_loss": "one symmetric multi-positive listwise retrieval scalar",
+    "reranker": false,
+    "training_evidence_bottleneck": false,
+    "post_retrieval_map": "diagnostic only; not part of primary score"
+  },
+  "parameters": {
+    "full_siglip2_towers": 375234050,
+    "stage_a_trainable": 14184193,
+    "stage_a_trainable_modules": ["temporal_pair", "logit_scale"],
+    "stage_b_trainable": 50216449,
+    "stage_b_trainable_modules": ["last_two_siglip2_blocks_and_final_projections", "temporal_pair", "logit_scale"],
+    "stage_a_frozen_towers": true
+  },
+  "real_integration_smoke": {
+    "job_id": 209877,
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_integration_smoke_7f962c2_20260808",
+    "code_sha": "7f962c23e0f9f281012033f05a78e3fdeefa6eb1",
+    "exit_code": "0:0",
+    "steps": 8,
+    "physical_batch": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "native_visual_shape": [8, 2, 256, 768],
+    "text_shape": [16, 64, 768],
+    "gpu": "NVIDIA H100 80GB HBM3",
+    "peak_allocated_gib": 1.4557957649230957,
+    "peak_reserved_gib": 1.69921875,
+    "checkpoint_sha256": "34ed77e4f34fb001953579756349b5760453f3f4f40ff7d34b238f364813504f",
+    "checkpoint_roundtrip": "PASS",
+    "finite_gradients": true,
+    "frozen_backbone_gradients": false,
+    "mask_access": false,
+    "multi_positive_runtime": "NOT_EXERCISED",
+    "status": "PASS_TECHNICAL_INTEGRATION_ONLY"
+  },
+  "historical_failures": [
+    {
+      "job_id": 207555,
+      "classification": "ENGINEERING_RUNTIME_DRIVER_BUG",
+      "reason": "one autograd graph was reused across optimizer steps",
+      "scientific_result": false
+    },
+    {
+      "job_id": 207560,
+      "classification": "ENGINEERING_RUNTIME_DIAGNOSTIC_BUG",
+      "reason": "evidence deletion helper indexed hidden dimension instead of spatial token dimension",
+      "scientific_result": false
+    }
+  ],
+  "common_gallery": {
+    "pairs": 1928,
+    "exact_queries": 6310,
+    "query_manifest_sha256": "89a69e144033957ce9c0756502b12c6e56a90f62801e7152d0001bfb339c30a9",
+    "gallery_pair_order_sha256": "94400d3c032ab7fe7aca46f3e17d1711948c5eb38db27a155622631d816e984c",
+    "query_order_sha256": "3209d80adccce942876dadf6bf03635a8784f5acbc3c3113569c6f7dbf541e8f"
+  },
+  "pilot_metrics": {
+    "stage_a_512": {
+      "mrr_full": 0.046174289706708734,
+      "hit_at_1": 0.015689381933438985,
+      "hit_at_5": 0.05309033280507131,
+      "hit_at_10": 0.09397781299524564,
+      "hit_at_50": 0.3006339144215531,
+      "hit_at_100": 0.45673534072900157,
+      "mean_rank": 242.70364500792394,
+      "median_rank": 117.0,
+      "ranking_sha256": "6b3bf5f1be4202f19f744ee51d011ae92494144f41da717d17529460a9bbbb6c"
+    },
+    "stage_b_1024": {
+      "mrr_full": 0.057708475032430505,
+      "hit_at_1": 0.020760697305863707,
+      "hit_at_5": 0.0694136291600634,
+      "hit_at_10": 0.11695721077654517,
+      "hit_at_50": 0.34833597464342314,
+      "hit_at_100": 0.5206022187004754,
+      "mean_rank": 213.0391442155309,
+      "median_rank": 93.0,
+      "ranking_sha256": "2c642a795c00bd2a9c1ad38d9f55e77c8e86b187ac124a8315aeac6985495633"
+    },
+    "stage_b_2048": {
+      "mrr_full": 0.05668956330490509,
+      "hit_at_1": 0.018700475435816166,
+      "hit_at_5": 0.07321711568938194,
+      "hit_at_10": 0.12202852614896989,
+      "hit_at_50": 0.3367670364500792,
+      "hit_at_100": 0.49809825673534075,
+      "mean_rank": 239.6055467511886,
+      "median_rank": 101.0,
+      "ranking_sha256": "7fd0dfb46cf0c24513b1b69b5398f8faeeb70edc5a2f231dfb739ab2ed6f1c93"
+    }
+  },
+  "source_metrics_stage_b_2048": {
+    "levir_mci": {
+      "query_count": 3335,
+      "mrr_full": 0.06333133446202034,
+      "hit_at_1": 0.021289355322338832,
+      "hit_at_5": 0.0830584707646177,
+      "hit_at_10": 0.135832083958021,
+      "median_rank": 95
+    },
+    "second_cc": {
+      "query_count": 2975,
+      "mrr_full": 0.04924408202457589,
+      "hit_at_1": 0.015798319327731094,
+      "hit_at_5": 0.06218487394957983,
+      "hit_at_10": 0.1065546218487394,
+      "median_rank": 106
+    },
+    "source_separability_classifier": "NOT_RUN; evaluator stores rankings and effective ranks, not embeddings"
+  },
+  "embedding_diagnostics": {
+    "stage_a_pair_effective_rank": 768,
+    "stage_a_text_effective_rank": 655,
+    "stage_b_1024_pair_effective_rank": 768,
+    "stage_b_1024_text_effective_rank": 726,
+    "stage_b_2048_pair_effective_rank": 768,
+    "stage_b_2048_text_effective_rank": 731,
+    "pair_norm_mean": 1.0,
+    "text_norm_mean_stage_b_2048": 0.9999809,
+    "collapse": "NOT_OBSERVED"
+  },
+  "tokenizer_compatibility": {
+    "status": "PASS",
+    "report": "reports/siglip2_tokenizer_compatibility.json",
+    "tokenizer": "GemmaTokenizer",
+    "vocab_size": 256000,
+    "ids": {"bos_token_id": 2, "eos_token_id": 1, "pad_token_id": 0},
+    "upstream_warning": "recorded; no suppression; runtime config is corrected and in-range",
+    "weights_changed": false
+  },
+  "dataset_handoff": {
+    "final_handoff": "MISSING",
+    "final_training_state": "WAIT_DATASET_FINAL_HANDOFF",
+    "p2_real": "BLOCKED_DATASET_CONTRACT",
+    "p2_semantic": "BLOCKED_DATASET_CONTRACT",
+    "p2_long_series": "BLOCKED_DATASET_CONTRACT"
+  },
+  "readiness": {
+    "B1_CONTROL": "VERIFIED",
+    "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
+    "MODEL_V3_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
+    "MODEL_V3_MECHANISM": "READY_FOR_AUTHORIZATION_ONLY",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  }
+}

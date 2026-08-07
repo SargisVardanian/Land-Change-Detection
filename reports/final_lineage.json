@@ -1,16 +1,15 @@
 {
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "audit_target_sha": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
-  "local_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
-  "remote_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
+  "audit_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "local_sha_at_audit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "remote_sha_at_audit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
   "pr_number": 7,
-  "pr_head_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
   "pr_base": "codex/qcpr-model-v3-temporal-retrieval",
   "pr_state_at_audit": "OPEN",
   "pr_is_draft_at_audit": true,
-  "cluster_worktree_sha_at_audit": "8f232a9f8ce600c83bbf660e31db5455ee42ae50",
+  "cluster_worktree_sha_at_audit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
   "worktree_clean_at_audit": true,
-  "parent_sha": "3615494db61548ff1a8d42c176f9d99809affdec",
+  "parent_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
   "lineage_status_at_audit": "FINAL_LINEAGE_MATCH",
-  "note": "This is an immutable pre-audit-change snapshot. The final published SHA is verified externally after the audit commit and push."
+  "note": "The audit artifacts were prepared from this immutable matched local/remote/PR/cluster snapshot; the subsequent report commit advances the branch and is verified separately."
 }
