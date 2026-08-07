@@ -7,6 +7,11 @@ adapter and logit scale for 512 fixed optimizer steps. It did not use RSCC
 text, semantic multi-positive records, masks, hard-negative mining, or a
 query-conditioned training score.
 
+The final-code real integration smoke also passed at SHA
+`ed96db2d2bf357c21c32657df4b4590f9ea51d54` (job `209868`, 8 steps, H100,
+`256 × 128` logical score matrix, 8.838 GiB allocated / 10.447 GiB reserved,
+checkpoint round-trip PASS).
+
 ## Immutable contracts
 
 - Code used for training: `301de15b095a5816e637d884b1e4c3e3675b8b49`

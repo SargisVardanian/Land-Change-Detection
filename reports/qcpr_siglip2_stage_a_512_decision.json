@@ -1,6 +1,19 @@
 {
   "status": "PASS_BOUNDED_SINGLE_SEED_EXACT_CORE",
   "decision": "STAGE_A_EXACT_GAIN_BUT_NOCHANGE_LIMIT",
+  "current_sha_real_integration_smoke": {
+    "job_id": "209868",
+    "status": "PASS",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_real_smoke_ed96db2_20260807",
+    "code_sha": "ed96db2d2bf357c21c32657df4b4590f9ea51d54",
+    "checkpoint_sha256": "144b97cafdb5c444cf141cd10b45778266be4b495d251fa0c093c2b029dfa55c",
+    "peak_allocated_gib": 8.838422775268555,
+    "peak_reserved_gib": 10.447265625,
+    "score_matrix": [256, 128],
+    "global_step": 8,
+    "checkpoint_roundtrip": "PASS",
+    "backbones_frozen": true
+  },
   "code_sha": "1c201990eae777a41c370194d73099cb54481eed",
   "training_code_sha": "301de15b095a5816e637d884b1e4c3e3675b8b49",
   "training_job": "209853",
