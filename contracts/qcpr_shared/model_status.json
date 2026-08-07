@@ -4,7 +4,7 @@
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
     "status": "REAL_INTEGRATION_SMOKE_PASS_MECHANISM_NOT_AUTHORIZED",
-    "published_code_sha": "c344c0439ea8dfd6cd1b094eebd93638f69b7c32",
+    "published_code_sha": "ab9395ceef45dacbbf5410dcbe67f3762ee89961",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
