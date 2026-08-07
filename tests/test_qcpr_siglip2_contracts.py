@@ -445,7 +445,7 @@ def test_text_evidence_mask_excludes_padding_and_special_tokens():
     result = processor_text_inputs(
         Processor(), [{"caption": "a building appeared"}], torch.device("cpu")
     )
-    assert result["attention_mask"].tolist() == [[False, True, True, False, False]]
+    assert result["attention_mask"].tolist() == [[True, True, True, True, False]]
     assert result["content_mask"].tolist() == [[False, True, True, False, False]]
 
 
