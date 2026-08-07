@@ -1,15 +1,15 @@
 {
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "audit_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
-  "local_sha_at_audit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
-  "remote_sha_at_audit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "audit_code_sha": "b804533431505b9959516f719261052d0b45ef57",
+  "local_sha_at_audit": "b804533431505b9959516f719261052d0b45ef57",
+  "remote_sha_at_audit": "b804533431505b9959516f719261052d0b45ef57",
   "pr_number": 7,
   "pr_base": "codex/qcpr-model-v3-temporal-retrieval",
   "pr_state_at_audit": "OPEN",
   "pr_is_draft_at_audit": true,
-  "cluster_worktree_sha_at_audit": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "cluster_worktree_sha_at_audit": "b804533431505b9959516f719261052d0b45ef57",
   "worktree_clean_at_audit": true,
-  "parent_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "parent_sha": "b804533431505b9959516f719261052d0b45ef57",
   "lineage_status_at_audit": "FINAL_LINEAGE_MATCH",
   "note": "The audit artifacts were prepared from this immutable matched local/remote/PR/cluster snapshot; the subsequent report commit advances the branch and is verified separately."
 }

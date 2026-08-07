@@ -4,7 +4,7 @@
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
     "status": "STAGE_B_1536_PILOT_COMPLETE_WAIT_DATASET_FINAL_HANDOFF",
-    "published_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+    "published_code_sha": "b804533431505b9959516f719261052d0b45ef57",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
@@ -48,8 +48,8 @@
   },
   "authoritative_dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
   "branch": "codex/qcpr-siglip2-temporal-training",
-  "code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
-  "evaluation_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+  "code_sha": "b804533431505b9959516f719261052d0b45ef57",
+  "evaluation_code_sha": "b804533431505b9959516f719261052d0b45ef57",
   "executable_smoke_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
   "cpu_gate": {
     "compileall": "PASS",
@@ -186,8 +186,8 @@
     "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT"
   },
   "siglip2_track": {
-    "code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
-    "evaluation_code_sha": "b8708fcbc7c823e9eac90bbf94b02fe063e7d679",
+    "code_sha": "b804533431505b9959516f719261052d0b45ef57",
+    "evaluation_code_sha": "b804533431505b9959516f719261052d0b45ef57",
     "georsclip_baseline": {
       "checkpoint": "ckpt/RS5M_ViT-B-32.pt",
       "open_clip_vit_b32_state_dict": "PASS",
