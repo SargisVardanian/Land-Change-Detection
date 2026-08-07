@@ -2,10 +2,10 @@
 
 Status: `PHASE_A_REPAIR_REQUIRES_RERUN`
 
-The repair is published on `codex/qcpr-siglip2-temporal-training` at final
-commit `29f6503c81638dfb277411472b8faccd8a190749` (the temporal contract
-repair itself is `16ccd12a5ec04d9c9b10daf720c974ff4adef0ce`; PR #7 remains
-draft).
+The validated code state is `29f6503c81638dfb277411472b8faccd8a190749`; the
+current branch head is `349f54a81b04bd3a8aa6f7cbdb371f187d958882` after the
+report-only commit (the temporal contract repair itself is
+`16ccd12a5ec04d9c9b10daf720c974ff4adef0ce`; PR #7 remains draft).
 
 ## Changes
 
