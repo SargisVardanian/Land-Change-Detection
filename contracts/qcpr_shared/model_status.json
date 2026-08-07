@@ -4,7 +4,7 @@
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
     "status": "REAL_INTEGRATION_SMOKE_PASS_MECHANISM_NOT_AUTHORIZED",
-    "published_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
+    "published_code_sha": "c344c0439ea8dfd6cd1b094eebd93638f69b7c32",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
@@ -16,6 +16,7 @@
     "stage_b_gpu": "NOT_RUN",
     "main_training": "NOT_AUTHORIZED",
     "real_integration_smoke": {
+      "code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
       "job_id": "209852",
       "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_real_smoke_c4be84d_20260807",
       "status": "PASS_32_STEP_REAL_SIGLIP2_EXACT_CORE"
