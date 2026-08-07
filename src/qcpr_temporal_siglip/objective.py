@@ -119,20 +119,23 @@ def symmetric_mult_positive_clip_loss(
     0.5 * text-to-pair + 0.5 * pair-to-text.
     """
 
-    if ignored_mask is None:
-        ignored_mask = torch.zeros_like(positive_mask, dtype=torch.bool)
-    if scores.ndim != 2 or positive_mask.shape != scores.shape or ignored_mask.shape != scores.shape:
+    ignored = (
+        torch.zeros_like(positive_mask, dtype=torch.bool)
+        if ignored_mask is None
+        else ignored_mask
+    )
+    if scores.ndim != 2 or positive_mask.shape != scores.shape or ignored.shape != scores.shape:
         raise ValueError("scores and masks must have shape [queries, pairs]")
     text_to_pair = _direction_loss(
         scores,
         positive_mask.bool(),
-        ignored_mask.bool(),
+        ignored.bool(),
         grade_weights=positive_weights,
     )
     pair_to_text = _direction_loss(
         scores.transpose(0, 1),
         positive_mask.transpose(0, 1).bool(),
-        ignored_mask.transpose(0, 1).bool(),
+        ignored.transpose(0, 1).bool(),
         grade_weights=positive_weights.transpose(0, 1) if positive_weights is not None else None,
     )
     loss = 0.5 * (text_to_pair + pair_to_text)
