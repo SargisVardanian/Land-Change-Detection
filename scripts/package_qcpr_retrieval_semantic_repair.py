@@ -356,6 +356,40 @@ def main() -> int:
         })
         write_json(rsrcc_path, rsrcc_audit)
         write_json(args.output / "source_reports/rsrcc_parent_provenance_audit.json", parent_provenance)
+    # Keep the legacy root source audit aligned with the canonical repair audit.
+    # The legacy schema remains for older consumers, while the nested snapshot
+    # records the current five-gate status without silently promoting a source.
+    legacy_official_path = args.output / "source_reports/official_source_audit.json"
+    legacy_official = read_json(legacy_official_path, {})
+    legacy_rows = legacy_official.get("sources")
+    current_source_rows = rsrcc_gate_report.get("sources") or {}
+    if isinstance(legacy_rows, list) and isinstance(current_source_rows, dict):
+        source_aliases = {"SpaceNet 7": "SpaceNet-7"}
+        for source_name, current in current_source_rows.items():
+            legacy_name = source_aliases.get(source_name, source_name)
+            for row in legacy_rows:
+                if str(row.get("source_dataset")) != legacy_name:
+                    continue
+                row["state"] = current.get("status", row.get("state"))
+                row["license_status"] = current.get("license_status", row.get("license_status"))
+                row["training_enabled"] = bool(current.get("training_enabled"))
+                row["retrieval_semantic_repair"] = {
+                    "status": current.get("status"),
+                    "integration_prerequisites": current.get("integration_prerequisites", {}),
+                    "missing_prerequisites": current.get("missing_prerequisites", []),
+                    "access_audit": current.get("access_audit", {}),
+                }
+                break
+        legacy_official["retrieval_semantic_repair"] = {
+            "status": rsrcc_gate_report.get("status"),
+            "canonical_path": "source_reports/retrieval_semantic_repair/official_source_acquisition_audit.json",
+            "ready_sources": rsrcc_gate_report.get("ready_sources", []),
+            "source_statuses": {
+                name: value.get("status")
+                for name, value in sorted(current_source_rows.items())
+            },
+        }
+        write_json(legacy_official_path, legacy_official)
     # Keep Forest's deterministic scene-component split as a canonical source
     # report as well as a repair-package artifact.  The physical split is
     # materialized, but captions remain held until provenance/review gates
