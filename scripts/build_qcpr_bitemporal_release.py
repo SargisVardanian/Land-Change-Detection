@@ -1135,6 +1135,7 @@ def main() -> int:
         "capabilities": decisions,
     })
     package["handoff_path"] = str(args.output / "handoff/dataset_to_model.jsonl")
+    package["model_agent_handoff_path"] = str(args.output / "handoff/retrieval_semantic_repair/model_agent_handoff.json")
     write_json(args.output / "source_reports/decision_package.json", package)
     handoff = {
         "request_id": "D2M-QCPR-BITEMPORAL-V2-20260807",
@@ -1181,6 +1182,7 @@ def main() -> int:
         },
     }
     write_jsonl(args.output / "handoff/dataset_to_model.jsonl", [handoff])
+    write_json(args.output / "handoff/retrieval_semantic_repair/model_agent_handoff.json", handoff)
     (args.output / "README.md").write_text(
         "# QCPR_BITEMPORAL_V2_TRAIN\n\n"
         "Source-trusted LEVIR/SECOND bitemporal retrieval candidate track for TemporalSigLIP.\n\n"
