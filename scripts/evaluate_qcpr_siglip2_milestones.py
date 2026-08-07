@@ -17,7 +17,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from qcpr_siglip2.training.milestones import milestone_evaluation_path, required_milestones
+from qcpr_siglip2.training.milestones import (
+    milestone_evaluation_path,
+    required_milestones,
+)
 
 
 def sha256(path: Path) -> str:

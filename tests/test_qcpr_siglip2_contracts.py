@@ -1,4 +1,5 @@
 import json
+from typing import ClassVar
 
 import pytest
 import torch
@@ -429,7 +430,7 @@ def test_minimal_temporal_adapter_has_one_pair_token_and_no_frame_cls_tokens():
 def test_text_evidence_mask_excludes_padding_and_special_tokens():
     class Tokenizer:
         pad_token_id = 0
-        all_special_ids = [0, 1, 2]
+        all_special_ids: ClassVar[list[int]] = [0, 1, 2]
 
     class Processor:
         tokenizer = Tokenizer()
