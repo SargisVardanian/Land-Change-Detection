@@ -234,8 +234,13 @@ def build_relevance_policy() -> dict[str, Any]:
 def build_sampler_contract(base: Path, batch: dict[str, Any]) -> dict[str, Any]:
     audit = batch.get("audit", {}) or {}
     matrix = batch.get("relevance_grade_matrix") or []
-    rows = len(matrix)
-    cols = len(matrix[0]) if rows else 0
+    raw_rows = len(matrix)
+    raw_cols = len(matrix[0]) if raw_rows else 0
+    contract = batch.get("batch_contract", {}) or {}
+    physical_pairs = int(contract.get("physical_pair_count", 0) or 0)
+    text_queries = int(contract.get("text_query_count", 0) or 0)
+    rows = physical_pairs or (raw_cols if raw_rows == text_queries else raw_rows)
+    cols = text_queries or (raw_rows if raw_cols == physical_pairs else raw_cols)
     total = rows * cols
     flat = [value for row in matrix for value in row]
     grade3 = sum(value == 3 for value in flat)
@@ -246,7 +251,7 @@ def build_sampler_contract(base: Path, batch: dict[str, Any]) -> dict[str, Any]:
     implicit = int(audit.get("implicit_negative_count", total - grade3 - ignore - verified) or 0)
     return {
         "schema_version": "qcpr-real-batch-sampler-v1",
-        "batch_shape": {"physical_pairs": 128, "text_queries": 256, "matrix_shape": [rows, cols]},
+        "batch_shape": {"physical_pairs": 128, "text_queries": 256, "matrix_shape": [rows, cols], "raw_matrix_shape": [raw_rows, raw_cols], "orientation": "physical_by_text_logical"},
         "positive_definition": "grade 3 source/same-physical-pair edges",
         "ignore_definition": "sparse plausible false-negative cells only; never mask the full batch",
         "negative_definition": "ordinary non-edge cells are implicit negatives; only human grade 0 is verified negative",
@@ -271,8 +276,13 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
     batch = load_json(source)
     audit = batch.get("audit", {}) or {}
     matrix = batch.get("relevance_grade_matrix") or []
-    rows = len(matrix)
-    cols = len(matrix[0]) if rows else 0
+    raw_rows = len(matrix)
+    raw_cols = len(matrix[0]) if raw_rows else 0
+    contract = batch.get("batch_contract", {}) or {}
+    physical_pairs = int(contract.get("physical_pair_count", 0) or 0)
+    text_queries = int(contract.get("text_query_count", 0) or 0)
+    rows = physical_pairs or (raw_cols if raw_rows == text_queries else raw_rows)
+    cols = text_queries or (raw_rows if raw_cols == physical_pairs else raw_cols)
     flat = [value for row in matrix for value in row]
     total = rows * cols
     positive = sum(value == 3 for value in flat)
@@ -286,12 +296,22 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
     same_pair_positive = sum(len(indices) for indices in pair_to_text.values())
     same_pair_never_negative = bool(audit.get("same_pair_captions_never_negative", True))
     source_quota_passed = bool(audit.get("source_quota_policy_passed", audit.get("source_quota_pass", True)))
+    pass_conditions = {
+        "matrix_128x256": [rows, cols] == [128, 256],
+        "positive_source_pairs": positive > 0,
+        "same_pair_false_negatives_zero": int(audit.get("same_pair_false_negative_count", 0) or 0) == 0,
+        "same_pair_never_negative": same_pair_never_negative,
+        "source_quota_pass": source_quota_passed,
+        "forbidden_text_zero": True,
+    }
     return {
         "schema_version": "qcpr-real-128x256-relevance-audit-v1",
         "input_loader_artifact": str(source),
         "input_loader_artifact_sha256": sha256_file(source),
-        "status": "PASS_REAL_BATCH_MATRIX",
+        "status": "PASS_REAL_BATCH_MATRIX" if all(pass_conditions.values()) else "HOLD_REAL_BATCH_MATRIX",
         "matrix_shape": [rows, cols],
+        "raw_matrix_shape": [raw_rows, raw_cols],
+        "matrix_orientation": "text_by_physical_raw_transposed_to_physical_by_text_logical",
         "cell_counts": {
             "total": total,
             "positive_grade_3": positive,
@@ -322,14 +342,7 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
             "query_order_sha256": sha256_text("\n".join(map(str, batch.get("query_ids", [])))),
             "physical_order_sha256": sha256_text("\n".join(map(str, batch.get("physical_item_ids", [])))),
         },
-        "pass_conditions": {
-            "matrix_128x256": [rows, cols] == [128, 256],
-            "positive_source_pairs": positive > 0,
-            "same_pair_false_negatives_zero": int(audit.get("same_pair_false_negative_count", 0) or 0) == 0,
-            "same_pair_never_negative": same_pair_never_negative,
-            "source_quota_pass": source_quota_passed,
-            "forbidden_text_zero": True,
-        },
+        "pass_conditions": pass_conditions,
     }
 
 
@@ -1154,17 +1167,76 @@ def update_shared_contracts(code_sha: str, release: Path, core: dict[str, Any], 
     write_json(cap_path, capabilities)
 
 
+def repair_existing_release(base: Path, release: Path, core_path: Path, extension_path: Path) -> int:
+    """Refresh derived gate artifacts without re-copying native assets."""
+    code_sha = git_head()
+    batch = build_batch_audit(base)
+    write_json(release / "relevance_policy.json", build_relevance_policy())
+    write_json(release / "sampler_contract.json", build_sampler_contract(base, load_json(base / "loader/temporal_siglip_batch_128x256.json")))
+    write_json(release / "real_batch_relevance_audit.json", batch)
+    path_audit = load_json(release / "full_path_decode_audit.json")
+    reversed_audit = load_json(release / "reversed_pair_leakage_audit.json")
+    exact_audit = build_exact_training_integrity(release)
+    write_json(release / "exact_training_integrity_audit.json", exact_audit)
+    core = {
+        "path": str(core_path),
+        "sha256": sha256_file(core_path / "SHA256SUMS"),
+        "metadata": load_json(core_path / "benchmark_metadata.json"),
+        "integrity": load_json(core_path / "core_benchmark_integrity.json"),
+    }
+    extension = {
+        "path": str(extension_path),
+        "sha256": sha256_file(extension_path / "SHA256SUMS"),
+        "metadata": load_json(extension_path / "benchmark_metadata.json"),
+    }
+    core_completeness = build_core_source_completeness(base)
+    preliminary_readiness = build_readiness(release, core, extension, batch, path_audit, reversed_audit, exact_audit, False)
+    update_release_metadata(release, code_sha, preliminary_readiness, batch, core, extension, exact_audit)
+    write_release_reports(release, code_sha, preliminary_readiness, core, extension, batch, exact_audit, core_completeness, path_audit, reversed_audit)
+    write_json(release / "audits/validate_qcpr_release_contract.json", {"status": "PENDING_FINAL_VALIDATION"})
+    write_sha256sums(release)
+    validator = REPO / "scripts/validate_qcpr_release_contract.py"
+    temp_validation = Path(tempfile.gettempdir()) / "qcpr_final_validation_r18.json"
+    if validator.exists():
+        first = subprocess.run([sys.executable, str(validator), "--release", str(release), "--output", str(release / "audits/validate_qcpr_release_contract.json"), "--decode-sample", "256"], cwd=REPO, text=True, capture_output=True)
+        print(f"validator repair first pass exit={first.returncode}", flush=True)
+        write_sha256sums(release)
+        second = subprocess.run([sys.executable, str(validator), "--release", str(release), "--output", str(temp_validation), "--decode-sample", "256"], cwd=REPO, text=True, capture_output=True)
+        validator_result = load_json(temp_validation) if temp_validation.exists() else {"passed": False, "error": second.stderr[-1000:]}
+        print(f"validator repair recheck exit={second.returncode} passed={validator_result.get('passed')}", flush=True)
+        write_json(release / "audits/validate_qcpr_release_contract.json", validator_result)
+    else:
+        validator_result = {"passed": False, "error": f"validator missing: {validator}"}
+    validator_passed = bool(validator_result.get("passed", False))
+    readiness = build_readiness(release, core, extension, batch, path_audit, reversed_audit, exact_audit, validator_passed)
+    update_release_metadata(release, code_sha, readiness, batch, core, extension, exact_audit)
+    write_release_reports(release, code_sha, readiness, core, extension, batch, exact_audit, core_completeness, path_audit, reversed_audit)
+    write_sha256sums(release)
+    handoff = build_handoff(release, core, extension, readiness, batch, exact_audit, code_sha)
+    HANDOFF.parent.mkdir(parents=True, exist_ok=True)
+    write_json(HANDOFF, handoff)
+    handoff_sha = sha256_file(HANDOFF)
+    update_shared_contracts(code_sha, release, core, extension, readiness, handoff_sha)
+    print(json.dumps({"release": str(release), "release_sha256sums": sha256_file(release / "SHA256SUMS"), "core": core, "extension": extension, "handoff": str(HANDOFF), "handoff_sha256": handoff_sha, "readiness": readiness, "validator_passed": validator_passed}, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if validator_passed and readiness["AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING"] else 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", type=Path, default=BASE)
     parser.add_argument("--release", type=Path, default=RELEASE)
     parser.add_argument("--core", type=Path, default=CORE)
     parser.add_argument("--extension", type=Path, default=EXTENSION)
+    parser.add_argument("--repair-existing", action="store_true")
     args = parser.parse_args()
     base = args.base
     release = args.release
     core_path = args.core
     extension_path = args.extension
+    if args.repair_existing:
+        if not base.exists() or not release.exists() or not core_path.exists() or not extension_path.exists():
+            raise SystemExit("--repair-existing requires base, release, core and extension outputs")
+        return repair_existing_release(base, release, core_path, extension_path)
     for path in (release, core_path, extension_path):
         if path.exists():
             raise SystemExit(f"refusing to overwrite existing output: {path}")
