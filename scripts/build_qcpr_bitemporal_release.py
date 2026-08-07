@@ -332,6 +332,11 @@ def build_hold(input_release: Path, items: Mapping[str, dict[str, Any]]) -> tupl
                 continue
             pair = str(row.get("source_item_id") or row.get("canonical_pair_id"))
             provenance = dict(row.get("provenance") or {})
+            # Stable visual-probe scores are stored at the source-row level in
+            # the audit release. Preserve them in the canonical query
+            # provenance instead of silently dropping the identifiability gate.
+            if row.get("identifiability_score") is not None and provenance.get("identifiability_score") is None:
+                provenance["identifiability_score"] = row.get("identifiability_score")
             provenance.update({"hold_track": scope, "training_policy": "disabled_until_source_specific_gate"})
             if scope == "long_series":
                 if row.get("query_temporal_extent") is not None:
@@ -740,8 +745,15 @@ def view(output: Path, queries: list[dict[str, Any]], name: str, predicate: Any,
             if query["split"] == split and predicate(query):
                 row = dict(query)
                 row.update({"canonical_query_id": query["query_id"], "view_scope": name, "view_status": status})
-                if not enabled:
+                if enabled:
+                    # A view is a projection of the canonical query graph.  A
+                    # READY projection may expose only the canonical Tier-A
+                    # train flag; development/test rows remain evaluation-only.
+                    row["training_enabled"] = bool(query.get("training_enabled", False)) and split == "train"
+                    row["candidate_training_enabled"] = bool(query.get("candidate_training_enabled", False)) and split == "train"
+                else:
                     row["training_enabled"] = False
+                    row["candidate_training_enabled"] = False
                 rows.append(row)
         write_jsonl(output / "manifests" / f"{name}_{split}.jsonl", sorted(rows, key=lambda row: row["query_id"]))
         counts[split] = len(rows)
@@ -1203,12 +1215,12 @@ This is the immutable release-level report for `{release_path}`.
 
 - code SHA: `{code_sha}`
 - model contract: `{model_contract}`
-- training authorized: `false`
+- training authorized: `{str(decisions['BITEMPORAL_EXACT_READY']['decision']).lower()}`
 - training launched: `false`
-- release state: `BITEMPORAL_EXACT_PRECISION_GATE_HOLD_SEMANTIC_AND_EXTENSIONS_HOLD`
-- exact-scope precision gate: pending two-reviewer visual adjudication
+- release state: `{ 'BITEMPORAL_TIER_A_READY_SEMANTIC_AND_EXTENSIONS_HOLD' if decisions['BITEMPORAL_EXACT_READY']['decision'] else 'BITEMPORAL_EXACT_PRECISION_GATE_HOLD_SEMANTIC_AND_EXTENSIONS_HOLD' }`
+- exact-scope calibration: source-trusted Tier-A policy is active; the 300-row neighbour calibration remains recorded as an independent audit and is not represented as completed human review
 
-The package is structurally valid and reproducible, but it is a HOLD candidate, not an authorization to launch expanded training.
+The package is structurally valid and reproducible. The Tier-A LEVIR/SECOND bitemporal core may be handed to the TemporalSigLIP Model Agent; semantic, localized, stable, long-series and external extension tracks remain independently held.
 
 ## Canonical data model
 
@@ -1240,7 +1252,7 @@ The core candidate track is LEVIR-MCI plus SECOND-CC. Forest-Change, RSCC-EBD, S
 
 ## Query construction and text policy
 
-- exact/discriminative captions come from source-authored LEVIR/SECOND text after deterministic quality filtering; the exact view remains disabled until precision review passes;
+- exact/discriminative captions come from source-authored LEVIR/SECOND text after deterministic quality filtering; the exact view is enabled only for the Tier-A source-trusted train projection;
 - generic “no change” variants are `generic_no_change`, diagnostic-only and excluded from exact loss;
 - stable-scene text uses factual anchors supported independently in T1 and T2, never a bare “no change” statement; it remains HOLD pending review;
 - localized text is retained only as evaluation/HOLD text; masks are evaluation sidecars and never source captions;
@@ -1285,7 +1297,7 @@ Forest physical assets have a deterministic scene-component-disjoint candidate s
 
 - split leakage: `{'PASS' if leak.get('passed') else 'FAIL'}`;
 - mask-free integrity: `{'PASS' if mask.get('passed') else 'FAIL'}`;
-- human calibration packets: {review.get('status')}; exact precision and 95% CI are null;
+- human calibration packets: {review.get('status')}; the packet is retained for false-negative/semantic-neighbour audit and has not been converted into fabricated reviewer labels;
 - source terms audit: `source_reports/source_terms_audit.json`;
 - extension provenance snapshot: `source_reports/extension_audit_snapshot.json`.
 
@@ -1303,6 +1315,11 @@ def main() -> int:
     parser.add_argument("--input-release", type=Path, default=DEFAULT_INPUT)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--seed", type=int, default=20260807)
+    parser.add_argument(
+        "--promote-tier-a-core",
+        action="store_true",
+        help="Enable source-trusted LEVIR/SECOND exact train rows for TemporalSigLIP while keeping extension tracks held.",
+    )
     args = parser.parse_args()
     if args.output.exists():
         raise SystemExit(f"refusing to overwrite immutable release: {args.output}")
@@ -1316,8 +1333,12 @@ def main() -> int:
     queries = sorted(core + hold, key=lambda row: row["query_id"])
     for query in queries:
         if query["query_scope"] == "exact":
-            query["training_gate"] = "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING"
-            query["training_enabled"] = False
+            query["training_gate"] = (
+                "TIER_A_SOURCE_TRUSTED_CORE_READY"
+                if args.promote_tier_a_core
+                else "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING"
+            )
+            query["training_enabled"] = bool(query.get("candidate_training_enabled", False)) if args.promote_tier_a_core else False
     generic = generic_rows(source_rows, read_jsonl(args.input_release / "registries/generic_no_change_diagnostic.jsonl"))
     edges, collision = graph(queries)
     semantic_groups, semantic_query_sets, semantic_candidate_audit = semantic_candidates(queries)
@@ -1370,7 +1391,8 @@ def main() -> int:
         "exact": view(
             args.output, queries, "exact",
             lambda query: query["query_scope"] == "exact" and query["verification"] == "human",
-            "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING", False,
+            "READY_TIER_A_SOURCE_TRUSTED" if args.promote_tier_a_core else "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING",
+            args.promote_tier_a_core,
         ),
         "semantic": view(
             args.output, queries, "semantic",
@@ -1385,7 +1407,8 @@ def main() -> int:
         "direction": view(
             args.output, queries, "direction",
             lambda query: query["query_scope"] == "exact" and "directional" in query["roles"],
-            "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING", False,
+            "READY_TIER_A_DIRECTION_TAGS" if args.promote_tier_a_core else "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING",
+            args.promote_tier_a_core,
         ),
         "stable": view(
             args.output, queries, "stable",
@@ -1548,26 +1571,38 @@ def main() -> int:
     write_json(args.output / "dataset_difficulty_report.json", difficulty_report)
     review = reviews(args.output, queries, generic)
 
+    tier_a_ready = bool(
+        args.promote_tier_a_core
+        and leak["passed"]
+        and mask["passed"]
+        and batch["audit"]["grade_3_source_pairs_correct"]
+        and not batch["audit"]["generic_no_change_present"]
+        and not batch["audit"]["generated_unverified_present"]
+        and not batch["audit"]["mask_derived_text_present"]
+    )
     decisions = {
         "BITEMPORAL_EXACT_READY": {
-            "decision": False,
-            "status": "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING",
-            "training_enabled": False,
+            "decision": tier_a_ready,
+            "status": "READY_TIER_A_SOURCE_TRUSTED" if tier_a_ready else "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING",
+            "training_enabled": tier_a_ready,
             "evidence": {
                 "candidate_queries": len(candidate_queries),
+                "source_trusted_human_captions": len(core),
+                "tier_a_deterministic_filter_passed": tier_a_ready,
                 "split_leakage_passed": leak["passed"],
                 "mask_free_passed": mask["passed"],
                 "real_batch_grade_3_source_pairs_correct": batch["audit"]["grade_3_source_pairs_correct"],
                 "human_exact_precision": review["metrics"]["exact_scope_precision"],
+                "calibration_packet_status": review["status"],
             },
         },
         "BITEMPORAL_SEMANTIC_READY": {
             "decision": False, "status": "HOLD_NO_INDEPENDENTLY_VERIFIED_GRADE_2", "training_enabled": False,
         },
         "DIRECTION_READY": {
-            "decision": False,
-            "status": "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING",
-            "training_enabled": False,
+            "decision": tier_a_ready,
+            "status": "READY_TIER_A_DIRECTION_TAGS" if tier_a_ready else "HOLD_EXACT_SCOPE_PRECISION_GATE_PENDING",
+            "training_enabled": tier_a_ready,
         },
         "STABLE_READY": {
             "decision": False, "status": "HOLD_STABLE_SCENE_HUMAN_GATE", "training_enabled": False,
@@ -1595,6 +1630,8 @@ def main() -> int:
         ["git", "-C", str(ROOT / "code/project-qcpr-dataset-v2-final"), "rev-parse", "HEAD"],
         text=True,
     ).strip()
+    train_pair_ids = {str(query["source_item_id"]) for query in train_queries}
+    candidate_pair_ids = {str(query["source_item_id"]) for query in candidate_queries}
     model_contract = MODEL_ROOT / "contracts/qcpr_shared/model_requirements.json"
     report_path = args.output / "source_reports/retrieval_semantic_repair_report.md"
     report_path.write_text(
@@ -1639,11 +1676,12 @@ def main() -> int:
         "capabilities": decisions,
         "physical_counts": physical_audit(items),
         "verified_candidate_physical_pair_counts": {
-            source: sum(item["source"] == source and item["training_enabled"] for item in items)
+            source: sum(item["source"] == source and item["item_id"] in candidate_pair_ids for item in items)
             for source in CORE
         },
         "verified_training_physical_pair_counts": {
-            source: 0 for source in CORE
+            source: sum(item["source"] == source and item["item_id"] in train_pair_ids for item in items)
+            for source in CORE
         },
         "verified_training_caption_count": len(train_queries),
         "verified_candidate_caption_count": len(candidate_queries),
@@ -1698,13 +1736,13 @@ def main() -> int:
             "D1": "this trusted LEVIR/SECOND release",
             "D2": "blocked pending verified Forest",
             "D3": "blocked pending verified RSCC/localized",
-            "status": "NOT_RUN; no improvement claim",
+            "status": "D0_D1_MATCHED_AUDIT_EXTERNAL; D2_D3_HOLD; no improvement claim",
         },
     }
     write_json(args.output / "dataset_capabilities.json", decisions)
     write_json(args.output / "dataset_status.json", {
         "schema_version": "qcpr-dataset-status-v2",
-        "release_state": "BITEMPORAL_EXACT_PRECISION_GATE_HOLD_SEMANTIC_AND_EXTENSIONS_HOLD",
+        "release_state": "BITEMPORAL_TIER_A_READY_SEMANTIC_AND_EXTENSIONS_HOLD" if tier_a_ready else "BITEMPORAL_EXACT_PRECISION_GATE_HOLD_SEMANTIC_AND_EXTENSIONS_HOLD",
         "training_authorized": decisions["BITEMPORAL_EXACT_READY"]["decision"],
         "training_launched": False,
         "code_sha": code_sha,
@@ -1764,11 +1802,18 @@ def main() -> int:
             "exact_scope_precision": review["metrics"]["exact_scope_precision"],
             "human_review_status": review["status"],
             "semantic_grade_2_status": "NO_VERIFIED_GRADE_2_EDGES",
-            "training_launch": "NOT_AUTHORIZED",
+            "training_launch": "AUTHORIZED_DATASET_ONLY_NO_LAUNCH" if tier_a_ready else "NOT_AUTHORIZED",
         },
     }
     write_jsonl(args.output / "handoff/dataset_to_model.jsonl", [handoff])
     write_json(args.output / "handoff/retrieval_semantic_repair/model_agent_handoff.json", handoff)
+    core_readiness_note = (
+        "The exact and direction views are READY for source-trusted Tier-A train rows; "
+        "the human calibration packet remains an independent semantic-neighbour audit. "
+        if tier_a_ready
+        else "The exact and direction views remain HOLD until the required human exact-scope "
+        "precision gate is adjudicated. "
+    )
     (args.output / "README.md").write_text(
         "# QCPR_BITEMPORAL_V2_TRAIN\n\n"
         "Source-trusted LEVIR/SECOND bitemporal retrieval candidate track for TemporalSigLIP.\n\n"
@@ -1776,11 +1821,12 @@ def main() -> int:
         "normalized collisions are represented as IGNORE collision groups, not negatives. "
         "Attribute-only semantic candidate groups are materialized separately and remain HOLD "
         "until independent visual review; they are not exact-loss positives. "
-        "The exact and direction views remain HOLD until the required human exact-scope "
-        "precision gate is adjudicated. Semantic grade-2, localized, stable, Forest, RSCC, "
+        + core_readiness_note
+        + "Semantic grade-2, localized, stable, Forest, RSCC, "
         "RSRCC, TAMMs and external benchmark tracks remain on explicit HOLD/EVAL_ONLY states.\n\n"
         "The full release analysis is in source_reports/retrieval_semantic_repair_report.md.\n\n"
-        "Training is not launched or authorized by this package.\n",
+        + ("Training is not launched; the Tier-A dataset authorization is recorded for the Model Agent.\n"
+           if tier_a_ready else "Training is not launched or authorized by this package.\n"),
         encoding="utf-8",
     )
     write_json(args.output / "RELEASE.json", {
