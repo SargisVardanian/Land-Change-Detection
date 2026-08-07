@@ -12,7 +12,11 @@ from typing import Any
 
 import torch
 
-from qcpr_siglip2.data.manifest import group_rows_by_pair, load_exact_pair_rows
+from qcpr_siglip2.data.manifest import (
+    group_rows_by_pair,
+    load_exact_core_rows,
+    load_exact_pair_rows,
+)
 
 
 def sha256(path: Path) -> str:
@@ -77,7 +81,8 @@ def ranks_for_rows(
 def main() -> int:
     args = parse_args()
     rows = load_exact_pair_rows(args.development_manifest, split="development")
-    groups = group_rows_by_pair(rows)
+    gallery_rows = load_exact_core_rows(args.development_manifest, split="development")
+    groups = group_rows_by_pair(gallery_rows)
     pair_ids = [str(pair_id) for pair_id in groups]
     arms: dict[str, str] = {}
     for value in args.arm:
@@ -94,6 +99,7 @@ def main() -> int:
         "development_manifest_sha256": sha256(Path(args.development_manifest)),
         "gallery_size": len(pair_ids),
         "query_count": len(rows),
+        "gallery_includes_generic_no_change_pairs": True,
         "pair_id_order": "group_rows_by_pair(first-seen order)",
         "arms": {},
         "limitations": {
