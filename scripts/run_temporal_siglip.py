@@ -15,6 +15,7 @@ import resource
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any, cast
 
@@ -22,7 +23,7 @@ import torch
 from transformers import AutoProcessor
 
 from qcpr_siglip2.data.loader import ExactBatch, make_exact_batches
-from qcpr_siglip2.data.manifest import load_exact_pair_rows, ordered_id_sha256
+from qcpr_siglip2.data.manifest import group_rows_by_pair, load_exact_pair_rows, ordered_id_sha256
 from qcpr_siglip2.data.runtime import RawFeatureBatch, build_relevance_masks, encode_real_features
 from qcpr_siglip2.training.exposure import ExposureLedger
 from qcpr_temporal_siglip.backbone import TemporalSigLIPBackbone
@@ -32,6 +33,7 @@ from qcpr_temporal_siglip.localization import TemporalSoftChangeMap
 from qcpr_temporal_siglip.model import TemporalSigLIP
 from qcpr_temporal_siglip.objective import symmetric_mult_positive_clip_loss
 from qcpr_temporal_siglip.trainer import build_optimizer
+from validate_temporal_siglip_final_handoff import HandoffError, validate_handoff
 
 
 def sha256(path: Path) -> str:
@@ -68,6 +70,52 @@ def write_sha256sums(run: Path) -> None:
             continue
         lines.append(f"{sha256(path)}  {path.relative_to(run).as_posix()}")
     (run / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def build_exposure_reports(
+    ledger: ExposureLedger,
+    pair_rows: list[dict[str, Any]],
+    query_rows: list[dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Summarize caption and source exposure without retaining caption text."""
+
+    pair_by_id = {
+        str(row["canonical_pair_id"]): row
+        for group in group_rows_by_pair(pair_rows).values()
+        for row in group[:1]
+    }
+    query_by_id = {str(row["caption_id"]): row for row in query_rows}
+    source_presentations: Counter[str] = Counter()
+    change_presentations: Counter[str] = Counter()
+    for pair_id in ledger.pair_sequence:
+        row = pair_by_id.get(str(pair_id), {})
+        source = str(row.get("dataset_name") or row.get("source_dataset") or "unknown")
+        source_presentations[source] += 1
+        change_type = row.get("change_type") or row.get("change_category")
+        change_presentations[str(change_type or "unknown")] += 1
+
+    caption_presentations: Counter[str] = Counter(str(value) for value in ledger.query_sequence)
+    verification_presentations: Counter[str] = Counter()
+    scope_presentations: Counter[str] = Counter()
+    for query_id in ledger.query_sequence:
+        row = query_by_id.get(str(query_id), {})
+        verification_presentations[str(row.get("verification") or "unknown")] += 1
+        scope_presentations[str(row.get("query_scope") or "exact")] += 1
+
+    caption_report = {
+        "query_presentations": len(ledger.query_sequence),
+        "unique_captions": len(caption_presentations),
+        "presentations_by_caption_id": dict(sorted(caption_presentations.items())),
+        "presentations_by_verification": dict(sorted(verification_presentations.items())),
+        "presentations_by_query_scope": dict(sorted(scope_presentations.items())),
+    }
+    source_report = {
+        "physical_pair_presentations": len(ledger.pair_sequence),
+        "unique_physical_pairs": len(set(ledger.pair_sequence)),
+        "presentations_by_source": dict(sorted(source_presentations.items())),
+        "presentations_by_change_type": dict(sorted(change_presentations.items())),
+    }
+    return caption_report, source_report
 
 
 def synchronize_cuda(device: torch.device) -> None:
@@ -202,6 +250,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--captions-per-pair", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260807)
     parser.add_argument("--initial-checkpoint")
+    parser.add_argument(
+        "--final-handoff",
+        help="Require and validate the authoritative Dataset-Agent final handoff.",
+    )
+    parser.add_argument(
+        "--target-pair-presentations",
+        type=int,
+        help="Record the declared unique-pair exposure target for a final run.",
+    )
+    parser.add_argument(
+        "--max-pair-presentations",
+        type=int,
+        help="Fail if any physical pair exceeds this exposure ceiling.",
+    )
     parser.add_argument("--authorize-long-run", action="store_true")
     return parser.parse_args()
 
@@ -412,6 +474,16 @@ def main() -> int:
         raise ValueError("physical microbatch cannot exceed logical physical batch")
     if args.captions_per_pair <= 0:
         raise ValueError("captions_per_pair must be positive")
+    if args.target_pair_presentations is not None and args.target_pair_presentations <= 0:
+        raise ValueError("target_pair_presentations must be positive")
+    if args.max_pair_presentations is not None and args.max_pair_presentations <= 0:
+        raise ValueError("max_pair_presentations must be positive")
+    if (
+        args.target_pair_presentations is not None
+        and args.max_pair_presentations is not None
+        and args.target_pair_presentations > args.max_pair_presentations
+    ):
+        raise ValueError("target_pair_presentations cannot exceed max_pair_presentations")
     if steps <= 0:
         raise ValueError("steps must be positive")
     worktree = Path(__file__).resolve().parents[1]
@@ -436,6 +508,29 @@ def main() -> int:
         torch.set_float32_matmul_precision("high")
         train_rows = load_exact_pair_rows(args.train_manifest, split="train")
         development_rows = load_exact_pair_rows(args.development_manifest, split="development")
+        final_handoff_result: dict[str, Any] | None = None
+        if args.final_handoff:
+            try:
+                final_handoff_result = validate_handoff(
+                    Path(args.final_handoff),
+                    project_root=worktree,
+                )
+            except HandoffError:
+                raise
+            expected_train = Path(
+                str(final_handoff_result["manifests"]["final_exact_train_manifest"]["path"])
+            ).resolve()
+            expected_development = Path(
+                str(final_handoff_result["manifests"]["final_exact_development_manifest"]["path"])
+            ).resolve()
+            if Path(args.train_manifest).resolve() != expected_train:
+                raise RuntimeError("FINAL_HANDOFF_TRAIN_MANIFEST_MISMATCH")
+            if Path(args.development_manifest).resolve() != expected_development:
+                raise RuntimeError("FINAL_HANDOFF_DEVELOPMENT_MANIFEST_MISMATCH")
+            release_sha = str(final_handoff_result["authoritative_release_sha"])
+            actual_release_sha = sha256_path(Path(args.data_release))
+            if actual_release_sha != release_sha:
+                raise RuntimeError("FINAL_HANDOFF_RELEASE_SHA_MISMATCH")
         processor = AutoProcessor.from_pretrained(args.siglip2_model, local_files_only=True)
         config = TemporalSigLIPConfig().validate()
         backbone = TemporalSigLIPBackbone(
@@ -486,6 +581,9 @@ def main() -> int:
             "hard_negative_mining": False,
             "initial_checkpoint": args.initial_checkpoint,
             "optimizer_resumed": False,
+            "final_handoff": args.final_handoff,
+            "target_pair_presentations": args.target_pair_presentations,
+            "max_pair_presentations": args.max_pair_presentations,
         })
         write_json(run / "data_contract.json", {
             "data_release": args.data_release,
@@ -498,6 +596,8 @@ def main() -> int:
             "development_query_ids_sha256": ordered_id_sha256(development_rows, "caption_id"),
             "mask_access": False,
             "generated_unverified_text": False,
+            "final_handoff": args.final_handoff,
+            "final_handoff_validation": final_handoff_result,
         })
         write_json(run / "batch_contract.json", {
             "physical_microbatch": args.physical_batch_size,
@@ -569,6 +669,18 @@ def main() -> int:
                 )
         if global_step != global_step_start + steps:
             raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
+        pair_counts = Counter(str(value) for value in ledger.pair_sequence)
+        if args.max_pair_presentations is not None:
+            over_ceiling = {
+                pair_id: count
+                for pair_id, count in pair_counts.items()
+                if count > args.max_pair_presentations
+            }
+            if over_ceiling:
+                raise RuntimeError(
+                    "PAIR_PRESENTATION_CEILING_EXCEEDED: "
+                    + json.dumps(dict(sorted(over_ceiling.items())[:10]), sort_keys=True)
+                )
         checkpoint = run / "checkpoint.pt"
         torch.save(
             build_checkpoint(
@@ -581,6 +693,13 @@ def main() -> int:
             checkpoint,
         )
         write_json(run / "exposure_accounting.json", ledger.to_dict())
+        caption_exposure, source_exposure = build_exposure_reports(
+            ledger,
+            train_rows,
+            train_rows,
+        )
+        write_json(run / "caption_exposure.json", caption_exposure)
+        write_json(run / "source_exposure.json", source_exposure)
         write_json(run / "metrics.json", {"rows": metrics})
         with (run / "metrics.jsonl").open("w", encoding="utf-8") as handle:
             for row in metrics:

@@ -10,6 +10,8 @@ from scripts.validate_temporal_siglip_final_handoff import (
     HandoffError,
     validate_handoff,
 )
+from scripts.run_temporal_siglip import build_exposure_reports
+from qcpr_siglip2.training.exposure import ExposureLedger
 
 
 def _sha256(path: Path) -> str:
@@ -71,3 +73,41 @@ def test_primary_manifest_masks_are_rejected(tmp_path: Path) -> None:
     handoff = _write_handoff(tmp_path, forbidden=True)
     with pytest.raises(HandoffError, match="MASK_FREE_PRIMARY_MANIFEST_VIOLATION"):
         validate_handoff(handoff, project_root=tmp_path)
+
+
+def test_exposure_reports_separate_caption_and_source_counts() -> None:
+    rows = [
+        {
+            "canonical_pair_id": "pair-1",
+            "caption_id": "caption-1",
+            "dataset_name": "levir_mci",
+            "verification": "human",
+            "query_scope": "exact",
+        },
+        {
+            "canonical_pair_id": "pair-1",
+            "caption_id": "caption-2",
+            "dataset_name": "levir_mci",
+            "verification": "human_rewritten",
+            "query_scope": "direction",
+        },
+        {
+            "canonical_pair_id": "pair-2",
+            "caption_id": "caption-3",
+            "dataset_name": "second_cc",
+            "verification": "human",
+            "query_scope": "exact",
+        },
+    ]
+    ledger = ExposureLedger()
+    ledger.record_step(("pair-1", "pair-2"), ("caption-1", "caption-3"))
+    ledger.record_step(("pair-1",), ("caption-2",))
+    captions, sources = build_exposure_reports(ledger, rows, rows)
+    assert captions["query_presentations"] == 3
+    assert captions["unique_captions"] == 3
+    assert captions["presentations_by_verification"] == {
+        "human": 2,
+        "human_rewritten": 1,
+    }
+    assert sources["physical_pair_presentations"] == 3
+    assert sources["presentations_by_source"] == {"levir_mci": 2, "second_cc": 1}
