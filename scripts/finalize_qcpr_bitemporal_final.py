@@ -124,6 +124,38 @@ def canonical_text(row: dict[str, Any]) -> str:
     return " ".join(str(row.get("text", "")).lower().split())
 
 
+def is_generic_no_change(row: dict[str, Any]) -> bool:
+    """Detect the explicitly forbidden generic no-change caption family.
+
+    This is a final safety gate for exact manifests, not the primary query
+    classifier.  A spatial phrase without a changed object (for example,
+    ``no change in the middle``) is still generic for exact training.
+    """
+    text = " ".join(canonical_text(row).lower().replace(".", " ").split())
+    attributes = row.get("attributes", {}) or {}
+    changed_object = [str(value).strip() for value in attributes.get("changed_object", []) if str(value).strip()]
+    exact_phrases = {
+        "there is no change",
+        "there are no changes",
+        "the two images are the same",
+        "the images are the same",
+        "no visible differences exist",
+        "no visible difference exists",
+        "no change is occurred",
+        "no change occurred",
+        "no changes occurred",
+    }
+    if text in exact_phrases:
+        return True
+    if "no change" in text and not changed_object:
+        return True
+    if "no visible" in text and not changed_object:
+        return True
+    if ("images are the same" in text or "images remain the same" in text) and not changed_object:
+        return True
+    return False
+
+
 def split_item_id(item_id: str) -> str:
     return str(item_id).split(":", 1)[0]
 
@@ -157,6 +189,10 @@ def materialize_hold_views(root: Path) -> None:
         (root / "manifests" / f"{scope}_train.jsonl").write_text(
             "", encoding="utf-8"
         )
+    for split in ("train", "development", "test"):
+        path = root / "manifests" / f"exact_{split}.jsonl"
+        rows = load_jsonl(path)
+        write_jsonl(path, (row for row in rows if not is_generic_no_change(row)))
 
 
 def build_relevance_policy() -> dict[str, Any]:
@@ -196,6 +232,7 @@ def build_relevance_policy() -> dict[str, Any]:
 
 
 def build_sampler_contract(base: Path, batch: dict[str, Any]) -> dict[str, Any]:
+    audit = batch.get("audit", {}) or {}
     matrix = batch.get("relevance_grade_matrix") or []
     rows = len(matrix)
     cols = len(matrix[0]) if rows else 0
@@ -204,9 +241,9 @@ def build_sampler_contract(base: Path, batch: dict[str, Any]) -> dict[str, Any]:
     grade3 = sum(value == 3 for value in flat)
     grade2 = sum(value == 2 for value in flat)
     grade1 = sum(value == 1 for value in flat)
-    ignore = int(batch.get("ambiguous_ignore_count", batch.get("ignore_count", 0)) or 0)
-    verified = int(batch.get("verified_negative_count", 0) or 0)
-    implicit = int(batch.get("implicit_negative_count", total - grade3 - ignore - verified) or 0)
+    ignore = int(audit.get("ambiguous_ignore_count", audit.get("ignore_count", 0)) or 0)
+    verified = int(audit.get("verified_negative_count", 0) or 0)
+    implicit = int(audit.get("implicit_negative_count", total - grade3 - ignore - verified) or 0)
     return {
         "schema_version": "qcpr-real-batch-sampler-v1",
         "batch_shape": {"physical_pairs": 128, "text_queries": 256, "matrix_shape": [rows, cols]},
@@ -214,7 +251,7 @@ def build_sampler_contract(base: Path, batch: dict[str, Any]) -> dict[str, Any]:
         "ignore_definition": "sparse plausible false-negative cells only; never mask the full batch",
         "negative_definition": "ordinary non-edge cells are implicit negatives; only human grade 0 is verified negative",
         "same_pair_multi_caption_positive": True,
-        "source_quota": batch.get("source_quota", batch.get("quotas", {})),
+        "source_quota": audit.get("source_quota", batch.get("source_quota", batch.get("quotas", {}))),
         "reported_cells": {
             "total": total,
             "grade_3_positive": grade3,
@@ -232,6 +269,7 @@ def build_sampler_contract(base: Path, batch: dict[str, Any]) -> dict[str, Any]:
 def build_batch_audit(base: Path) -> dict[str, Any]:
     source = base / "loader/temporal_siglip_batch_128x256.json"
     batch = load_json(source)
+    audit = batch.get("audit", {}) or {}
     matrix = batch.get("relevance_grade_matrix") or []
     rows = len(matrix)
     cols = len(matrix[0]) if rows else 0
@@ -240,10 +278,14 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
     positive = sum(value == 3 for value in flat)
     grade2 = sum(value == 2 for value in flat)
     grade1 = sum(value == 1 for value in flat)
-    ambiguous = int(batch.get("ambiguous_ignore_count", batch.get("ignore_count", 0)) or 0)
-    verified = int(batch.get("verified_negative_count", 0) or 0)
-    implicit = int(batch.get("implicit_negative_count", total - positive - ambiguous - verified) or 0)
-    source_quota = batch.get("source_quota", batch.get("quotas", {}))
+    ambiguous = int(audit.get("ambiguous_ignore_count", audit.get("ignore_count", 0)) or 0)
+    verified = int(audit.get("verified_negative_count", 0) or 0)
+    implicit = int(audit.get("implicit_negative_count", total - positive - ambiguous - verified) or 0)
+    source_quota = audit.get("source_quota", batch.get("source_quota", batch.get("quotas", {})))
+    pair_to_text = batch.get("pair_to_text_positive_indices", {}) or {}
+    same_pair_positive = sum(len(indices) for indices in pair_to_text.values())
+    same_pair_never_negative = bool(audit.get("same_pair_captions_never_negative", True))
+    source_quota_passed = bool(audit.get("source_quota_policy_passed", audit.get("source_quota_pass", True)))
     return {
         "schema_version": "qcpr-real-128x256-relevance-audit-v1",
         "input_loader_artifact": str(source),
@@ -261,14 +303,14 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
         },
         "positive_cell_rate": (positive / total) if total else None,
         "collision_rate": (ambiguous / total) if total else None,
-        "same_pair_positive_cells": int(batch.get("same_pair_positive_count", positive) or positive),
-        "same_pair_captions_never_negative": bool(batch.get("same_pair_captions_never_negative", True)),
-        "same_pair_false_negative_count": int(batch.get("same_pair_false_negative_count", 0) or 0),
+        "same_pair_positive_cells": same_pair_positive or positive,
+        "same_pair_captions_never_negative": same_pair_never_negative,
+        "same_pair_false_negative_count": int(audit.get("same_pair_false_negative_count", 0) or 0),
         "residual_false_negative_rate": None,
         "residual_false_negative_status": "PENDING_TIER_A_HUMAN_REVIEW",
         "whole_batch_masked": False,
         "source_quota": source_quota,
-        "source_quota_pass": bool(batch.get("source_quota_pass", True)),
+        "source_quota_pass": source_quota_passed,
         "forbidden_training_text": {
             "generic_no_change": 0,
             "mask_derived": 0,
@@ -283,9 +325,9 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
         "pass_conditions": {
             "matrix_128x256": [rows, cols] == [128, 256],
             "positive_source_pairs": positive > 0,
-            "same_pair_false_negatives_zero": int(batch.get("same_pair_false_negative_count", 0) or 0) == 0,
-            "same_pair_never_negative": bool(batch.get("same_pair_captions_never_negative", True)),
-            "source_quota_pass": bool(batch.get("source_quota_pass", True)),
+            "same_pair_false_negatives_zero": int(audit.get("same_pair_false_negative_count", 0) or 0) == 0,
+            "same_pair_never_negative": same_pair_never_negative,
+            "source_quota_pass": source_quota_passed,
             "forbidden_text_zero": True,
         },
     }
@@ -487,8 +529,8 @@ def build_reversed_pair_audit(base: Path) -> dict[str, Any]:
     }
 
 
-def build_exact_training_integrity(base: Path) -> dict[str, Any]:
-    rows = load_jsonl(base / "manifests/exact_train.jsonl")
+def build_exact_training_integrity(release: Path) -> dict[str, Any]:
+    rows = load_jsonl(release / "manifests/exact_train.jsonl")
     forbidden: list[dict[str, Any]] = []
     query_ids = [str(row.get("query_id")) for row in rows]
     item_ids = [str(row.get("source_item_id")) for row in rows]
@@ -502,7 +544,7 @@ def build_exact_training_integrity(base: Path) -> dict[str, Any]:
             forbidden.append({"query_id": row.get("query_id"), "error": "verification_not_trusted"})
         if not provenance.get("mask_free", True) or row.get("caption_provenance", {}).get("mask_free") is False:
             forbidden.append({"query_id": row.get("query_id"), "error": "mask_derived"})
-        if any(phrase in text for phrase in ("there is no change", "the two images are the same", "no visible differences exist", "no change")):
+        if is_generic_no_change(row):
             forbidden.append({"query_id": row.get("query_id"), "error": "generic_no_change"})
         if any(token in text for token in ("caused by", "due to", "disaster", "severity", "magnitude")):
             forbidden.append({"query_id": row.get("query_id"), "error": "unsupported_claim_token"})
@@ -587,7 +629,7 @@ def build_core_benchmark(base: Path, release: Path, destination: Path) -> dict[s
     copy(legacy_source, destination / "legacy/legacy_common_dev.jsonl")
     copy(legacy_state, destination / "legacy/legacy_common_dev_historical_state.json")
     for split in ("train", "development", "test"):
-        copy(base / f"manifests/exact_{split}.jsonl", destination / f"final/final_exact_{split}.jsonl")
+        copy(release / f"manifests/exact_{split}.jsonl", destination / f"final/final_exact_{split}.jsonl")
 
     collisions = collision_map(base)
     manifest_rows: dict[str, list[dict[str, Any]]] = {}
@@ -600,7 +642,14 @@ def build_core_benchmark(base: Path, release: Path, destination: Path) -> dict[s
         write_json(destination / f"final/final_exact_{split}_query_ids.json", [row["query_id"] for row in relevance])
 
     legacy_rows = load_jsonl(destination / "legacy/legacy_common_dev.jsonl")
-    legacy_pairs = ordered_unique(item for row in legacy_rows for item in row.get("positive_item_ids", [row.get("source_item_id")]))
+    legacy_pairs = ordered_unique(
+        item
+        for row in legacy_rows
+        for item in row.get(
+            "positive_pair_ids",
+            row.get("positive_item_ids", [row.get("canonical_pair_id", row.get("source_pair_id"))]),
+        )
+    )
     legacy_query_ids = [str(row.get("query_id")) for row in legacy_rows]
     metadata = {
         "schema_version": "qcpr-bitemporal-core-benchmark-v1",
@@ -913,6 +962,11 @@ def update_release_metadata(
             views[scope][split] = 0
     for scope in ("localized", "stable", "long_series"):
         views.setdefault(scope, {})["train"] = 0
+    for split in ("train", "development", "test"):
+        views.setdefault("exact", {})[split] = safe_count(release / "manifests" / f"exact_{split}.jsonl")
+    for scope in ("direction", "localized", "stable", "long_series"):
+        for split in ("train", "development", "test"):
+            views.setdefault(scope, {})[split] = safe_count(release / "manifests" / f"{scope}_{split}.jsonl")
     release_json["final_counts"] = {
         "physical_items": safe_count(release / "registries/physical_items.jsonl"),
         "frames": safe_count(release / "registries/frames.jsonl"),
@@ -1144,7 +1198,7 @@ def main() -> int:
     write_json(release / "full_path_decode_audit.json", path_audit)
     reversed_audit = build_reversed_pair_audit(base)
     write_json(release / "reversed_pair_leakage_audit.json", reversed_audit)
-    exact_audit = build_exact_training_integrity(base)
+    exact_audit = build_exact_training_integrity(release)
     write_json(release / "exact_training_integrity_audit.json", exact_audit)
 
     print(f"building core benchmark: {core_path}", flush=True)
