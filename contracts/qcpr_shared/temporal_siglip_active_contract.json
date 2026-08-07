@@ -1,0 +1,73 @@
+{
+  "model_name": "TemporalSigLIP",
+  "status": "IMPLEMENTED_CPU_CONTRACT_NOT_GPU_AUTHORIZED",
+  "primary_backbone": {
+    "name": "google/siglip2-base-patch16-256",
+    "role": "primary",
+    "one_shared_tower_for_all_frames": true,
+    "expected_visual_tokens": "[B,T,256,768]",
+    "expected_text_tokens": "[B,L,768]"
+  },
+  "comparison_backbone": {
+    "name": "Zilun/GeoRSCLIP",
+    "role": "frozen_bounded_comparison_only",
+    "combined_with_primary": false
+  },
+  "active_path": {
+    "sequence": "[PAIR,T1_PATCHES,T2_PATCHES,...]",
+    "learned_pair_token": true,
+    "learned_temporal_embeddings": true,
+    "continuous_delta_time_projection": true,
+    "temporal_transformer_blocks": 2,
+    "attention_heads": 12,
+    "hidden_size": 768,
+    "extra_spatial_vit": false,
+    "evidence_bottleneck": false,
+    "relevance_mlp": false,
+    "late_interaction": false,
+    "mandatory_reranking": false
+  },
+  "retrieval_score": "exp(clamped_logit_scale) * cosine(text_embedding, pair_embedding)",
+  "inference": {
+    "procedure": "encode_each_pair_once_then_directly_rank_full_gallery",
+    "primary_k": 10,
+    "top_k_reranking": false
+  },
+  "objective": {
+    "name": "symmetric_multi_positive_clip",
+    "formula": "0.5 * text_to_pair + 0.5 * pair_to_text",
+    "exact_grade_3": "positive",
+    "exact_grade_2": "ignored",
+    "exact_grade_1": "ignored",
+    "semantic_grade_3": "positive",
+    "semantic_grade_2": "positive",
+    "semantic_grade_1": "optional_weak_positive",
+    "event_id_infers_positive": false,
+    "identical_text_infers_positive": false
+  },
+  "post_retrieval_localization": {
+    "source": "same temporal patch outputs",
+    "change_tokens": "LayerNorm(T2_temporal_tokens - T1_temporal_tokens)",
+    "map_logits": "cosine(change_token, text_embedding) / localization_temperature",
+    "trainable_parameters_initially": 1,
+    "primary_retrieval_score_feedback": false,
+    "status_without_verified_localized_queries": "DIAGNOSTIC_ONLY"
+  },
+  "training": {
+    "stage_a_steps": 512,
+    "stage_b_additional_steps": 1536,
+    "stage_a_trainable": ["PAIR token", "temporal embeddings", "two temporal blocks", "logit scale"],
+    "stage_b_trainable": ["last two vision blocks", "last two text blocks", "final norms/projections"],
+    "stage_b_lora": false,
+    "early_stopping": false,
+    "hard_negative_mining": false,
+    "mask_loss": false
+  },
+  "readiness": {
+    "cpu_contract": "PASS_PENDING_FULL_SUITE",
+    "stage_a_gpu": "NOT_RUN",
+    "stage_b_gpu": "NOT_RUN",
+    "main_training": "NOT_AUTHORIZED",
+    "p2": "BLOCKED_DATASET_CONTRACT"
+  }
+}

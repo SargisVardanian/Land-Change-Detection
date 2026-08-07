@@ -1,5 +1,5 @@
 {
-  "include": ["src/qcpr_v3", "src/qcpr_siglip2"],
+  "include": ["src/qcpr_v3", "src/qcpr_siglip2", "src/qcpr_temporal_siglip"],
   "executionEnvironments": [
     {"root": "src/qcpr_v3", "extraPaths": ["src"]},
     {"root": "src/qcpr_siglip2", "extraPaths": ["src"]}
