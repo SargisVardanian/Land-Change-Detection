@@ -9,6 +9,7 @@ import json
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -181,6 +182,76 @@ def verify_checksums(root: Path) -> dict[str, Any]:
         if actual != expected:
             failures.append({"path": relative, "expected": expected, "actual": actual, "reason": "mismatch"})
     return {"entries": len(rows), "failures": failures, "passed": not failures}
+
+
+def write_decision_package(
+    root: Path,
+    *,
+    branch: str,
+    code_sha: str,
+    release_path: Path,
+    items: list[dict[str, Any]],
+    queries: list[dict[str, Any]],
+    handoff: dict[str, Any],
+    view_readiness: dict[str, Any],
+    data_only_comparison: dict[str, Any],
+    integrity: dict[str, Any],
+) -> None:
+    """Regenerate the legacy-compatible decision package from release rows.
+
+    The retrieval repair package adds physical sources after copying the base
+    release.  Reusing the base decision package would therefore leave stale
+    item/frame/query counts next to the immutable registries.
+    """
+    source_registry = read_jsonl(root / "registries/source_registry.jsonl")
+    by_source = Counter(str(row.get("source")) for row in items)
+    by_scope = Counter(str(row.get("query_scope")) for row in queries)
+    by_verification = Counter(str(row.get("verification")) for row in queries)
+    summary = {
+        "schema_version": "qcpr-dataset-v2-decision-package-v1",
+        "branch": branch,
+        "code_sha": code_sha,
+        "release_path": str(release_path),
+        "physical_item_counts": dict(sorted(by_source.items())),
+        "physical_item_total": len(items),
+        "sequence_count": sum(row.get("item_type") == "sequence" for row in items),
+        "frame_count": sum(len(row.get("frames", [])) for row in items),
+        "query_counts": dict(sorted(by_scope.items())),
+        "verification_counts": dict(sorted(by_verification.items())),
+        "integrity": dict(integrity),
+        "source_status": source_registry,
+        "readiness": {
+            "release_state": "DATA_QUALITY_HOLD",
+            "training_authorized": False,
+            "main_training_allowed": False,
+            "views": view_readiness.get("views", {}),
+            "exact_gate": handoff.get("exact_gate"),
+            "stable_gate": handoff.get("stable_gate"),
+            "localized_gate": handoff.get("localized_gate"),
+            "long_series_gate": handoff.get("long_series_gate"),
+            "data_only_comparison_status": data_only_comparison.get("status"),
+        },
+    }
+    write_json(root / "source_reports/decision_package.json", summary)
+    lines = [
+        "# Dataset-v2 retrieval-semantic repair decision package",
+        "",
+        f"- Branch: `{branch}`",
+        f"- Code SHA: `{code_sha}`",
+        f"- Release: `{release_path}`",
+        f"- Physical items: `{summary['physical_item_total']}`",
+        f"- Frames: `{summary['frame_count']}`",
+        "",
+        "## Query counts",
+        "",
+    ]
+    for key, value in sorted(summary["query_counts"].items()):
+        lines.append(f"- {key}: {value}")
+    lines.extend(["", "## Readiness", ""])
+    for key, value in sorted(summary["readiness"].items()):
+        lines.append(f"- {key}: `{value}`")
+    lines.extend(["", "## Integrity", "", f"- passed: `{summary['integrity'].get('passed')}`"])
+    (root / "source_reports/decision_package.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def parse_args() -> argparse.Namespace:
@@ -639,6 +710,22 @@ def main() -> int:
         "passed": True,
     }
     write_json(integrity_path, integrity_record)
+    final_checksums = write_checksums(args.output)
+    final_integrity = verify_checksums(args.output)
+    if not final_integrity["passed"]:
+        raise SystemExit(json.dumps(final_integrity, sort_keys=True))
+    write_decision_package(
+        args.output,
+        branch=args.source_branch,
+        code_sha=git_value(args.repo, "rev-parse", "HEAD"),
+        release_path=args.output,
+        items=existing_items,
+        queries=query_rows,
+        handoff=handoff,
+        view_readiness=view_readiness,
+        data_only_comparison=data_only_comparison,
+        integrity=final_integrity,
+    )
     final_checksums = write_checksums(args.output)
     final_integrity = verify_checksums(args.output)
     if not final_integrity["passed"]:
