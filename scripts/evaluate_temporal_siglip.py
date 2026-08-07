@@ -16,6 +16,7 @@ from transformers import AutoProcessor
 
 from qcpr_siglip2.data.manifest import (
     group_rows_by_pair,
+    load_exact_core_rows,
     load_exact_pair_rows,
     ordered_id_sha256,
 )
@@ -95,8 +96,9 @@ def main() -> int:
     for required in (manifest, checkpoint, model_path, data_release):
         if not required.exists():
             raise FileNotFoundError(required)
+    all_rows = load_exact_core_rows(manifest, split="development")
     rows = load_exact_pair_rows(manifest, split="development")
-    groups = group_rows_by_pair(rows)
+    groups = group_rows_by_pair(all_rows)
     pair_rows = [group[0] for group in groups.values()]
     query_rows = rows
     device = torch.device("cuda")
