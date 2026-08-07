@@ -28,6 +28,7 @@ from qcpr_siglip2.training.exposure import ExposureLedger
 from qcpr_temporal_siglip.backbone import TemporalSigLIPBackbone
 from qcpr_temporal_siglip.checkpointing import build_checkpoint
 from qcpr_temporal_siglip.config import TemporalSigLIPConfig
+from qcpr_temporal_siglip.localization import TemporalSoftChangeMap
 from qcpr_temporal_siglip.model import TemporalSigLIP
 from qcpr_temporal_siglip.objective import symmetric_mult_positive_clip_loss
 from qcpr_temporal_siglip.trainer import build_optimizer
@@ -67,6 +68,108 @@ def write_sha256sums(run: Path) -> None:
             continue
         lines.append(f"{sha256(path)}  {path.relative_to(run).as_posix()}")
     (run / "SHA256SUMS").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def synchronize_cuda(device: torch.device) -> None:
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+
+
+def gradient_diagnostics(model: TemporalSigLIP) -> dict[str, Any]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for name, parameter in model.named_parameters():
+        group_name = "backbone" if name.startswith("backbone.") else name.split(".", 1)[0]
+        group = grouped.setdefault(
+            group_name,
+            {
+                "parameter_count": 0,
+                "trainable_count": 0,
+                "parameters_with_grad": 0,
+                "gradient_norm_squared": 0.0,
+                "gradient_min": None,
+                "gradient_max": None,
+                "gradient_finite_elements": 0,
+                "gradient_elements": 0,
+            },
+        )
+        group["parameter_count"] += parameter.numel()
+        if parameter.requires_grad:
+            group["trainable_count"] += parameter.numel()
+        if parameter.grad is None:
+            continue
+        group["parameters_with_grad"] += 1
+        values = parameter.grad.detach().float()
+        group["gradient_norm_squared"] += float(values.square().sum().cpu())
+        group["gradient_finite_elements"] += int(torch.isfinite(values).sum().cpu())
+        group["gradient_elements"] += values.numel()
+        minimum = float(values.min().cpu())
+        maximum = float(values.max().cpu())
+        group["gradient_min"] = (
+            minimum
+            if group["gradient_min"] is None
+            else min(float(group["gradient_min"]), minimum)
+        )
+        group["gradient_max"] = (
+            maximum
+            if group["gradient_max"] is None
+            else max(float(group["gradient_max"]), maximum)
+        )
+    for group in grouped.values():
+        group["gradient_norm"] = float(group.pop("gradient_norm_squared") ** 0.5)
+        elements = int(group["gradient_elements"])
+        group["finite_gradient_fraction"] = (
+            float(group["gradient_finite_elements"] / elements) if elements else 1.0
+        )
+    return {"modules": grouped}
+
+
+def checkpoint_roundtrip(
+    checkpoint: Path,
+    model: TemporalSigLIP,
+    config: TemporalSigLIPConfig,
+    frame_tokens: torch.Tensor,
+    text_tokens: torch.Tensor,
+    text_embeddings: torch.Tensor,
+    text_mask: torch.Tensor,
+    device: torch.device,
+) -> dict[str, Any]:
+    model.eval()
+    with torch.no_grad():
+        before = model.forward_from_features(
+            frame_tokens,
+            text_tokens,
+            text_embeddings,
+            text_mask,
+        ).score_matrix.detach().float()
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    if not isinstance(payload, dict) or "model_state" not in payload:
+        raise ValueError("checkpoint roundtrip payload is invalid")
+    model_state = payload["model_state"]
+    if not isinstance(model_state, dict):
+        raise ValueError("checkpoint model_state is invalid")
+    temporal_state = {
+        key: value for key, value in model_state.items() if not key.startswith("backbone.")
+    }
+    reloaded = TemporalSigLIP(config=config).to(device)
+    reloaded.load_state_dict(temporal_state, strict=True)
+    reloaded.eval()
+    with torch.no_grad():
+        after = reloaded.forward_from_features(
+            frame_tokens,
+            text_tokens,
+            text_embeddings,
+            text_mask,
+        ).score_matrix.detach().float()
+    maximum_absolute_difference = float((before - after).abs().max().cpu())
+    tolerance = 1e-5
+    return {
+        "status": "PASS" if maximum_absolute_difference <= tolerance else "FAIL",
+        "tolerance": tolerance,
+        "max_absolute_score_difference": maximum_absolute_difference,
+        "backbone_state_keys_in_checkpoint": sum(
+            1 for key in model_state if str(key).startswith("backbone.")
+        ),
+    }
 
 
 def git_state(worktree: Path) -> dict[str, Any]:
@@ -194,7 +297,10 @@ def logical_step(
     stage_b: bool,
     scheduler: torch.optim.lr_scheduler.LRScheduler,
 ) -> dict[str, Any]:
+    step_start = time.perf_counter()
     optimizer.zero_grad(set_to_none=True)
+    synchronize_cuda(device)
+    feature_start = time.perf_counter()
     frozen = encode_chunks(
         backbone,
         processor,
@@ -203,6 +309,8 @@ def logical_step(
         device=device,
         no_grad=True,
     )
+    synchronize_cuda(device)
+    feature_seconds = time.perf_counter() - feature_start
     endpoints = RawFeatureBatch(
         frame_tokens=frozen.frame_tokens.detach().requires_grad_(stage_b),
         frame_embeddings=frozen.frame_embeddings.detach().requires_grad_(stage_b),
@@ -210,6 +318,7 @@ def logical_step(
         text_embeddings=frozen.text_embeddings.detach().requires_grad_(stage_b),
         text_mask=frozen.text_mask.detach(),
     )
+    forward_start = time.perf_counter()
     output = model.forward_from_features(
         endpoints.frame_tokens,
         endpoints.text_tokens,
@@ -217,6 +326,9 @@ def logical_step(
         endpoints.text_mask,
     )
     loss = symmetric_mult_positive_clip_loss(output.score_matrix, positive, ignored)
+    synchronize_cuda(device)
+    forward_seconds = time.perf_counter() - forward_start
+    backward_start = time.perf_counter()
     loss.backward()
     endpoint_grads = (
         endpoints.frame_tokens.grad,
@@ -256,6 +368,8 @@ def logical_step(
                 + (recomputed.text_embeddings * text_embedding_grad[query_start:query_end]).sum()
             )
             surrogate.backward()
+    synchronize_cuda(device)
+    backward_seconds = time.perf_counter() - backward_start
     gradients = [
         parameter.grad.detach().float().reshape(-1)
         for parameter in model.parameters()
@@ -268,8 +382,11 @@ def logical_step(
         raise FloatingPointError("NONFINITE_GRADIENT")
     gradient_norm = float(flat.norm())
     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    optimizer_start = time.perf_counter()
     optimizer.step()
     scheduler.step()
+    synchronize_cuda(device)
+    optimizer_seconds = time.perf_counter() - optimizer_start
     return {
         "loss": float(loss.detach().cpu()),
         "score_shape": list(output.score_matrix.shape),
@@ -278,6 +395,11 @@ def logical_step(
         "pair_embedding_norm_mean": float(output.pair_embedding.detach().float().norm(dim=-1).mean()),
         "text_embedding_norm_mean": float(output.text_embedding.detach().float().norm(dim=-1).mean()),
         "stage_b_backbone_recomputed": stage_b,
+        "feature_seconds": feature_seconds,
+        "forward_seconds": forward_seconds,
+        "backward_seconds": backward_seconds,
+        "optimizer_step_seconds": optimizer_seconds,
+        "total_step_seconds": time.perf_counter() - step_start,
     }
 
 
@@ -292,6 +414,8 @@ def main() -> int:
         raise ValueError("logical batch must divide into physical microbatches")
     if args.captions_per_pair <= 0:
         raise ValueError("captions_per_pair must be positive")
+    if steps <= 0:
+        raise ValueError("steps must be positive")
     worktree = Path(__file__).resolve().parents[1]
     state = git_state(worktree)
     if state["head"] != args.expected_code_sha or not state["worktree_clean"]:
@@ -310,6 +434,7 @@ def main() -> int:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         if device.type != "cuda":
             raise RuntimeError("TEMPORAL_SIGLIP_TRAINING_REQUIRES_CUDA")
+        torch.cuda.reset_peak_memory_stats(device)
         torch.set_float32_matmul_precision("high")
         train_rows = load_exact_pair_rows(args.train_manifest, split="train")
         development_rows = load_exact_pair_rows(args.development_manifest, split="development")
@@ -397,6 +522,7 @@ def main() -> int:
         })
         ledger = ExposureLedger()
         metrics: list[dict[str, Any]] = []
+        last_batch: ExactBatch | None = None
         global_step = global_step_start
         total_start = time.perf_counter()
         milestone_steps = {0, 256, 512} if args.phase == "A" else {512, 1024, 2048}
@@ -408,6 +534,7 @@ def main() -> int:
                 step=local_step + global_step_start,
                 seed=args.seed,
             )
+            last_batch = batch
             positive, ignored, _ = build_relevance_masks(batch.query_rows, batch.pair_rows, device)
             step_result = logical_step(
                 model,
@@ -451,6 +578,94 @@ def main() -> int:
         )
         write_json(run / "exposure_accounting.json", ledger.to_dict())
         write_json(run / "metrics.json", {"rows": metrics})
+        with (run / "metrics.jsonl").open("w", encoding="utf-8") as handle:
+            for row in metrics:
+                handle.write(json.dumps(row, sort_keys=True) + "\n")
+        if last_batch is None:
+            raise RuntimeError("NO_TRAINING_BATCH_RECORDED")
+        final_features = encode_chunks(
+            backbone,
+            processor,
+            last_batch,
+            physical_batch_size=args.physical_batch_size,
+            device=device,
+            no_grad=True,
+        )
+        roundtrip = checkpoint_roundtrip(
+            checkpoint,
+            model,
+            config,
+            final_features.frame_tokens,
+            final_features.text_tokens,
+            final_features.text_embeddings,
+            final_features.text_mask,
+            device,
+        )
+        write_json(run / "checkpoint_roundtrip.json", roundtrip)
+        if roundtrip["status"] != "PASS":
+            raise RuntimeError("CHECKPOINT_ROUNDTRIP_MISMATCH")
+        gradient_report = gradient_diagnostics(model)
+        write_json(run / "gradient_diagnostics.json", gradient_report)
+        localizer = TemporalSoftChangeMap(config).to(device)
+        model.eval()
+        with torch.no_grad():
+            final_output = model.forward_from_features(
+                final_features.frame_tokens,
+                final_features.text_tokens,
+                final_features.text_embeddings,
+                final_features.text_mask,
+            )
+            local_output = localizer(
+                final_output.temporal_tokens[:2],
+                final_output.text_embedding[:2],
+            )
+            swapped_output = localizer(
+                final_output.temporal_tokens[:2],
+                final_output.text_embedding[:2].flip(0),
+            )
+        map_l1 = float(
+            (local_output.map_probabilities - swapped_output.map_probabilities)
+            .abs()
+            .mean()
+            .cpu()
+        )
+        write_json(run / "localization_metrics.json", {
+            "status": "DIAGNOSTIC_ONLY_NO_LOCALIZED_TRAINING_QUERIES",
+            "map_shape": list(local_output.map_logits.shape),
+            "query_swap_map_l1": map_l1,
+            "trainable_localization_parameters": sum(
+                parameter.numel() for parameter in localizer.parameters()
+            ),
+        })
+        write_json(run / "evidence_diagnostics.json", {
+            "primary_score_evidence_path": False,
+            "status": "NOT_APPLICABLE_DIRECT_GLOBAL_MODEL",
+            "post_retrieval_soft_map": True,
+            "map_is_training_objective": False,
+        })
+        timing_rows = metrics
+        average = lambda key: float(
+            sum(float(row[key]) for row in timing_rows) / len(timing_rows)
+        )
+        write_json(run / "runtime_profile.json", {
+            "steps": len(metrics),
+            "seconds_per_forward": average("forward_seconds"),
+            "seconds_per_backward": average("backward_seconds"),
+            "seconds_per_optimizer_step": average("optimizer_step_seconds"),
+            "seconds_per_feature_extraction": average("feature_seconds"),
+            "seconds_per_total_step": average("total_step_seconds"),
+            "number_of_visual_tokens": int(final_features.frame_tokens.shape[2]),
+            "number_of_text_tokens": int(final_features.text_tokens.shape[1]),
+            "score_matrix_shape": list(final_output.score_matrix.shape),
+            "image_and_text_decode_included_in_feature_seconds": True,
+        })
+        write_json(run / "cuda_memory.json", {
+            "gpu": torch.cuda.get_device_name(device),
+            "peak_allocated_gib": torch.cuda.max_memory_allocated(device) / (1024**3),
+            "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / (1024**3),
+            "current_allocated_gib": torch.cuda.memory_allocated(device) / (1024**3),
+            "current_reserved_gib": torch.cuda.memory_reserved(device) / (1024**3),
+        })
         write_json(run / "training_complete.json", {
             "status": "COMPLETED",
             "global_step": global_step,
