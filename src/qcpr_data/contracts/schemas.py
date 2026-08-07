@@ -12,6 +12,16 @@ from typing import Any, Mapping
 SPLITS = ("train", "development", "test")
 ITEM_TYPES = ("pair", "sequence")
 QUERY_SCOPES = ("exact", "semantic", "localized", "direction", "stable", "long_series")
+QUERY_CLASSIFICATIONS = (
+    "exact_discriminative",
+    "semantic_multi_positive",
+    "localized",
+    "direction_sensitive",
+    "stable_scene_specific",
+    "generic_no_change",
+    "long_series",
+    "unsupported_or_reject",
+)
 VERIFICATION_STATES = (
     "human",
     "human_rewritten",
@@ -130,6 +140,13 @@ class QueryRecord:
     training_enabled: bool
     split: str
     provenance: Mapping[str, Any] = field(default_factory=dict)
+    query_classification: str | None = None
+    candidate_training_enabled: bool = False
+    training_gate: str | None = None
+    source_pair_id: str | None = None
+    roles: tuple[str, ...] = ()
+    attributes: Mapping[str, Any] = field(default_factory=dict)
+    caption_provenance: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "QueryRecord":
@@ -137,6 +154,7 @@ class QueryRecord:
             query_id=str(value["query_id"]),
             text=str(value["text"]),
             query_scope=str(value["query_scope"]),
+            query_classification=_optional_string(value.get("query_classification")),
             source_item_id=str(value["source_item_id"]),
             positive_item_ids=tuple(str(item) for item in value["positive_item_ids"]),
             graded_relevance={str(k): int(v) for k, v in dict(value.get("graded_relevance") or {}).items()},
@@ -146,6 +164,12 @@ class QueryRecord:
             training_enabled=bool(value["training_enabled"]),
             split=str(value["split"]),
             provenance=dict(value.get("provenance") or {}),
+            candidate_training_enabled=bool(value.get("candidate_training_enabled", False)),
+            training_gate=_optional_string(value.get("training_gate")),
+            source_pair_id=_optional_string(value.get("source_pair_id") or value.get("source_item_id")),
+            roles=tuple(str(role) for role in value.get("roles") or ()),
+            attributes=dict(value.get("attributes") or {}),
+            caption_provenance=dict(value.get("caption_provenance") or {}),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -153,6 +177,7 @@ class QueryRecord:
             "query_id": self.query_id,
             "text": self.text,
             "query_scope": self.query_scope,
+            "query_classification": self.query_classification,
             "source_item_id": self.source_item_id,
             "positive_item_ids": list(self.positive_item_ids),
             "graded_relevance": dict(self.graded_relevance),
@@ -162,6 +187,12 @@ class QueryRecord:
             "training_enabled": self.training_enabled,
             "split": self.split,
             "provenance": dict(self.provenance),
+            "candidate_training_enabled": self.candidate_training_enabled,
+            "training_gate": self.training_gate,
+            "source_pair_id": self.source_pair_id,
+            "roles": list(self.roles),
+            "attributes": dict(self.attributes),
+            "caption_provenance": dict(self.caption_provenance),
         }
 
 
