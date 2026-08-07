@@ -53,7 +53,7 @@
   "executable_smoke_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "661 passed, 3 skipped, 16 warnings",
+    "full_pytest": "664 passed, 3 skipped, 16 warnings (last completed verification before report-only commit)",
     "ruff": "NOT_INSTALLED_ON_CLUSTER; compileall and Pyright passed",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
