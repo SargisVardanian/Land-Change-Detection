@@ -2,6 +2,8 @@
   "evaluated_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
   "status": "PROVISIONAL_STAGE_B_SELECTED_PENDING_FINAL_DATASET_HANDOFF",
   "selected_architecture": "TemporalSigLIP_STAGE_B",
+  "selected_resolution": "SIGLIP2_B16_256",
+  "resolution_status": "PROVISIONAL_KEEP_NO_SMALL_OBJECT_DEFICIT_EVIDENCE",
   "selected_checkpoint": {
     "step": 1024,
     "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_stage_b_1536_eb96463_20260808/checkpoint_step_1024.pt",
