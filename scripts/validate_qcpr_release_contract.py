@@ -75,10 +75,20 @@ def main() -> int:
     query_errors: list[str] = []
     forbidden: list[dict[str, Any]] = []
     duplicate_ids: list[str] = []
+    projection_repeats: Counter[str] = Counter()
+    rows_by_query_id: dict[str, list[tuple[str, dict[str, Any]]]] = {}
     for path in manifests:
         rows = read_jsonl(path)
+        local_ids = Counter(str(row.get("query_id")) for row in rows)
+        duplicate_ids.extend(
+            f"{path.name}:{query_id}"
+            for query_id, count in local_ids.items()
+            if count > 1
+        )
         for index, row in enumerate(rows, start=1):
             query_rows.append(row)
+            query_id = str(row.get("query_id"))
+            rows_by_query_id.setdefault(query_id, []).append((path.name, row))
             for hit in forbidden_key_hits(row):
                 forbidden.append({"manifest": str(path.relative_to(root)), "row": index, **hit})
             try:
@@ -91,8 +101,24 @@ def main() -> int:
             except (KeyError, TypeError, ValueError) as exc:
                 query_errors.append(f"{path.name}:{index}: parse error: {exc}")
     counts = Counter(str(row.get("query_scope")) for row in query_rows)
-    ids = Counter(str(row.get("query_id")) for row in query_rows)
-    duplicate_ids = sorted(query_id for query_id, count in ids.items() if count > 1)
+    projection_conflicts: list[str] = []
+    projection_only_keys = {"view_scope", "view_status"}
+    for query_id, records in rows_by_query_id.items():
+        if len(records) < 2:
+            continue
+        projection_repeats[query_id] = len(records)
+        canonical_rows = {
+            json.dumps(
+                {key: value for key, value in row.items() if key not in projection_only_keys},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            for _, row in records
+        }
+        if len(canonical_rows) > 1:
+            projection_conflicts.append(query_id)
+    duplicate_ids = sorted(set(duplicate_ids))
+    projection_conflicts.sort()
     decode_failures = _decode_sample(physical_rows, args.decode_sample)
     checksums = verify_sha256sums(root)
     result = {
@@ -106,11 +132,13 @@ def main() -> int:
         "physical_errors": physical_errors,
         "query_errors": query_errors,
         "duplicate_query_ids": duplicate_ids,
+        "projection_repeat_query_count": len(projection_repeats),
+        "projection_conflicts": projection_conflicts,
         "decode_sample_limit": args.decode_sample,
         "decode_failures": decode_failures,
         "mask_free_forbidden_key_hits": forbidden,
         "sha256sums": checksums,
-        "passed": not physical_errors and not query_errors and not duplicate_ids and not decode_failures and not forbidden and checksums.get("passed", False),
+        "passed": not physical_errors and not query_errors and not duplicate_ids and not projection_conflicts and not decode_failures and not forbidden and checksums.get("passed", False),
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
