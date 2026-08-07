@@ -103,6 +103,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         *,
         pixel_attention_mask: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
+        content_mask: Tensor | None = None,
         timestamps: Tensor | None = None,
     ) -> RetrievalForwardOutput:
         if self.backbone is None:
@@ -112,7 +113,11 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             pixel_attention_mask=pixel_attention_mask,
             spatial_shapes=spatial_shapes,
         )
-        text: TextEncoding = self.backbone.encode_text(input_ids, attention_mask)
+        text: TextEncoding = self.backbone.encode_text(
+            input_ids,
+            attention_mask,
+            content_mask=content_mask,
+        )
         return self.forward_from_features(
             image.patch_tokens,
             image.pooled_embedding,
