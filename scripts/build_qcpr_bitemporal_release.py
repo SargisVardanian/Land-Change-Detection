@@ -480,7 +480,12 @@ def source_completeness(items: list[dict[str, Any]]) -> tuple[dict[str, Any], st
         if item.get("source") != "levir_mci":
             continue
         prov = item.get("provenance") if isinstance(item.get("provenance"), Mapping) else {}
-        current_levir.add(f"{prov.get('source_split') or item.get('split')}:{str(prov.get('source_pair_id') or item.get('item_id')).split('/')[-1]}")
+        item_key = str(prov.get("source_pair_id") or item.get("item_id"))
+        if item_key.startswith("levir_mci:"):
+            item_key = item_key.split(":", 1)[1]
+        if item_key.split(":", 1)[0] in {"train", "val", "test", "development"} and ":" in item_key:
+            item_key = item_key.split(":", 1)[1]
+        current_levir.add(f"{prov.get('source_split') or item.get('split')}:{item_key.split('/')[-1]}")
     missing: list[dict[str, Any]] = [
         {
             "source": "LEVIR-MCI / LEVIR-CC",
