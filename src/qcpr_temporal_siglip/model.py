@@ -85,7 +85,8 @@ class TemporalSigLIP(nn.Module):
         score_dtype = torch.promote_types(text.dtype, pair.dtype)
         text = text.to(dtype=score_dtype)
         pair = pair.to(dtype=score_dtype)
-        return self.effective_logit_scale * (text @ pair.transpose(0, 1))
+        scale = self.effective_logit_scale.to(device=text.device, dtype=score_dtype)
+        return scale * (text @ pair.transpose(0, 1))
 
     def forward_from_features(
         self,
