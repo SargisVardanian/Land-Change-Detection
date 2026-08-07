@@ -152,7 +152,7 @@ class TemporalSigLIP(nn.Module):
             "temporal_pair": self.temporal_pair,
             "logit_scale": nn.ParameterList([self.logit_scale]),
         }
-        report: dict[str, dict[str, int]] = {}
+        report: dict[str, dict[str, Any]] = {}
         for name, module in names.items():
             parameters = list(module.parameters())
             report[name] = {
