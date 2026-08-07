@@ -293,7 +293,17 @@ def build_batch_audit(base: Path) -> dict[str, Any]:
 
 def build_core_source_completeness(base: Path) -> dict[str, Any]:
     audit = load_json(base / "source_completeness_audit.json")
-    official = audit.get("official_vs_current", {})
+    official_raw = audit.get("official_vs_current", {})
+    if isinstance(official_raw, list):
+        official = {
+            str(row.get("source", index)): row
+            for index, row in enumerate(official_raw)
+            if isinstance(row, dict)
+        }
+    elif isinstance(official_raw, dict):
+        official = official_raw
+    else:
+        official = {}
     missing = audit.get("missing_items", [])
     classes = [
         "INTENTIONALLY_EXCLUDED",
