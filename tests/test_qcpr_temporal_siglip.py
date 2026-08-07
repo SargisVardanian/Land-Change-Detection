@@ -115,6 +115,16 @@ def test_localization_is_post_retrieval_and_has_one_trainable_scalar():
     assert torch.isfinite(temporal.grad).all()
 
 
+def test_localization_promotes_mixed_bfloat16_and_float32_features():
+    config = _config()
+    localizer = TemporalSoftChangeMap(config)
+    temporal = torch.randn(2, 2, 4, 16, dtype=torch.bfloat16)
+    text = torch.randn(2, 16, dtype=torch.float32)
+    output = localizer(temporal, text)
+    assert output.map_logits.dtype == torch.bfloat16
+    assert torch.isfinite(output.map_logits).all()
+
+
 def test_direct_evaluator_has_top10_primary_and_no_reranker_contract():
     scores = torch.tensor([[4.0, 3.0, 2.0], [1.0, 5.0, 0.0]])
     exact = torch.tensor([[True, False, False], [False, True, False]])

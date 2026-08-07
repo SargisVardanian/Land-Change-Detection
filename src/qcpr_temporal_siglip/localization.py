@@ -55,7 +55,7 @@ class TemporalSoftChangeMap(nn.Module):
             temporal_tokens[:, 1:] - temporal_tokens[:, :-1],
             (hidden,),
         )
-        text = F.normalize(text_embedding, dim=-1)
+        text = F.normalize(text_embedding, dim=-1).to(dtype=changes.dtype)
         logits = torch.einsum("bihd,bd->bih", changes, text)
         logits = logits / self.localization_temperature.to(dtype=logits.dtype)
         logits = logits.reshape(batch, frames - 1, self.patch_grid, self.patch_grid)
