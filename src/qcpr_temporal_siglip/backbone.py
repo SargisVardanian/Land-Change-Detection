@@ -82,7 +82,7 @@ class TemporalSigLIPBackbone(nn.Module):
             content_mask=content_mask,
         )
 
-    def trainable_scope(self) -> dict[str, int]:
+    def trainable_scope(self) -> dict[str, int | str]:
         vision = list(self.encoder.vision_model.parameters())
         text = list(self.encoder.text_model.parameters())
         return {
