@@ -4,7 +4,7 @@
     "name": "TemporalSigLIP",
     "package": "src/qcpr_temporal_siglip",
     "status": "IMPLEMENTED_CPU_CONTRACT_NOT_GPU_AUTHORIZED",
-    "published_code_sha": "3e7801aa360e7868e0ea1b4ea7b543ea05c338ea",
+    "published_code_sha": "a6f6ecdcfdc5d73c8720b36904b0e4c06ab4f377",
     "historical_bounded_run_code_sha": "c2341fc5dac1c74a69e68a72c32ab344a52628b6",
     "primary_backbone": "google/siglip2-base-patch16-256",
     "comparison_backbone": "Zilun/GeoRSCLIP",
