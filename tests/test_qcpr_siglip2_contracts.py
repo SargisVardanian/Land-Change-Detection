@@ -414,6 +414,40 @@ def test_temporal_adapter_supports_variable_sequence_lengths_and_reversal():
     assert torch.allclose(forward.pair_cls, restored.pair_cls)
 
 
+def test_minimal_temporal_adapter_has_one_pair_token_and_no_frame_cls_tokens():
+    adapter = TemporalTransformerAdapter(Siglip2TemporalConfig())
+    assert not hasattr(adapter, "frame_type")
+    assert all("frame_type" not in name for name, _ in adapter.named_parameters())
+    output = adapter(
+        torch.randn(1, 2, 256, 768),
+        torch.randn(1, 2, 768),
+    )
+    assert output.temporal_patch_tokens.shape == (1, 512, 768)
+    assert not hasattr(output, "frame_cls")
+
+
+def test_text_evidence_mask_excludes_padding_and_special_tokens():
+    class Tokenizer:
+        pad_token_id = 0
+        all_special_ids = [0, 1, 2]
+
+    class Processor:
+        tokenizer = Tokenizer()
+
+        def __call__(self, *, text, return_tensors, padding):
+            del text, return_tensors, padding
+            ids = torch.tensor([[1, 11, 12, 2, 0]])
+            return {"input_ids": ids, "attention_mask": ids.ne(0)}
+
+    from qcpr_siglip2.data.runtime import processor_text_inputs
+
+    result = processor_text_inputs(
+        Processor(), [{"caption": "a building appeared"}], torch.device("cpu")
+    )
+    assert result["attention_mask"].tolist() == [[False, True, True, False, False]]
+    assert result["content_mask"].tolist() == [[False, True, True, False, False]]
+
+
 def test_temporal_gradient_checkpointing_preserves_backward_contract():
     config = Siglip2TemporalConfig(gradient_checkpointing=True)
     adapter = TemporalTransformerAdapter(config)

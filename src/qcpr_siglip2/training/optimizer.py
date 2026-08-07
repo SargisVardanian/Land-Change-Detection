@@ -21,7 +21,6 @@ def _no_decay(name: str) -> bool:
         or "layernorm" in lowered
         or ".norm" in lowered
         or "frame_position" in lowered
-        or "frame_type" in lowered
         or "patch_type" in lowered
         or "spatial_position" in lowered
         or "time_projection" in lowered

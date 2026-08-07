@@ -47,7 +47,6 @@ class LayerScaleTransformerBlock(nn.Module):
 @dataclass
 class TemporalAdapterOutput:
     pair_cls: Tensor
-    frame_cls: Tensor
     temporal_patch_tokens: Tensor
     pair_initial: Tensor
     frame_count: int
@@ -64,7 +63,6 @@ class TemporalTransformerAdapter(nn.Module):
         self.frame_position = nn.Parameter(
             torch.zeros(config.max_frames, config.hidden_size)
         )
-        self.frame_type = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
         self.patch_type = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
         self.spatial_position = nn.Parameter(
             torch.zeros(1, config.hidden_size, config.base_grid, config.base_grid)
@@ -134,18 +132,16 @@ class TemporalTransformerAdapter(nn.Module):
         for i in range(t):
             frame_bias = self.frame_position[i].view(1, 1, -1).to(frame_tokens.dtype)
             time = time_bias[:, i : i + 1]
-            seq.extend(
-                (
-                    frame_embeddings[:, i : i + 1]
-                    + frame_bias
-                    + self.frame_type.to(frame_tokens.dtype)
-                    + time,
-                    frame_tokens[:, i]
-                    + spatial
-                    + self.patch_type.to(frame_tokens.dtype)
-                    + frame_bias
-                    + time,
-                )
+            # The minimal track has exactly one pair token.  Frame identity
+            # and time metadata are carried by the dense tokens; adding a
+            # pooled token per frame would silently reintroduce FRAME_CLS
+            # tokens and change the agreed architecture.
+            seq.append(
+                frame_tokens[:, i]
+                + spatial
+                + self.patch_type.to(frame_tokens.dtype)
+                + frame_bias
+                + time
             )
         hidden = torch.cat(seq, dim=1)
         for block in self.blocks:
@@ -154,16 +150,13 @@ class TemporalTransformerAdapter(nn.Module):
             else:
                 hidden = block(hidden)
         pair = F.normalize(hidden[:, 0], dim=-1)
-        frames = []
         patches = []
         offset = 1
         for _ in range(t):
-            frames.append(hidden[:, offset])
-            patches.append(hidden[:, offset + 1 : offset + 1 + n])
-            offset += 1 + n
+            patches.append(hidden[:, offset : offset + n])
+            offset += n
         return TemporalAdapterOutput(
             pair,
-            torch.stack(frames, dim=1),
             torch.cat(patches, dim=1),
             pair_initial,
             t,

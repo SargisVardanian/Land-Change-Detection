@@ -118,9 +118,17 @@ class GeoRSCLIPBackbone(nn.Module):
             pooled_embedding=pooled.reshape(batch, frames, pooled.shape[-1]),
         )
 
-    def encode_text(self, input_ids: Tensor, attention_mask: Tensor) -> TextEncoding:
+    def encode_text(
+        self,
+        input_ids: Tensor,
+        attention_mask: Tensor,
+        *,
+        content_mask: Tensor | None = None,
+    ) -> TextEncoding:
         if input_ids.ndim != 2 or attention_mask.shape != input_ids.shape:
             raise ValueError("input_ids and attention_mask must be [B,L]")
+        if content_mask is not None and content_mask.shape != input_ids.shape:
+            raise ValueError("content_mask must match input_ids")
         model = self.model
         with torch.no_grad():
             # Current OpenCLIP builds use batch-first transformer blocks.  Do
@@ -137,7 +145,8 @@ class GeoRSCLIPBackbone(nn.Module):
                 x = x @ model.text_projection
             eot_index = input_ids.argmax(dim=-1)
             pooled = x[torch.arange(x.shape[0], device=x.device), eot_index]
-        return TextEncoding(x, pooled, attention_mask.bool())
+        evidence_mask = attention_mask if content_mask is None else content_mask
+        return TextEncoding(x, pooled, evidence_mask.bool())
 
     def parameter_scope_report(self) -> dict[str, Any]:
         return {

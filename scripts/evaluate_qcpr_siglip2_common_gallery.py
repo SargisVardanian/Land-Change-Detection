@@ -266,7 +266,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-code-sha", required=True)
     parser.add_argument("--gallery-batch-size", type=int, default=8)
     parser.add_argument("--query-batch-size", type=int, default=64)
-    parser.add_argument("--rerank-query-batch-size", type=int, default=4)
+    parser.add_argument("--rerank-query-batch-size", type=int, default=1)
     parser.add_argument("--rerank-k", type=int, action="append", default=None)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     args = parser.parse_args()

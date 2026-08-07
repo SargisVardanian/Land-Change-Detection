@@ -242,13 +242,22 @@ class Siglip2Backbone(nn.Module):
             raise ValueError("native SigLIP-2 output dimension mismatch")
         return ImageEncoding(tokens, pooled)
 
-    def encode_text(self, input_ids: Tensor, attention_mask: Tensor) -> TextEncoding:
+    def encode_text(
+        self,
+        input_ids: Tensor,
+        attention_mask: Tensor,
+        *,
+        content_mask: Tensor | None = None,
+    ) -> TextEncoding:
         output = self._text_forward(input_ids, attention_mask)
         tokens = output.last_hidden_state
         pooled = output.pooler_output
         if tokens.shape[-1] != self.hidden_size or pooled.shape[-1] != self.hidden_size:
             raise ValueError("native SigLIP-2 text dimension mismatch")
-        return TextEncoding(tokens, pooled, attention_mask.bool())
+        evidence_mask = attention_mask if content_mask is None else content_mask
+        if evidence_mask.shape != input_ids.shape:
+            raise ValueError("content_mask must match input_ids")
+        return TextEncoding(tokens, pooled, evidence_mask.bool())
 
     def parameter_scope_report(self) -> dict[str, Any]:
         def report(module: nn.Module) -> dict[str, int | bool]:

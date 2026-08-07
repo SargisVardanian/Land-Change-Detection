@@ -103,8 +103,13 @@ def processor_text_inputs(
     if attention_mask is None:
         pad_id = getattr(getattr(processor, "tokenizer", None), "pad_token_id", 0)
         attention_mask = input_ids.ne(0 if pad_id is None else int(pad_id))
+    content_mask = attention_mask.bool()
+    special_ids = getattr(getattr(processor, "tokenizer", None), "all_special_ids", ())
+    for token_id in special_ids or ():
+        content_mask = content_mask & input_ids.ne(int(token_id))
     text_inputs["input_ids"] = input_ids.to(device)
     text_inputs["attention_mask"] = attention_mask.to(device)
+    text_inputs["content_mask"] = content_mask.to(device)
     return {
         key: value.to(device) if isinstance(value, Tensor) else value
         for key, value in text_inputs.items()
@@ -139,7 +144,9 @@ def encode_real_text(
     context = torch.no_grad() if no_grad else nullcontext()
     with context, _device_autocast(device, dtype):
         return backbone.encode_text(
-            text_inputs["input_ids"], text_inputs["attention_mask"]
+            text_inputs["input_ids"],
+            text_inputs["attention_mask"],
+            content_mask=text_inputs["content_mask"],
         )
 
 
