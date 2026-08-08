@@ -10,7 +10,7 @@
     },
     "exact_training_integrity": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/exact_training_integrity_audit.json",
-      "sha256": "37e322963a1f3348479f5c22c2abdda79b1572c7d0109838dfde7564cb9fbb48"
+      "sha256": "07c93ddac52ffd47b85fef78d65383689b83e7caae3753fe453fa56a7d661339"
     },
     "full_path_decode": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/full_path_decode_audit.json",
@@ -36,6 +36,8 @@
   "core_benchmark_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_core_benchmark_v1_r18",
   "core_benchmark_sha256sums": "ac213877e93bd0ceb689b460451cfa42c0df1fd014d5d06aa7dc33334ba0d329",
   "counts": {
+    "calibration_decisions_completed": 0,
+    "calibration_decisions_required": 1500,
     "canonical_queries": 32284,
     "direction_query_count": 26036,
     "direction_query_counts_by_split": {
@@ -43,7 +45,9 @@
       "test": 724,
       "train": 22310
     },
+    "direction_training_enabled": false,
     "disabled_generic_no_change_rows": 48870,
+    "exact_training_enabled": false,
     "exact_training_query_counts_by_source": {
       "levir_mci": 9898,
       "second_cc": 13226
@@ -68,7 +72,7 @@
     "verified_exact_queries": 23124
   },
   "dataset_branch": "codex/qcpr-dataset-v2-final",
-  "dataset_code_sha": "9d4ae52bb946218b9b359a337ca3ac3c1afa3f02",
+  "dataset_code_sha": "9133aa1df72eeeaef7965768db72d0784e399183",
   "extension_benchmark_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_extension_benchmark_v1_r18",
   "extension_benchmark_sha256sums": "dee35eb9834452d86c442efcec11908fd94144e7038dd36061d80e46198dba42",
   "manifests": {
@@ -82,7 +86,7 @@
     },
     "direction_train": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/direction_train.jsonl",
-      "sha256": "1376ed7e0b42b3bf035f624eecc8e2c186d389ca27ca5561b1d33537ef6c08ff"
+      "sha256": "3e980eae6840dcd5eadfd33b51c689999c9d3847cf6a122cc5ca17734d101d25"
     },
     "exact_development": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/exact_development.jsonl",
@@ -94,7 +98,7 @@
     },
     "exact_train": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/exact_train.jsonl",
-      "sha256": "93d2af1fb7746159db00185fcba038c83c501d6367c62516ef67d36622d1e934"
+      "sha256": "3a32298e89d92ee9bfbfe7c78d224714173ae95fe9238d1cc5b6c8098f3ea930"
     },
     "localized_development": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/localized_development.jsonl",
@@ -149,17 +153,18 @@
   "model_contract_sha256": "da593c1c72d2edede5d22045104c0b8a38d7854b66f7fa51e055cc06b053c5b0",
   "model_instruction": "Model Agent must consume this handoff as the sole final dataset contract; do not infer readiness or counts from legacy reports.",
   "readiness": {
-    "AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING": true,
+    "AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING": false,
     "BITEMPORAL_EXACT_READY": {
-      "decision": true,
+      "decision": false,
       "evidence": [
         "exact_training_integrity_audit.json",
         "real_batch_relevance_audit.json",
         "core_benchmark_integrity.json",
+        "tier_a_calibration_audit.json",
         "audits/validate_qcpr_release_contract.json"
       ],
-      "status": "READY_FINAL_EXACT_CORE",
-      "training_enabled": true
+      "status": "HOLD_EXACT_SCOPE_PRECISION_GATE",
+      "training_enabled": false
     },
     "DUBAI_EXTERNAL_READY": {
       "decision": false,
@@ -243,7 +248,19 @@
       "status": "HOLD_STABLE_HUMAN_GATE",
       "training_enabled": false
     },
+    "calibration_gate": {
+      "ci95": null,
+      "completed_decisions": 0,
+      "exact_scope_precision": null,
+      "explicit_gate_pass": false,
+      "metrics_complete": false,
+      "passed": false,
+      "reason": "human calibration decisions incomplete: 0/1500",
+      "required_decisions": 1500,
+      "status": "HOLD_EXACT_SCOPE_PRECISION_GATE"
+    },
     "gate_inputs": {
+      "calibration_passed": false,
       "core_benchmark_passed": true,
       "exact_training_integrity_passed": true,
       "full_path_decode_passed": true,
@@ -316,7 +333,7 @@
   },
   "release_name": "QCPR_BITEMPORAL_V2_TRAIN",
   "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18",
-  "release_sha256sums": "ed9351ad236ea0adc402123a475be559778e0b5f4e42ab5cae58d7aad0496d09",
+  "release_sha256sums": "d3fd0b4544ef733fd697f20e373ee8b47f41471fc59353a2bedf176e15bc3bac",
   "request_id": "QCPR_DATASET_V2_RETRIEVAL_SEMANTIC_REPAIR_FINAL_SYNC_R18",
   "schema_version": "qcpr-dataset-final-to-model-v1",
   "training_launched": false

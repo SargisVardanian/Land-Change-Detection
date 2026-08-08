@@ -27,7 +27,7 @@
     }
   },
   "dataset_final_handoff_path": "/mnt/weka/svardanyan/rs_change_project/code/project-qcpr-dataset-v2-final/contracts/qcpr_shared/handoff/dataset_final_to_model.json",
-  "dataset_final_handoff_sha256": "6ddbe03cc8548c58ee94d25d629206e45447f145d7d466a94278518c676503fc",
+  "dataset_final_handoff_sha256": "b60262ebf489544320f47722b7025d6bfa8087b2ba1c085f7638faaa4d174da2",
   "dataset_head_sha": "4efb00fd8a0bdf82e457ad17d717357f8dbc9a27",
   "direction": {
     "development_queries": 2184,
@@ -52,17 +52,18 @@
   "extension_benchmark_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_extension_benchmark_v1_r18",
   "extension_benchmark_sha256": "dee35eb9834452d86c442efcec11908fd94144e7038dd36061d80e46198dba42",
   "final_readiness": {
-    "AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING": true,
+    "AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING": false,
     "BITEMPORAL_EXACT_READY": {
-      "decision": true,
+      "decision": false,
       "evidence": [
         "exact_training_integrity_audit.json",
         "real_batch_relevance_audit.json",
         "core_benchmark_integrity.json",
+        "tier_a_calibration_audit.json",
         "audits/validate_qcpr_release_contract.json"
       ],
-      "status": "READY_FINAL_EXACT_CORE",
-      "training_enabled": true
+      "status": "HOLD_EXACT_SCOPE_PRECISION_GATE",
+      "training_enabled": false
     },
     "DUBAI_EXTERNAL_READY": {
       "decision": false,
@@ -146,7 +147,19 @@
       "status": "HOLD_STABLE_HUMAN_GATE",
       "training_enabled": false
     },
+    "calibration_gate": {
+      "ci95": null,
+      "completed_decisions": 0,
+      "exact_scope_precision": null,
+      "explicit_gate_pass": false,
+      "metrics_complete": false,
+      "passed": false,
+      "reason": "human calibration decisions incomplete: 0/1500",
+      "required_decisions": 1500,
+      "status": "HOLD_EXACT_SCOPE_PRECISION_GATE"
+    },
     "gate_inputs": {
+      "calibration_passed": false,
       "core_benchmark_passed": true,
       "exact_training_integrity_passed": true,
       "full_path_decode_passed": true,
@@ -157,7 +170,7 @@
     "schema_version": "qcpr-final-readiness-states-v1",
     "training_launched": false
   },
-  "final_training_authorized": true,
+  "final_training_authorized": false,
   "limitations": [
     "All six final views are non-empty and immutable, but every row is training-disabled pending review/evaluation gates.",
     "The exact view is a candidate view only; no exact-scope precision or 95% CI is available until the 300-row review is completed.",
@@ -250,10 +263,10 @@
     "relevance_graph_sha256": "7d523e1165119cd11a3f9ffd00b2f010d09b3581e84e2d9a07d55c7e91b2c187",
     "training_enabled": 0
   },
-  "release_code_sha": "9d4ae52bb946218b9b359a337ca3ac3c1afa3f02",
+  "release_code_sha": "9133aa1df72eeeaef7965768db72d0784e399183",
   "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18",
-  "release_sha256": "ed9351ad236ea0adc402123a475be559778e0b5f4e42ab5cae58d7aad0496d09",
-  "release_state": "FINAL_EXACT_AUTHORIZED_EXTENSION_HOLD",
+  "release_sha256": "d3fd0b4544ef733fd697f20e373ee8b47f41471fc59353a2bedf176e15bc3bac",
+  "release_state": "FINAL_EXACT_HOLD",
   "schema_version": "qcpr-dataset-capabilities-v2-final",
   "semantic": {
     "development_queries": 3765,
