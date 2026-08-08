@@ -913,6 +913,84 @@ def build_extension_benchmark(base: Path, release: Path, destination: Path) -> d
     return {"path": str(destination), "sha256": sha256_file(destination / "SHA256SUMS"), "metadata": metadata}
 
 
+def calibration_gate(release: Path) -> dict[str, Any]:
+    """Require completed human calibration before enabling any exact-loss view."""
+    path = release / "tier_a_calibration_audit.json"
+    if not path.exists():
+        return {
+            "passed": False,
+            "status": "HOLD_CALIBRATION_AUDIT_MISSING",
+            "required_decisions": 0,
+            "completed_decisions": 0,
+            "exact_scope_precision": None,
+            "ci95": None,
+            "explicit_gate_pass": False,
+            "reason": "tier_a_calibration_audit.json is missing",
+        }
+    audit = load_json(path)
+    strata = audit.get("required_strata") or list((audit.get("required_sample_counts") or {}).keys())
+    required_per = int(audit.get("required_per_stratum", 0) or 0)
+    required_total = required_per * len(strata)
+    if not required_total:
+        required_total = sum(int(value or 0) for value in (audit.get("required_sample_counts") or {}).values())
+    completed = int(audit.get("reviewer_decisions_completed", 0) or 0)
+    if not completed:
+        completed = sum(int(value or 0) for value in (audit.get("decision_counts") or {}).values())
+    metrics = audit.get("metrics") or {}
+    precision = metrics.get("exact_scope_precision")
+    ci95 = metrics.get("ci95")
+    if ci95 is None:
+        ci95 = metrics.get("exact_scope_precision_95_ci")
+    required_metrics = (
+        "exact_scope_precision",
+        "false_exact_rate",
+        "generic_contamination",
+        "semantic_false_negative_rate",
+        "average_positive_set_size",
+        "collision_rate",
+    )
+    metrics_complete = precision is not None and ci95 is not None and all(metrics.get(name) is not None for name in required_metrics)
+    exact_gate = audit.get("exact_gate") or {}
+    explicit_pass = exact_gate.get("passes") is True or audit.get("status") == "PASS_EXACT_SCOPE_PRECISION_GATE"
+    passed = bool(explicit_pass and completed >= required_total and metrics_complete)
+    if passed:
+        reason = "required human calibration is complete and the explicit exact-scope precision gate passes"
+    elif completed < required_total:
+        reason = f"human calibration decisions incomplete: {completed}/{required_total}"
+    elif not metrics_complete:
+        reason = "required calibration metrics are incomplete"
+    else:
+        reason = "exact-scope precision gate is not explicitly passed"
+    return {
+        "passed": passed,
+        "status": "PASS_EXACT_SCOPE_PRECISION_GATE" if passed else "HOLD_EXACT_SCOPE_PRECISION_GATE",
+        "required_decisions": required_total,
+        "completed_decisions": completed,
+        "exact_scope_precision": precision,
+        "ci95": ci95,
+        "explicit_gate_pass": explicit_pass,
+        "metrics_complete": metrics_complete,
+        "reason": reason,
+    }
+
+
+def apply_exact_training_gate(release: Path, enabled: bool) -> None:
+    """Keep exact and direction train projections disabled until calibration passes."""
+    for scope in ("exact", "direction"):
+        path = release / "manifests" / f"{scope}_train.jsonl"
+        if not path.exists():
+            continue
+        rows = load_jsonl(path)
+        changed = False
+        for row in rows:
+            value = bool(enabled)
+            if row.get("training_enabled") != value:
+                row["training_enabled"] = value
+                changed = True
+        if changed:
+            write_jsonl(path, rows)
+
+
 def build_readiness(
     release: Path,
     core: dict[str, Any],
@@ -925,10 +1003,14 @@ def build_readiness(
 ) -> dict[str, Any]:
     core_passed = core["integrity"]["status"] == "PASS"
     batch_passed = all(batch["pass_conditions"].values())
-    exact_passed = core_passed and batch_passed and path_audit.get("status", "").startswith("PASS") and reversed_audit.get("passed", False) and exact_audit.get("passed", False) and validator_passed
+    exact_integrity_passed = core_passed and batch_passed and path_audit.get("status", "").startswith("PASS") and reversed_audit.get("passed", False) and exact_audit.get("passed", False) and validator_passed
+    calibration = calibration_gate(release)
+    exact_passed = exact_integrity_passed and calibration["passed"]
+    exact_status = "READY_FINAL_EXACT_CORE" if exact_passed else ("HOLD_EXACT_SCOPE_PRECISION_GATE" if exact_integrity_passed else "HOLD_FINAL_EXACT_INTEGRITY")
     return {
         "schema_version": "qcpr-final-readiness-states-v1",
-        "BITEMPORAL_EXACT_READY": {"decision": exact_passed, "status": "READY_FINAL_EXACT_CORE" if exact_passed else "HOLD_FINAL_EXACT_INTEGRITY", "training_enabled": exact_passed, "evidence": ["exact_training_integrity_audit.json", "real_batch_relevance_audit.json", "core_benchmark_integrity.json", "audits/validate_qcpr_release_contract.json"]},
+        "calibration_gate": calibration,
+        "BITEMPORAL_EXACT_READY": {"decision": exact_passed, "status": exact_status, "training_enabled": exact_passed, "evidence": ["exact_training_integrity_audit.json", "real_batch_relevance_audit.json", "core_benchmark_integrity.json", "tier_a_calibration_audit.json", "audits/validate_qcpr_release_contract.json"]},
         "SEMANTIC_EVAL_READY": {"decision": False, "status": "HOLD_IMMUTABLE_HUMAN_ADJUDICATION_MISSING", "training_enabled": False, "evidence": ["extension/extension_readiness.json", "extension/evaluation/semantic_human_adjudication.jsonl"]},
         "SEMANTIC_TRAIN_READY": {"decision": False, "status": "NO_VERIFIED_GRADE_2_OR_SEMANTIC_GOLD", "training_enabled": False, "evidence": ["manifests/semantic_train.jsonl"]},
         "STABLE_EVAL_READY": {"decision": False, "status": "HOLD_STABLE_HUMAN_GATE", "training_enabled": False, "evidence": ["extension/extension_readiness.json"]},
@@ -941,7 +1023,7 @@ def build_readiness(
         "LONG_SERIES_READY": {"decision": False, "status": "LICENSE_TEMPORAL_REVIEW_HOLD", "training_enabled": False, "evidence": ["extension/extension_readiness.json"]},
         "AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING": exact_passed,
         "training_launched": False,
-        "gate_inputs": {"core_benchmark_passed": core_passed, "real_batch_passed": batch_passed, "full_path_decode_passed": path_audit.get("status", "").startswith("PASS"), "reversed_leakage_passed": reversed_audit.get("passed", False), "exact_training_integrity_passed": exact_audit.get("passed", False), "validator_passed": validator_passed},
+        "gate_inputs": {"core_benchmark_passed": core_passed, "real_batch_passed": batch_passed, "full_path_decode_passed": path_audit.get("status", "").startswith("PASS"), "reversed_leakage_passed": reversed_audit.get("passed", False), "exact_training_integrity_passed": exact_audit.get("passed", False), "calibration_passed": calibration["passed"], "validator_passed": validator_passed},
     }
 
 
@@ -1046,6 +1128,7 @@ def write_release_reports(release: Path, code_sha: str, readiness: dict[str, Any
     write_json(decision_path, decision)
     write_json(release / "readiness_states.json", readiness)
     report = f"""# QCPR final synchronization report\n\n- Dataset release: `{release}`\n- Dataset code SHA: `{code_sha}`\n- Training launched: `false`\n- Exact final authorization: `{str(readiness['AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING']).lower()}`\n- Core benchmark: `{core['path']}`\n- Extension benchmark: `{extension['path']}`\n- Final frozen-model data-only comparison: `audits/data_only_comparison_final_r18.json`\n\n## Exact gate\n\nThe exact view uses trusted LEVIR-MCI and SECOND-CC captions. Grade 3 is a same-physical-pair positive; sparse collision/ambiguous cells are ignored; ordinary unlisted cells are implicit negatives. Generic no-change, mask-derived and generated-unverified text are disabled.\n\n- Exact training queries: `{exact_audit['query_count']}`\n- Unique exact-training physical pairs: `{exact_audit['unique_exact_training_physical_pairs']}`\n- Real batch: `{batch['matrix_shape']}`\n- Real batch status: `{batch['status']}`\n- Full path/decode/hash status: `{path_audit.get('status')}`\n- Reversed-pair leakage status: `{'PASS' if reversed_audit.get('passed') else 'FAIL'}`\n\n## Final data-only comparison\n\n`audits/data_only_comparison_final_r18.json` uses one already-frozen TemporalSigLIP ranking tensor, the final r18 query/gallery order, and paired bootstrap intervals. D0 and D1 share the same scores; the delta is a relevance-policy collision-ignore effect, not a model-improvement claim. D2/D3 and semantic/stable/localized metrics remain held where verified text or human judgments are absent.\n\n## Extension gate\n\nSemantic, stable, localized, Dubai, Forest text, RSCC text, RSRCC and long-series states remain independently held. Their candidate/evaluation artifacts are present only as explicitly unverified or evaluation-only evidence; none authorizes expanded training.\n\nThe semantic candidate union is frozen before final TemporalSigLIP evaluation and records attribute, lexical, frozen SigLIP2, independent GeoRSCLIP and deterministic random-negative pools. Human grades remain empty rather than fabricated.\n\n## Source completeness\n\nThe exact-core completeness audit is limited to LEVIR-MCI/LEVIR-CC and SECOND-CC, with every known missing item classified. Noncore sources remain source-level audits and are not silently promoted.\n"""
+    report += f"\n\n## Calibration gate\n\n- Status: `{readiness['calibration_gate']['status']}`\n- Human decisions: `{readiness['calibration_gate']['completed_decisions']}/{readiness['calibration_gate']['required_decisions']}`\n- Exact training enabled: `{str(readiness['AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING']).lower()}`\n- Reason: `{readiness['calibration_gate']['reason']}`\n"
     (release / "source_reports/final_synchronization_report.md").write_text(report, encoding="utf-8")
 
 
@@ -1118,6 +1201,10 @@ def build_handoff(release: Path, core: dict[str, Any], extension: dict[str, Any]
             "frames": safe_count(release / "registries/frames.jsonl"),
             "canonical_queries": len(query_rows),
             "verified_exact_queries": exact_audit["query_count"],
+            "exact_training_enabled": readiness["AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING"],
+            "direction_training_enabled": readiness["AUTHORIZE_TEMPORALSIGLIP_FINAL_TRAINING"],
+            "calibration_decisions_completed": readiness["calibration_gate"]["completed_decisions"],
+            "calibration_decisions_required": readiness["calibration_gate"]["required_decisions"],
             "unique_exact_training_physical_pairs": exact_audit["unique_exact_training_physical_pairs"],
             "exact_training_query_counts_by_source": dict(sorted(source_query.items())),
             "direction_query_counts_by_split": {split: safe_count(release / "manifests" / f"direction_{split}.jsonl") for split in ("train", "development", "test")},
@@ -1200,6 +1287,7 @@ def repair_existing_release(base: Path, release: Path, core_path: Path, extensio
     write_json(release / "real_batch_relevance_audit.json", batch)
     path_audit = load_json(release / "full_path_decode_audit.json")
     reversed_audit = load_json(release / "reversed_pair_leakage_audit.json")
+    apply_exact_training_gate(release, calibration_gate(release)["passed"])
     exact_audit = build_exact_training_integrity(release)
     write_json(release / "exact_training_integrity_audit.json", exact_audit)
     core = {
@@ -1286,6 +1374,7 @@ def main() -> int:
         "reviewer_decisions_completed": 0,
         "status": "PACKETS_MATERIALIZED_REVIEW_DECISIONS_PENDING",
         "metrics": {"exact_scope_precision": None, "ci95": None, "false_exact_rate": None, "generic_contamination": None, "semantic_false_negative_rate": None, "average_positive_set_size": None, "collision_rate": None},
+        "exact_gate": {"passes": False, "status": "HOLD_EXACT_SCOPE_PRECISION_GATE", "reason": "all reviewer decisions are pending; exact view cannot be enabled"},
         "no_decisions_fabricated": True,
     })
 
@@ -1294,6 +1383,7 @@ def main() -> int:
     write_json(release / "full_path_decode_audit.json", path_audit)
     reversed_audit = build_reversed_pair_audit(base)
     write_json(release / "reversed_pair_leakage_audit.json", reversed_audit)
+    apply_exact_training_gate(release, calibration_gate(release)["passed"])
     exact_audit = build_exact_training_integrity(release)
     write_json(release / "exact_training_integrity_audit.json", exact_audit)
 
