@@ -1,9 +1,9 @@
 {
   "branch": "codex/qcpr-model-v3-temporal-retrieval",
-  "audit_code_sha": "2d117d567862ee3f418d9e0b380037793269c967",
-  "local_sha_at_audit": "2d117d567862ee3f418d9e0b380037793269c967",
-  "remote_sha_at_audit": "2d117d567862ee3f418d9e0b380037793269c967",
-  "pr_head_sha_at_audit": "2d117d567862ee3f418d9e0b380037793269c967",
+  "audit_code_sha": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "local_sha_at_audit": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "remote_sha_at_audit": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "pr_head_sha_at_audit": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
   "pr_number": 6,
   "pr_base": "codex/qcpr-dataset-v2-stage2",
   "pr_state_at_audit": "OPEN",
