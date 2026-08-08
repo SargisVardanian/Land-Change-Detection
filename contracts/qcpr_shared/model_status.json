@@ -50,9 +50,9 @@
   "branch": "codex/qcpr-siglip2-temporal-training",
   "code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
   "evaluation_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
-  "current_branch_head_sha": "fc43436b98eb849ca8f0568f2c526853b3b76b41",
-  "remote_branch_sha": "fc43436b98eb849ca8f0568f2c526853b3b76b41",
-  "cluster_worktree_sha": "fc43436b98eb849ca8f0568f2c526853b3b76b41",
+  "current_branch_head_sha": "d083afabfdeeb73ab55d9670f554f7536b77a632",
+  "remote_branch_sha": "d083afabfdeeb73ab55d9670f554f7536b77a632",
+  "cluster_worktree_sha": "d083afabfdeeb73ab55d9670f554f7536b77a632",
   "executable_smoke_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
   "cpu_gate": {
     "compileall": "PASS",
