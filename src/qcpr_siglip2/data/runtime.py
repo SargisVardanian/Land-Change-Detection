@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from hashlib import sha256
@@ -27,6 +27,9 @@ class RawFeatureBatch:
     text_mask: Tensor
     patch_valid_mask: Tensor | None = None
     spatial_shapes: Tensor | None = None
+    native_image_size: Tensor | None = None
+    processed_patch_grid: Tensor | None = None
+    transform_hash: str | None = None
 
 
 def file_sha256(path: str | Path) -> str:
@@ -52,6 +55,10 @@ def processor_inputs(
     max_num_patches: int | None = None,
     synchronized_transform: Callable[[Image.Image, Image.Image], tuple[Image.Image, Image.Image]]
     | None = None,
+    synchronized_sequence_transform: Callable[
+        [list[Image.Image]], list[Image.Image]
+    ]
+    | None = None,
 ) -> tuple[dict[str, Any], dict[str, Tensor]]:
     """Decode each T1/T2 exactly once and tokenize the paired queries."""
 
@@ -61,6 +68,7 @@ def processor_inputs(
         device,
         max_num_patches=max_num_patches,
         synchronized_transform=synchronized_transform,
+        synchronized_sequence_transform=synchronized_sequence_transform,
     )
     text_inputs = processor_text_inputs(processor, query_rows, device)
     return image_inputs, text_inputs
@@ -74,25 +82,54 @@ def processor_image_inputs(
     max_num_patches: int | None = None,
     synchronized_transform: Callable[[Image.Image, Image.Image], tuple[Image.Image, Image.Image]]
     | None = None,
+    synchronized_sequence_transform: Callable[
+        [list[Image.Image]], list[Image.Image]
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     """Decode T1/T2 images and return the processor's tensor inputs."""
 
+    if synchronized_transform is not None and synchronized_sequence_transform is not None:
+        raise ValueError(
+            "provide either synchronized_transform or synchronized_sequence_transform"
+        )
     images: list[Image.Image] = []
+    frame_count: int | None = None
     native_sizes: list[tuple[int, int]] = []
     for row in pair_rows:
+        frame_paths = row.get("frames")
+        if frame_paths is None:
+            frame_paths = [row["t1_path"], row["t2_path"]]
+        if not isinstance(frame_paths, Sequence) or isinstance(frame_paths, (str, bytes)):
+            raise TypeError("frames must be a sequence of image paths")
+        if len(frame_paths) < 2:
+            raise ValueError("temporal items require at least two frames")
+        if frame_count is None:
+            frame_count = len(frame_paths)
+        elif len(frame_paths) != frame_count:
+            raise ValueError("all temporal items in a batch must have the same frame count")
         loaded: list[Image.Image] = []
-        for field in ("t1_path", "t2_path"):
-            path = Path(str(row[field]))
+        for frame_path in frame_paths:
+            path = Path(str(frame_path))
             if not path.is_file():
                 raise FileNotFoundError(path)
             with Image.open(path) as image:
                 loaded.append(image.convert("RGB"))
         native_sizes.extend((image.height, image.width) for image in loaded)
+        if synchronized_sequence_transform is not None:
+            loaded = synchronized_sequence_transform(loaded)
+            if len(loaded) != frame_count:
+                raise ValueError("synchronized sequence transform changed frame count")
         if synchronized_transform is not None:
+            if len(loaded) != 2:
+                raise ValueError(
+                    "synchronized_transform is only valid for two-frame items; "
+                    "use synchronized_sequence_transform for T>2"
+                )
             loaded[0], loaded[1] = synchronized_transform(loaded[0], loaded[1])
-        if loaded[0].size != loaded[1].size:
+        if any(image.size != loaded[0].size for image in loaded[1:]):
             raise ValueError(
-                "T1/T2 image geometry differs; apply one synchronized transform before processing"
+                "temporal image geometry differs; apply one synchronized transform before processing"
             )
         images.extend(loaded)
 
@@ -114,13 +151,15 @@ def processor_image_inputs(
     else:
         image_inputs = processor(images=images, return_tensors="pt")
     pixel_values = image_inputs["pixel_values"]
+    if frame_count is None:
+        raise ValueError("at least one temporal item is required")
     pair_count = len(pair_rows)
     image_inputs["pixel_values"] = pixel_values.reshape(
-        pair_count, 2, *pixel_values.shape[1:]
+        pair_count, frame_count, *pixel_values.shape[1:]
     ).to(device)
     image_inputs["native_image_size"] = torch.tensor(
         native_sizes, dtype=torch.long, device=device
-    ).reshape(pair_count, 2, 2)
+    ).reshape(pair_count, frame_count, 2)
     if max_num_patches is not None and image_inputs.get("spatial_shapes") is not None:
         shape_values = image_inputs["spatial_shapes"].detach().cpu().tolist()
         transform_payload = "\n".join(
@@ -134,10 +173,27 @@ def processor_image_inputs(
         value = image_inputs.get(key)
         if value is not None:
             if key == "pixel_attention_mask":
-                value = value.reshape(pair_count, 2, -1)
+                value = value.reshape(pair_count, frame_count, -1)
             else:
-                value = value.reshape(pair_count, 2, 2)
+                value = value.reshape(pair_count, frame_count, 2)
             image_inputs[key] = value.to(device)
+
+    processed_shapes = image_inputs.get("spatial_shapes")
+    if processed_shapes is not None:
+        if processed_shapes.shape != (pair_count, frame_count, 2):
+            raise ValueError("processor spatial_shapes must reshape to [B,T,2]")
+        if not torch.equal(processed_shapes, processed_shapes[:, :1].expand_as(processed_shapes)):
+            raise ValueError(
+                "all frames of a temporal item must use a compatible processed NaFlex patch grid"
+            )
+        attention_mask = image_inputs.get("pixel_attention_mask")
+        if attention_mask is not None:
+            counts = attention_mask.sum(dim=-1)
+            expected = processed_shapes[..., 0] * processed_shapes[..., 1]
+            if not torch.equal(counts, expected):
+                raise ValueError(
+                    "pixel_attention_mask counts disagree with spatial_shapes"
+                )
 
     return {
         key: value.to(device) if isinstance(value, Tensor) else value
@@ -183,6 +239,10 @@ def encode_real_images(
     max_num_patches: int | None = None,
     synchronized_transform: Callable[[Image.Image, Image.Image], tuple[Image.Image, Image.Image]]
     | None = None,
+    synchronized_sequence_transform: Callable[
+        [list[Image.Image]], list[Image.Image]
+    ]
+    | None = None,
 ) -> ImageEncoding:
     image_inputs = processor_image_inputs(
         processor,
@@ -190,6 +250,7 @@ def encode_real_images(
         device,
         max_num_patches=max_num_patches,
         synchronized_transform=synchronized_transform,
+        synchronized_sequence_transform=synchronized_sequence_transform,
     )
     context = torch.no_grad() if no_grad else nullcontext()
     with context, _device_autocast(device, dtype):
@@ -227,6 +288,10 @@ def encode_real_features(
     max_num_patches: int | None = None,
     synchronized_transform: Callable[[Image.Image, Image.Image], tuple[Image.Image, Image.Image]]
     | None = None,
+    synchronized_sequence_transform: Callable[
+        [list[Image.Image]], list[Image.Image]
+    ]
+    | None = None,
 ) -> RawFeatureBatch:
     image = encode_real_images(
         backbone,
@@ -237,6 +302,7 @@ def encode_real_features(
         no_grad=no_grad,
         max_num_patches=max_num_patches,
         synchronized_transform=synchronized_transform,
+        synchronized_sequence_transform=synchronized_sequence_transform,
     )
     text = encode_real_text(
         backbone,
@@ -254,6 +320,9 @@ def encode_real_features(
         text_mask=text.attention_mask,
         patch_valid_mask=image.patch_valid_mask,
         spatial_shapes=image.spatial_shapes,
+        native_image_size=image.native_image_size,
+        processed_patch_grid=image.processed_patch_grid,
+        transform_hash=image.transform_hash,
     )
 
 

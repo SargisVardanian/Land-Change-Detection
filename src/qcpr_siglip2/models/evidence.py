@@ -18,6 +18,8 @@ class EvidenceOutput:
     evidence_vector: Tensor
     evidence_gate: Tensor
     evidence_map_valid_mask: Tensor
+    processed_evidence_map: Tensor | None = None
+    processed_evidence_map_valid_mask: Tensor | None = None
 
 
 class EvidenceBottleneck(nn.Module):
@@ -45,6 +47,9 @@ class EvidenceBottleneck(nn.Module):
         patch_count: int,
         patch_valid_mask: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
+        native_patch_valid_mask: Tensor | None = None,
+        native_spatial_shapes: Tensor | None = None,
+        region_assignment: Tensor | None = None,
     ) -> EvidenceOutput:
         if text_tokens.ndim != 3 or text_mask.ndim != 2 or visual_tokens.ndim != 3:
             raise ValueError("evidence inputs must be [Q,L,D], [Q,L] and [P,M,D]")
@@ -114,22 +119,22 @@ class EvidenceBottleneck(nn.Module):
         weights = torch.cat(weight_rows, dim=0)
         vector = torch.cat(vector_rows, dim=0)
 
-        max_height = int(visual_shapes[..., 0].max().item())
-        max_width = int(visual_shapes[..., 1].max().item())
-        mapped = torch.zeros(
+        processed_max_height = int(visual_shapes[..., 0].max().item())
+        processed_max_width = int(visual_shapes[..., 1].max().item())
+        processed_mapped = torch.zeros(
             q,
             p,
             frame_count,
-            max_height,
-            max_width,
+            processed_max_height,
+            processed_max_width,
             device=weights.device,
             dtype=weights.dtype,
         )
-        map_valid = torch.zeros(
+        processed_map_valid = torch.zeros(
             p,
             frame_count,
-            max_height,
-            max_width,
+            processed_max_height,
+            processed_max_width,
             device=weights.device,
             dtype=torch.bool,
         )
@@ -139,9 +144,86 @@ class EvidenceBottleneck(nn.Module):
                 height = int(visual_shapes[pair_index, frame_index, 0].item())
                 width = int(visual_shapes[pair_index, frame_index, 1].item())
                 count = height * width
-                mapped[
+                processed_mapped[
                     :, pair_index, frame_index, :height, :width
                 ] = weight_view[
+                    :, pair_index, frame_index, :count
+                ].reshape(q, height, width)
+                processed_map_valid[pair_index, frame_index, :height, :width] = True
+
+        native_valid = visual_valid
+        native_shapes = visual_shapes
+        if native_patch_valid_mask is not None or native_spatial_shapes is not None:
+            if native_patch_valid_mask is not None:
+                native_token_count = int(native_patch_valid_mask.shape[-1])
+            elif native_spatial_shapes is not None:
+                native_token_count = int(
+                    (native_spatial_shapes[..., 0] * native_spatial_shapes[..., 1])
+                    .max()
+                    .item()
+                )
+            else:
+                native_token_count = patch_count
+            native_view = visual_tokens.new_zeros(
+                p,
+                frame_count,
+                native_token_count,
+                self.hidden_size,
+            )
+            native_valid, native_shapes = normalize_patch_metadata(
+                native_view,
+                native_patch_valid_mask,
+                native_spatial_shapes,
+            )
+        if region_assignment is not None:
+            if region_assignment.ndim != 4 or region_assignment.shape[:3] != (
+                p,
+                frame_count,
+                patch_count,
+            ):
+                raise ValueError(
+                    "region_assignment must be [P,T,processed_N,native_N]"
+                )
+            if region_assignment.shape[-1] != native_valid.shape[-1]:
+                raise ValueError("region_assignment native token count mismatch")
+            assignment = region_assignment.to(device=weights.device, dtype=weights.dtype)
+            assignment = assignment.masked_fill(~native_valid[:, :, None, :], 0.0)
+            assignment = assignment / assignment.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+            native_weight_view = torch.einsum(
+                "qptk,ptkn->qptn", weight_view, assignment
+            )
+        else:
+            if native_valid.shape[-1] != patch_count:
+                raise ValueError(
+                    "native and processed token counts differ without region_assignment"
+                )
+            native_weight_view = weight_view
+
+        native_max_height = int(native_shapes[..., 0].max().item())
+        native_max_width = int(native_shapes[..., 1].max().item())
+        mapped = torch.zeros(
+            q,
+            p,
+            frame_count,
+            native_max_height,
+            native_max_width,
+            device=weights.device,
+            dtype=weights.dtype,
+        )
+        map_valid = torch.zeros(
+            p,
+            frame_count,
+            native_max_height,
+            native_max_width,
+            device=weights.device,
+            dtype=torch.bool,
+        )
+        for pair_index in range(p):
+            for frame_index in range(frame_count):
+                height = int(native_shapes[pair_index, frame_index, 0].item())
+                width = int(native_shapes[pair_index, frame_index, 1].item())
+                count = height * width
+                mapped[:, pair_index, frame_index, :height, :width] = native_weight_view[
                     :, pair_index, frame_index, :count
                 ].reshape(q, height, width)
                 map_valid[pair_index, frame_index, :height, :width] = True
@@ -152,4 +234,6 @@ class EvidenceBottleneck(nn.Module):
             evidence_vector=vector,
             evidence_gate=self.evidence_gate,
             evidence_map_valid_mask=map_valid,
+            processed_evidence_map=processed_mapped,
+            processed_evidence_map_valid_mask=processed_map_valid,
         )

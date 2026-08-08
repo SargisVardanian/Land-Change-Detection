@@ -26,6 +26,8 @@ class Siglip2TemporalConfig:
     max_frames: int = 8
     change_token_count: int = 4
     local_displacement_radius: int = 1
+    temporal_fourier_bands: int = 4
+    sensor_vocab_size: int = 64
     evidence_temperature: float = 0.07
     retrieval_temperature: float = 0.07
     evidence_gate_init: float = 0.05
@@ -69,6 +71,10 @@ class Siglip2TemporalConfig:
             raise ValueError("change_token_count must be positive")
         if self.local_displacement_radius < 0:
             raise ValueError("local_displacement_radius must be non-negative")
+        if self.temporal_fourier_bands <= 0:
+            raise ValueError("temporal_fourier_bands must be positive")
+        if self.sensor_vocab_size <= 0:
+            raise ValueError("sensor_vocab_size must be positive")
         if self.evidence_temperature <= 0.0 or self.retrieval_temperature <= 0.0:
             raise ValueError("temperatures must be positive")
         if not 0.0 < self.evidence_gate_init < 0.5:

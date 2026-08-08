@@ -254,6 +254,7 @@ def checkpoint_roundtrip(
     phase: str,
     batch: ExactBatch,
     device: torch.device,
+    max_num_patches: int,
 ) -> dict[str, Any]:
     """Reload the saved model in a fresh model/backbone and compare scores."""
 
@@ -266,6 +267,7 @@ def checkpoint_roundtrip(
         device,
         dtype=torch.bfloat16,
         no_grad=True,
+        max_num_patches=max_num_patches,
     )
     with torch.no_grad(), _device_autocast(device, torch.bfloat16):
         reference = model.forward_from_features(
@@ -296,6 +298,7 @@ def checkpoint_roundtrip(
         device,
         dtype=torch.bfloat16,
         no_grad=True,
+        max_num_patches=max_num_patches,
     )
     with torch.no_grad(), _device_autocast(device, torch.bfloat16):
         reloaded = fresh_model.forward_from_features(
@@ -596,6 +599,7 @@ def main() -> int:
             args.phase,
             last_batch,
             device,
+            args.max_num_patches,
         )
         write_json(run / "checkpoint_roundtrip.json", roundtrip)
         write_json(

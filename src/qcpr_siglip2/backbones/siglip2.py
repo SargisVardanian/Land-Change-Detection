@@ -139,12 +139,6 @@ def _load_patched_local_config(model_path: str | Path, tokenizer_contract: dict[
     config_path = Path(model_path) / "config.json"
     if not config_path.is_file():
         return None
-    from transformers.models.siglip.configuration_siglip import (
-        SiglipConfig,
-        SiglipTextConfig,
-        SiglipVisionConfig,
-    )
-
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     text_raw = dict(raw.get("text_config", {}))
     vision_raw = dict(raw.get("vision_config", {}))
@@ -154,6 +148,23 @@ def _load_patched_local_config(model_path: str | Path, tokenizer_contract: dict[
             for name, value in tokenizer_contract["special_token_ids"].items()
         }
     )
+    if raw.get("model_type") == "siglip2":
+        from transformers.models.siglip2.configuration_siglip2 import (
+            Siglip2Config,
+            Siglip2TextConfig,
+            Siglip2VisionConfig,
+        )
+
+        text_config = Siglip2TextConfig(**text_raw)
+        vision_config = Siglip2VisionConfig(**vision_raw)
+        return Siglip2Config(text_config=text_config, vision_config=vision_config)
+
+    from transformers.models.siglip.configuration_siglip import (
+        SiglipConfig,
+        SiglipTextConfig,
+        SiglipVisionConfig,
+    )
+
     text_config = SiglipTextConfig(**text_raw)
     vision_config = SiglipVisionConfig(**vision_raw)
     return SiglipConfig(text_config=text_config, vision_config=vision_config)
@@ -470,7 +481,19 @@ class Siglip2Backbone(nn.Module):
             spatial_shapes_flat[:, 0] * spatial_shapes_flat[:, 1] > output_patch_count
         ):
             raise ValueError("processor spatial_shapes exceed native visual token count")
-        shapes = spatial_shapes_flat.reshape(b, t, 2)
+        expected_valid = spatial_shapes_flat[:, 0] * spatial_shapes_flat[:, 1]
+        actual_valid = patch_valid_mask.sum(dim=-1)
+        if not torch.equal(expected_valid, actual_valid):
+            raise ValueError(
+                "native patch-valid mask counts disagree with processed_patch_grid"
+            )
+        reshaped_shapes = spatial_shapes_flat.reshape(b, t, 2)
+        if not torch.equal(
+            reshaped_shapes,
+            reshaped_shapes[:, :1].expand_as(reshaped_shapes),
+        ):
+            raise ValueError("T1/T2 native patch grids must be compatible")
+        shapes = reshaped_shapes
         if native_image_size is not None:
             if native_image_size.ndim == 3 and native_image_size.shape[:2] == (b, t):
                 native_image_size = native_image_size.to(

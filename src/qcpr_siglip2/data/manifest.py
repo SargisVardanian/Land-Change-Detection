@@ -56,18 +56,92 @@ def _validate_exact_row(row: dict[str, Any]) -> None:
             raise TypeError(f"{path_field} must be a string")
 
 
+def _physical_registry_for_manifest(path: Path) -> dict[str, dict[str, Any]]:
+    """Load the release physical-item registry next to an expanded manifest.
+
+    r19g keeps query records and physical frame records in separate registries.
+    This join is deliberately local to the release root and never opens dense
+    labels or evaluation sidecars.
+    """
+
+    registry_path = path.parent / "registries" / "physical_items.jsonl"
+    if not registry_path.is_file():
+        return {}
+    registry: dict[str, dict[str, Any]] = {}
+    for item in read_jsonl(registry_path):
+        item_id = item.get("item_id") or item.get("physical_item_id")
+        if item_id:
+            registry[str(item_id)] = item
+    return registry
+
+
+def _normalize_exact_row(
+    row: dict[str, Any], physical_registry: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Normalize legacy and r19g query records to the model batch contract."""
+
+    normalized = dict(row)
+    provenance = row.get("provenance")
+    if not isinstance(provenance, dict):
+        provenance = {}
+    caption_provenance = row.get("caption_provenance")
+    if not isinstance(caption_provenance, dict):
+        caption_provenance = {}
+    pair_ids = row.get("positive_item_ids")
+    pair_id = row.get("canonical_pair_id")
+    if not pair_id and isinstance(pair_ids, list) and len(pair_ids) == 1:
+        pair_id = pair_ids[0]
+    if not pair_id:
+        pair_id = row.get("source_item_id") or row.get("source_pair_id")
+    if pair_id:
+        normalized["canonical_pair_id"] = str(pair_id)
+    if "positive_pair_ids" not in normalized and isinstance(pair_ids, list):
+        normalized["positive_pair_ids"] = [str(value) for value in pair_ids]
+    if "ignored_pair_ids" not in normalized:
+        ignored_ids = row.get("ignored_item_ids")
+        if isinstance(ignored_ids, list):
+            normalized["ignored_pair_ids"] = [str(value) for value in ignored_ids]
+        else:
+            normalized["ignored_pair_ids"] = []
+    normalized.setdefault("caption_id", row.get("query_id") or row.get("canonical_query_id"))
+    normalized.setdefault("caption", row.get("text"))
+    normalized.setdefault(
+        "dataset_name",
+        provenance.get("source_dataset") or caption_provenance.get("source_dataset"),
+    )
+    if normalized.get("query_scope") == "exact":
+        normalized["query_scope"] = "exact_pair"
+    item = physical_registry.get(str(normalized.get("canonical_pair_id")))
+    if item is not None:
+        frames = item.get("frames")
+        if isinstance(frames, list) and len(frames) >= 2:
+            paths = [
+                frame.get("native_path") or frame.get("path")
+                for frame in frames
+                if isinstance(frame, dict)
+            ]
+            if len(paths) == len(frames) and all(isinstance(value, str) for value in paths):
+                normalized["frames"] = paths
+                normalized.setdefault("t1_path", paths[0])
+                normalized.setdefault("t2_path", paths[1])
+    return normalized
+
+
 def load_exact_core_rows(
     path: str | Path, *, split: str | None = None
 ) -> list[dict[str, Any]]:
     """Load only human/verified exact rows from LEVIR-MCI and SECOND-CC."""
 
-    rows = read_jsonl(path)
+    manifest_path = Path(path)
+    rows = read_jsonl(manifest_path)
+    physical_registry = _physical_registry_for_manifest(manifest_path)
     selected: list[dict[str, Any]] = []
     for row in rows:
         if split is not None and row.get("split") != split:
             continue
-        _validate_exact_row(row)
-        selected.append(row)
+        normalized = _normalize_exact_row(row, physical_registry)
+        _validate_exact_row(normalized)
+        selected.append(normalized)
     if not selected:
         raise ValueError(f"empty exact core manifest: {path}")
     return selected

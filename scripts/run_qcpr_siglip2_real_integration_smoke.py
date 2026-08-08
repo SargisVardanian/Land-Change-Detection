@@ -515,6 +515,7 @@ def main() -> int:
             "A",
             batch,
             device,
+            args.max_num_patches,
         )
         write_json(run / "checkpoint_roundtrip.json", roundtrip)
         write_json(run / "exposure_accounting.json", ledger.to_dict())

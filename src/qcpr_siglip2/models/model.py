@@ -93,6 +93,14 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         timestamps: Tensor | None = None,
         patch_valid_mask: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
+        native_image_size: Tensor | None = None,
+        processed_patch_grid: Tensor | None = None,
+        transform_hash: str | None = None,
+        frame_ids: Tensor | None = None,
+        sensor_ids: Tensor | None = None,
+        gsd: Tensor | None = None,
+        metadata_missing: Tensor | None = None,
+        token_coordinates: Tensor | None = None,
     ) -> RetrievalForwardOutput:
         validate_feature_contract(
             frame_tokens,
@@ -109,6 +117,14 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             timestamps=timestamps,
             patch_valid_mask=patch_valid_mask,
             spatial_shapes=spatial_shapes,
+            native_image_size=native_image_size,
+            processed_patch_grid=processed_patch_grid,
+            transform_hash=transform_hash,
+            frame_ids=frame_ids,
+            sensor_ids=sensor_ids,
+            gsd=gsd,
+            metadata_missing=metadata_missing,
+            token_coordinates=token_coordinates,
         )
         text_embedding = F.normalize(text_embeddings, dim=-1)
         pair = temporal.pair_cls
@@ -120,6 +136,9 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             patch_count=temporal.patch_count,
             patch_valid_mask=temporal.patch_valid_mask,
             spatial_shapes=temporal.spatial_shapes,
+            native_patch_valid_mask=temporal.native_patch_valid_mask,
+            native_spatial_shapes=temporal.native_spatial_shapes,
+            region_assignment=temporal.region_assignment,
         )
         pair_for_query = F.normalize(
             pair.unsqueeze(0) + evidence.evidence_gate * evidence.evidence_vector,
@@ -155,6 +174,11 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         timestamps: Tensor | None = None,
         native_image_size: Tensor | None = None,
         transform_hash: str | None = None,
+        frame_ids: Tensor | None = None,
+        sensor_ids: Tensor | None = None,
+        gsd: Tensor | None = None,
+        metadata_missing: Tensor | None = None,
+        token_coordinates: Tensor | None = None,
     ) -> RetrievalForwardOutput:
         if self.backbone is None:
             raise RuntimeError("raw-input forward requires a Siglip2Backbone")
@@ -179,6 +203,14 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             timestamps=timestamps,
             patch_valid_mask=image.patch_valid_mask,
             spatial_shapes=image.spatial_shapes,
+            native_image_size=image.native_image_size,
+            processed_patch_grid=image.processed_patch_grid,
+            transform_hash=image.transform_hash,
+            frame_ids=frame_ids,
+            sensor_ids=sensor_ids,
+            gsd=gsd,
+            metadata_missing=metadata_missing,
+            token_coordinates=token_coordinates,
         )
 
     def trainable_parameter_report(self) -> dict[str, dict[str, int]]:
