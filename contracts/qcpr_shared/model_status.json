@@ -395,8 +395,8 @@
     "evaluation_status": "PHASE_A_COMMON_GALLERY_PASS_JOBS_209864_209865_209866",
     "scientific_interpretation": "technical smoke only; no retrieval-quality claim"
   },
-  "status": "SIGLIP2_PHASE_A_PASS_PHASE_B_BLOCKED_PENDING_DECISION_PACKAGE",
+  "status": "STAGE_B_1536_PILOT_SOURCE_AUDIT_PASS_WAIT_DATASET_FINAL_HANDOFF",
   "track_branch": "codex/qcpr-siglip2-temporal-training",
-  "track_parent_sha": "c8a06122a2ef2f10c409ae732ddb62e73bcabe73",
-  "track_status": "SIGLIP2_PHASE_A_PASS_PHASE_B_BLOCKED_PENDING_DECISION_PACKAGE"
+  "track_parent_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+  "track_status": "STAGE_B_1536_PILOT_SOURCE_AUDIT_PASS_WAIT_DATASET_FINAL_HANDOFF"
 }
