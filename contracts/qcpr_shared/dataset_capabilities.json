@@ -20,7 +20,7 @@
   "STABLE_EVAL_READY": false,
   "STABLE_TRAIN_READY": false,
   "TAMMS_LONGSERIES_READY": false,
-  "authoritative_release_sha256": "f78a29dab0997ce0d71841210fab3f6b213b0a4bde213903cea28d1ebace1782",
+  "authoritative_release_sha256": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
   "core_training_allowed": true,
   "counts": {
     "canonical_queries": 32284,
@@ -43,9 +43,12 @@
     "stable_train_queries": 0,
     "stable_verified_queries": 0
   },
+  "dataset_code_sha": "6953bb7c0924954945fcfc9f58a109f232aaeca4",
+  "dataset_remote_sha": "a0d43ccc0239ffca5c96e9b2bf231fa880b2c21e",
   "evaluation_mask_sidecar_schema": "evaluation_sidecars/mask_sidecar_contract.json",
   "handoff_path": "contracts/qcpr_shared/handoff/dataset_final_to_model.json",
-  "handoff_sha256": "78a118613877b57f5005e961383ac4bc42fc76504c239343db44caf16dc869d8",
+  "handoff_schema_complete": true,
+  "handoff_sha256": "1aa36af3f8403f03f86672755eba35b26f5a8fde30596e7d9e288d9e313443af",
   "main_training_allowed": false,
   "model_requirements_sha256": "261785bce8ee1d88de05f9d24ab27b16bee940d95487ce257ddce741442b2e8e",
   "model_training_policy": "core exact only; expanded main training not authorized",
@@ -118,10 +121,13 @@
     "schema_version": "qcpr-paper-calibration-status-v2",
     "status": "PAPER_CALIBRATION_PENDING; DOES_NOT_BLOCK_EXACT_CORE_R19"
   },
-  "release": "qcpr_bitemporal_v2_train_20260808_final_r19f",
+  "release": "qcpr_bitemporal_v2_train_20260808_final_r19g",
   "release_immutable": true,
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19f",
+  "release_name": "qcpr_bitemporal_v2_train_20260808_final_r19g",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g",
+  "release_sha": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
   "schema_version": "qcpr-dataset-capabilities-v2",
+  "training_launched": false,
   "views": {
     "direction": {
       "decision": "EVAL_ONLY",
