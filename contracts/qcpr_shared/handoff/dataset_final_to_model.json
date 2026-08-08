@@ -16,6 +16,10 @@
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/full_path_decode_audit.json",
       "sha256": "2b148c42198674c1f0d961ecad989d873f7a9ad3b544294e27592e8f6be85dd7"
     },
+    "mask_sidecars": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/evaluation_sidecars/dense.jsonl",
+      "sha256": "1eac756eb773b4e13362eede71d15a17420ffe7a6ca1798e04781c829907e201"
+    },
     "real_batch_relevance": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/real_batch_relevance_audit.json",
       "sha256": "b9708597e9f13f7e20f52530d7b415740a3f96f48f81b244d27810f4d3235363"
@@ -33,6 +37,12 @@
   "core_benchmark_sha256sums": "ac213877e93bd0ceb689b460451cfa42c0df1fd014d5d06aa7dc33334ba0d329",
   "counts": {
     "canonical_queries": 32284,
+    "direction_query_count": 26036,
+    "direction_query_counts_by_split": {
+      "development": 3002,
+      "test": 724,
+      "train": 22310
+    },
     "disabled_generic_no_change_rows": 48870,
     "exact_training_query_counts_by_source": {
       "levir_mci": 9898,
@@ -58,10 +68,22 @@
     "verified_exact_queries": 23124
   },
   "dataset_branch": "codex/qcpr-dataset-v2-final",
-  "dataset_code_sha": "87d6a8b5a41ad66b9e6663b2a47de51c152fa3b0",
+  "dataset_code_sha": "9d4ae52bb946218b9b359a337ca3ac3c1afa3f02",
   "extension_benchmark_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_extension_benchmark_v1_r18",
   "extension_benchmark_sha256sums": "dee35eb9834452d86c442efcec11908fd94144e7038dd36061d80e46198dba42",
   "manifests": {
+    "direction_development": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/direction_development.jsonl",
+      "sha256": "bd678218a6172a3a131e8b20cad2f6942deb45021e9b768282ced34056d2b562"
+    },
+    "direction_test": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/direction_test.jsonl",
+      "sha256": "37fbc1f9a44663a9d1a445a0d4496949f30d22707b4d4f75a5a69b4a13225c14"
+    },
+    "direction_train": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/direction_train.jsonl",
+      "sha256": "1376ed7e0b42b3bf035f624eecc8e2c186d389ca27ca5561b1d33537ef6c08ff"
+    },
     "exact_development": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/exact_development.jsonl",
       "sha256": "3ccbcbf389727945cfa1d19b0ec3e3c434d0b7c39929377c3bceca741a0d2f09"
@@ -74,12 +96,52 @@
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/exact_train.jsonl",
       "sha256": "93d2af1fb7746159db00185fcba038c83c501d6367c62516ef67d36622d1e934"
     },
+    "localized_development": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/localized_development.jsonl",
+      "sha256": "66c13644d81eb2cdf8c6763fbee62f2647b274400f2b75e8e516162c3b48d6ab"
+    },
+    "localized_test": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/localized_test.jsonl",
+      "sha256": "9e97bf4a3525990aab77e507b4da734fa98fe8a7a27be686d1654a9fa716f287"
+    },
     "localized_train": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/localized_train.jsonl",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     },
+    "long_series_development": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/long_series_development.jsonl",
+      "sha256": "1f590ebe77a5492fa5ba2793dbddde844b26a56533079a1220563cf43c85e9ce"
+    },
+    "long_series_test": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/long_series_test.jsonl",
+      "sha256": "cdfc9c182ce2469f6f465435b6b5ad30954b64645d99a38fbf55348a38f55967"
+    },
+    "long_series_train": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/long_series_train.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "semantic_development": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/semantic_development.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "semantic_test": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/semantic_test.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
     "semantic_train": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/semantic_train.jsonl",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stable_development": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/stable_development.jsonl",
+      "sha256": "3635f419c72955029861478086e71dcebf0b88c1ffae406aae9a280a00913593"
+    },
+    "stable_test": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/stable_test.jsonl",
+      "sha256": "46ee47a2ea55852367a5e83c436205e1c3f0e6fca022162e648ed5687c07ecd1"
+    },
+    "stable_train": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/manifests/stable_train.jsonl",
       "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   },
@@ -219,6 +281,10 @@
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/registries/frames.jsonl",
       "sha256": "840d4e7aa184ca7c5d490a4860a23a1d01966c1081e512512128174a26ff4955"
     },
+    "generic_no_change_diagnostic": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/registries/generic_no_change_diagnostic.jsonl",
+      "sha256": "1b3165843abc5090752e9a0d63dd37505e55f90e7f157c1a52c86841cf3c6355"
+    },
     "physical_items": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/registries/physical_items.jsonl",
       "sha256": "dd8ebfd2e6cc0992f5b22d8cdeb21d3ad722d0dc79ccbc42d31bb52f58c62b5f"
@@ -238,11 +304,19 @@
     "sampler_contract": {
       "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/sampler_contract.json",
       "sha256": "bdd6817e1f392f22157cba7327ed74ccbbc6852a4a12a475aed572976640408b"
+    },
+    "semantic_candidate_groups": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/registries/semantic_candidate_groups.jsonl",
+      "sha256": "97beaf2e5fbd64d9e9b359c6b94a140bf88057ac7adbbf1f262c586fd1cba148"
+    },
+    "semantic_candidate_query_sets": {
+      "path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18/registries/semantic_candidate_query_sets.jsonl",
+      "sha256": "3548d44b5cde595c994f25e8b7b607d9826dc2aca6fad665b37636becd6dc0ff"
     }
   },
   "release_name": "QCPR_BITEMPORAL_V2_TRAIN",
   "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r18",
-  "release_sha256sums": "99dd5f6f30d7cf2d12bca11075e9738b4b7d26c9211883e2cc0133d944fbbe07",
+  "release_sha256sums": "ed9351ad236ea0adc402123a475be559778e0b5f4e42ab5cae58d7aad0496d09",
   "request_id": "QCPR_DATASET_V2_RETRIEVAL_SEMANTIC_REPAIR_FINAL_SYNC_R18",
   "schema_version": "qcpr-dataset-final-to-model-v1",
   "training_launched": false
