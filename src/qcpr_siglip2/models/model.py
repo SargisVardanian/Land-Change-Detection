@@ -10,6 +10,7 @@ from ..backbones.siglip2 import ImageEncoding, Siglip2Backbone, TextEncoding
 from ..config.schema import Siglip2TemporalConfig
 from ..contracts import validate_feature_contract
 from .evidence import EvidenceBottleneck, EvidenceOutput
+from .relevance import UnifiedRelevanceModel
 from .temporal import TemporalAdapterOutput, TemporalTransformerAdapter
 
 
@@ -37,6 +38,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         self.backbone = backbone
         self.temporal_adapter = TemporalTransformerAdapter(self.config)
         self.evidence_bottleneck = EvidenceBottleneck(self.config)
+        self.relevance_model = UnifiedRelevanceModel()
         self.log_temperature = nn.Parameter(
             torch.tensor(self.config.retrieval_temperature).log()
         )
@@ -44,6 +46,41 @@ class Siglip2TemporalRetrievalModel(nn.Module):
     @property
     def retrieval_temperature(self) -> Tensor:
         return self.log_temperature.clamp(min=-5.0, max=2.0).exp()
+
+    def unified_score_from_evidence(
+        self,
+        text_embedding: Tensor,
+        pair_cls: Tensor,
+        change_tokens: Tensor,
+        evidence_gate: Tensor,
+        evidence_vector: Tensor,
+    ) -> Tensor:
+        """Compute the canonical scalar score for an arbitrary evidence vector."""
+
+        if (
+            text_embedding.ndim != 2
+            or pair_cls.ndim != 2
+            or change_tokens.ndim != 3
+            or evidence_vector.ndim != 3
+        ):
+            raise ValueError("unified score inputs have invalid ranks")
+        global_score = text_embedding @ pair_cls.transpose(0, 1)
+        query_pair = F.normalize(
+            pair_cls.unsqueeze(0) + evidence_gate * evidence_vector, dim=-1
+        )
+        pair_score = torch.einsum("qd,qpd->qp", text_embedding, query_pair)
+        evidence_score = pair_score - global_score
+        change_normalized = F.normalize(change_tokens, dim=-1)
+        slot_score = torch.logsumexp(
+            torch.einsum("qd,pkd->qpk", text_embedding, change_normalized),
+            dim=-1,
+        )
+        unified_score = self.relevance_model(
+            global_score,
+            evidence_gate * evidence_score,
+            slot_score,
+        )
+        return unified_score / self.retrieval_temperature
 
     def forward_from_features(
         self,
@@ -54,6 +91,8 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         text_mask: Tensor,
         *,
         timestamps: Tensor | None = None,
+        patch_valid_mask: Tensor | None = None,
+        spatial_shapes: Tensor | None = None,
     ) -> RetrievalForwardOutput:
         validate_feature_contract(
             frame_tokens,
@@ -65,25 +104,34 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             expected_patch_tokens=self.config.expected_patch_tokens,
         )
         temporal = self.temporal_adapter(
-            frame_tokens, frame_embeddings, timestamps=timestamps
+            frame_tokens,
+            frame_embeddings,
+            timestamps=timestamps,
+            patch_valid_mask=patch_valid_mask,
+            spatial_shapes=spatial_shapes,
         )
         text_embedding = F.normalize(text_embeddings, dim=-1)
         pair = temporal.pair_cls
-        global_score = text_embedding @ pair.transpose(0, 1)
         evidence = self.evidence_bottleneck(
             text_tokens,
             text_mask,
             temporal.temporal_patch_tokens,
             frame_count=temporal.frame_count,
             patch_count=temporal.patch_count,
+            patch_valid_mask=temporal.patch_valid_mask,
+            spatial_shapes=temporal.spatial_shapes,
         )
         pair_for_query = F.normalize(
             pair.unsqueeze(0) + evidence.evidence_gate * evidence.evidence_vector,
             dim=-1,
         )
-        score = (
-            torch.einsum("qd,qpd->qp", text_embedding, pair_for_query)
-            / self.retrieval_temperature
+        global_score = text_embedding @ pair.transpose(0, 1)
+        score = self.unified_score_from_evidence(
+            text_embedding,
+            pair,
+            temporal.change_tokens,
+            evidence.evidence_gate,
+            evidence.evidence_vector,
         )
         return RetrievalForwardOutput(
             score,
@@ -105,6 +153,8 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         spatial_shapes: Tensor | None = None,
         content_mask: Tensor | None = None,
         timestamps: Tensor | None = None,
+        native_image_size: Tensor | None = None,
+        transform_hash: str | None = None,
     ) -> RetrievalForwardOutput:
         if self.backbone is None:
             raise RuntimeError("raw-input forward requires a Siglip2Backbone")
@@ -112,6 +162,8 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             pixel_values,
             pixel_attention_mask=pixel_attention_mask,
             spatial_shapes=spatial_shapes,
+            native_image_size=native_image_size,
+            transform_hash=transform_hash,
         )
         text: TextEncoding = self.backbone.encode_text(
             input_ids,
@@ -125,6 +177,8 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             text.pooled_embedding,
             text.attention_mask,
             timestamps=timestamps,
+            patch_valid_mask=image.patch_valid_mask,
+            spatial_shapes=image.spatial_shapes,
         )
 
     def trainable_parameter_report(self) -> dict[str, dict[str, int]]:
@@ -132,6 +186,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         for name, module in (
             ("temporal_adapter", self.temporal_adapter),
             ("evidence_bottleneck", self.evidence_bottleneck),
+            ("relevance_model", self.relevance_model),
             ("retrieval_temperature", nn.ParameterList([self.log_temperature])),
         ):
             ps = list(module.parameters())

@@ -415,7 +415,7 @@ def test_temporal_adapter_supports_variable_sequence_lengths_and_reversal():
     assert torch.allclose(forward.pair_cls, restored.pair_cls)
 
 
-def test_minimal_temporal_adapter_has_one_pair_token_and_no_frame_cls_tokens():
+def test_temporal_adapter_exposes_sequence_and_change_tokens():
     adapter = TemporalTransformerAdapter(Siglip2TemporalConfig())
     assert not hasattr(adapter, "frame_type")
     assert all("frame_type" not in name for name, _ in adapter.named_parameters())
@@ -424,7 +424,8 @@ def test_minimal_temporal_adapter_has_one_pair_token_and_no_frame_cls_tokens():
         torch.randn(1, 2, 768),
     )
     assert output.temporal_patch_tokens.shape == (1, 512, 768)
-    assert not hasattr(output, "frame_cls")
+    assert output.frame_cls.shape == (1, 2, 768)
+    assert output.change_tokens.shape == (1, 4, 768)
 
 
 def test_text_evidence_mask_excludes_padding_and_special_tokens():

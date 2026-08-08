@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 
 import torch
@@ -8,6 +7,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from ..config.schema import Siglip2TemporalConfig
+from ..contracts import normalize_patch_metadata
 
 
 @dataclass
@@ -17,10 +17,11 @@ class EvidenceOutput:
     evidence_map: Tensor
     evidence_vector: Tensor
     evidence_gate: Tensor
+    evidence_map_valid_mask: Tensor
 
 
 class EvidenceBottleneck(nn.Module):
-    """One text-token-to-temporal-patch evidence path used by the final score."""
+    """Query-conditioned evidence over padded, variable-resolution tokens."""
 
     def __init__(self, config: Siglip2TemporalConfig) -> None:
         super().__init__()
@@ -42,6 +43,8 @@ class EvidenceBottleneck(nn.Module):
         *,
         frame_count: int,
         patch_count: int,
+        patch_valid_mask: Tensor | None = None,
+        spatial_shapes: Tensor | None = None,
     ) -> EvidenceOutput:
         if text_tokens.ndim != 3 or text_mask.ndim != 2 or visual_tokens.ndim != 3:
             raise ValueError("evidence inputs must be [Q,L,D], [Q,L] and [P,M,D]")
@@ -51,12 +54,17 @@ class EvidenceBottleneck(nn.Module):
             raise ValueError("evidence dimensions do not match hidden size")
         if m != frame_count * patch_count:
             raise ValueError("visual token count does not match temporal dimensions")
-        valid = text_mask.bool()
-        if torch.any(valid.sum(dim=1) == 0):
+        valid_text = text_mask.bool()
+        if torch.any(valid_text.sum(dim=1) == 0):
             raise ValueError("every query needs at least one valid text token")
+
+        visual_view = visual_tokens.reshape(p, frame_count, patch_count, vd)
+        visual_valid, visual_shapes = normalize_patch_metadata(
+            visual_view, patch_valid_mask, spatial_shapes
+        )
+        flat_visual_valid = visual_valid.reshape(p, m)
         # Keep the exact operation differentiable while bounding the largest
-        # temporary to Q_chunk x P_chunk x L x M.  The old implementation
-        # materialized Q x P x L x M and could silently exceed H100 memory.
+        # temporary to Q_chunk x P_chunk x L x M.
         text_normalized = F.normalize(text_tokens, dim=-1)
         visual_normalized = F.normalize(visual_tokens, dim=-1)
         query_chunk = min(self.query_chunk_size, q)
@@ -64,17 +72,16 @@ class EvidenceBottleneck(nn.Module):
         logits_rows: list[Tensor] = []
         weight_rows: list[Tensor] = []
         vector_rows: list[Tensor] = []
-        # ``torch.finfo(dtype).min`` is mathematically valid but passing the
-        # BF16 Python float through ``masked_fill`` overflows in current
-        # PyTorch. A finite sentinel is sufficient: exp(-1e4) is negligible
-        # in this logsumexp while remaining representable in FP32/BF16.
+        # BF16 cannot represent the Python float produced by finfo.min in all
+        # masked_fill paths.  This finite sentinel is still far outside the
+        # useful similarity range and keeps the operation stable.
         floor = -1e4
         for query_start in range(0, q, query_chunk):
             query_end = min(query_start + query_chunk, q)
             query_logits: list[Tensor] = []
             query_weights: list[Tensor] = []
             query_vectors: list[Tensor] = []
-            query_mask = valid[query_start:query_end]
+            query_mask = valid_text[query_start:query_end]
             for pair_start in range(0, p, pair_chunk):
                 pair_end = min(pair_start + pair_chunk, p)
                 similarity = torch.einsum(
@@ -86,6 +93,9 @@ class EvidenceBottleneck(nn.Module):
                     ~query_mask[:, None, :, None], floor
                 )
                 block_logits = torch.logsumexp(similarity, dim=2)
+                block_logits = block_logits.masked_fill(
+                    ~flat_visual_valid[pair_start:pair_end][None, :, :], floor
+                )
                 block_weights = torch.softmax(
                     block_logits / self.evidence_temperature, dim=-1
                 )
@@ -103,14 +113,43 @@ class EvidenceBottleneck(nn.Module):
         logits = torch.cat(logits_rows, dim=0)
         weights = torch.cat(weight_rows, dim=0)
         vector = torch.cat(vector_rows, dim=0)
-        mapped = weights.reshape(q, p, frame_count, patch_count)
-        side = math.isqrt(patch_count)
-        if side * side != patch_count:
-            raise ValueError("evidence map requires square native patch grid")
+
+        max_height = int(visual_shapes[..., 0].max().item())
+        max_width = int(visual_shapes[..., 1].max().item())
+        mapped = torch.zeros(
+            q,
+            p,
+            frame_count,
+            max_height,
+            max_width,
+            device=weights.device,
+            dtype=weights.dtype,
+        )
+        map_valid = torch.zeros(
+            p,
+            frame_count,
+            max_height,
+            max_width,
+            device=weights.device,
+            dtype=torch.bool,
+        )
+        weight_view = weights.reshape(q, p, frame_count, patch_count)
+        for pair_index in range(p):
+            for frame_index in range(frame_count):
+                height = int(visual_shapes[pair_index, frame_index, 0].item())
+                width = int(visual_shapes[pair_index, frame_index, 1].item())
+                count = height * width
+                mapped[
+                    :, pair_index, frame_index, :height, :width
+                ] = weight_view[
+                    :, pair_index, frame_index, :count
+                ].reshape(q, height, width)
+                map_valid[pair_index, frame_index, :height, :width] = True
         return EvidenceOutput(
-            logits,
-            weights,
-            mapped.reshape(q, p, frame_count, side, side),
-            vector,
-            self.evidence_gate,
+            evidence_logits=logits,
+            evidence_weights=weights,
+            evidence_map=mapped,
+            evidence_vector=vector,
+            evidence_gate=self.evidence_gate,
+            evidence_map_valid_mask=map_valid,
         )

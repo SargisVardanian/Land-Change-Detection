@@ -25,6 +25,11 @@ except ImportError:
 class ImageEncoding:
     patch_tokens: Tensor
     pooled_embedding: Tensor
+    patch_valid_mask: Tensor | None = None
+    spatial_shapes: Tensor | None = None
+    native_image_size: Tensor | None = None
+    processed_patch_grid: Tensor | None = None
+    transform_hash: str | None = None
 
 
 @dataclass
@@ -38,7 +43,7 @@ def _scalar_token_id(value: Any, *, name: str) -> int:
     """Validate a tokenizer special-token id at the model boundary."""
 
     if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{name} must be an integer, got {value!r}")
+        raise TypeError(f"{name} must be an integer, got {value!r}")
     if value < 0:
         raise ValueError(f"{name} must be non-negative, got {value}")
     return value
@@ -55,7 +60,7 @@ def validate_tokenizer_contract(tokenizer: Any, embedding_vocab_size: int) -> di
 
     if embedding_vocab_size <= 0:
         raise ValueError("embedding_vocab_size must be positive")
-    tokenizer_vocab_size = int(getattr(tokenizer, "vocab_size"))
+    tokenizer_vocab_size = int(tokenizer.vocab_size)
     if tokenizer_vocab_size != embedding_vocab_size:
         raise ValueError(
             "tokenizer and model embedding vocabularies differ: "
@@ -98,7 +103,7 @@ def synchronize_tokenizer_config(model: Any, contract: dict[str, Any]) -> dict[s
 
     ids = contract.get("special_token_ids")
     if not isinstance(ids, dict):
-        raise ValueError("tokenizer contract has no special_token_ids")
+        raise TypeError("tokenizer contract has no special_token_ids")
     text_model = getattr(model, "text_model", None)
     text_config = getattr(text_model, "config", None)
     model_config = getattr(getattr(model, "config", None), "text_config", None)
@@ -171,7 +176,7 @@ class Siglip2Backbone(nn.Module):
         # The tokenizer is loaded before the model so the model constructor can
         # be supplied a corrected nested text config for the pinned local
         # checkpoint.  The actual embedding size is checked again after load.
-        tokenizer_vocab_size = int(getattr(tokenizer, "vocab_size"))
+        tokenizer_vocab_size = int(tokenizer.vocab_size)
         tokenizer_contract = {
             "tokenizer_class": type(tokenizer).__name__,
             "tokenizer_vocab_size": tokenizer_vocab_size,
@@ -196,11 +201,18 @@ class Siglip2Backbone(nn.Module):
         )
         self.runtime_class = type(self.model).__name__
         self.is_fixed_siglip = self.runtime_class == "SiglipModel"
+        self.is_naflex = "Siglip2" in self.runtime_class and not self.is_fixed_siglip
         self.vision_model, self.text_model = (
             self.model.vision_model,
             self.model.text_model,
         )
         self.hidden_size = int(self.vision_model.config.hidden_size)
+        patch_size = getattr(self.vision_model.config, "patch_size", 16)
+        if isinstance(patch_size, (list, tuple)):
+            if len(patch_size) != 2 or patch_size[0] != patch_size[1]:
+                raise ValueError("only square SigLIP patch sizes are supported")
+            patch_size = patch_size[0]
+        self.patch_size = int(patch_size)
         if int(self.text_model.config.hidden_size) != self.hidden_size:
             raise ValueError("SigLIP vision/text hidden sizes differ")
         embedding_vocab_size = int(self.text_model.get_input_embeddings().num_embeddings)
@@ -266,10 +278,21 @@ class Siglip2Backbone(nn.Module):
         return self
 
     @staticmethod
-    def _default_spatial_shapes(pixel_values: Tensor) -> Tensor:
+    def _default_spatial_shapes(
+        pixel_values: Tensor, *, patch_size: int
+    ) -> Tensor:
+        if pixel_values.ndim == 4:
+            n = int(pixel_values.shape[1])
+            side = int(n**0.5)
+            grid = (side, side) if side * side == n else (1, n)
+            return torch.tensor(
+                [grid], dtype=torch.long, device=pixel_values.device
+            ).repeat(pixel_values.shape[0], 1)
         h, w = pixel_values.shape[-2:]
         return torch.tensor(
-            [[h, w]], dtype=torch.long, device=pixel_values.device
+            [[max(1, h // patch_size), max(1, w // patch_size)]],
+            dtype=torch.long,
+            device=pixel_values.device,
         ).repeat(pixel_values.shape[0], 1)
 
     def _vision_forward(
@@ -366,34 +389,108 @@ class Siglip2Backbone(nn.Module):
         *,
         pixel_attention_mask: Tensor | None = None,
         spatial_shapes: Tensor | None = None,
+        native_image_size: Tensor | None = None,
+        transform_hash: str | None = None,
     ) -> ImageEncoding:
-        if pixel_values.ndim != 5:
-            raise ValueError("pixel_values must be [B,T,C,H,W]")
-        b, t, c, h, w = pixel_values.shape
-        flat = pixel_values.reshape(b * t, c, h, w)
-        if pixel_attention_mask is None:
-            pixel_attention_mask = torch.ones(
-                (b * t, h, w), dtype=torch.bool, device=pixel_values.device
+        if pixel_values.ndim not in (4, 5):
+            raise ValueError(
+                "pixel_values must be [B,T,C,H,W] FixRes or [B,T,N,patch_dim] NaFlex"
             )
+        b, t = pixel_values.shape[:2]
+        flat = pixel_values.reshape(b * t, *pixel_values.shape[2:])
+        input_patch_count = int(pixel_values.shape[2]) if pixel_values.ndim == 4 else None
+        if pixel_values.ndim == 5 and self.is_naflex:
+            raise ValueError(
+                "NaFlex requires processor patch tensors [B,T,N,patch_dim]; "
+                "raw image tensors would hide the explicit patch budget"
+            )
+
+        if spatial_shapes is None:
+            spatial_shapes_flat = self._default_spatial_shapes(
+                flat, patch_size=self.patch_size
+            )
+        elif spatial_shapes.ndim == 3 and spatial_shapes.shape[:2] == (b, t):
+            spatial_shapes_flat = spatial_shapes.reshape(b * t, 2)
+        elif spatial_shapes.ndim == 2 and spatial_shapes.shape == (b * t, 2):
+            spatial_shapes_flat = spatial_shapes
         else:
-            pixel_attention_mask = pixel_attention_mask.reshape(
-                b * t, *pixel_attention_mask.shape[-2:]
-            )
-        spatial_shapes = (
-            self._default_spatial_shapes(flat)
-            if spatial_shapes is None
-            else spatial_shapes.reshape(b * t, 2).to(
-                device=pixel_values.device, dtype=torch.long
-            )
+            raise ValueError("spatial_shapes must be [B,T,2] or [B*T,2]")
+        spatial_shapes_flat = spatial_shapes_flat.to(
+            device=pixel_values.device, dtype=torch.long
         )
-        output = self._vision_forward(flat, pixel_attention_mask, spatial_shapes)
+
+        if pixel_attention_mask is not None:
+            if (
+                pixel_attention_mask.ndim == 3
+                and pixel_attention_mask.shape[:2] == (b, t)
+            ) or (
+                pixel_attention_mask.ndim == 2
+                and pixel_attention_mask.shape[0] == b * t
+            ):
+                pixel_attention_mask = pixel_attention_mask.reshape(b * t, -1)
+            else:
+                raise ValueError(
+                    "pixel_attention_mask must be [B,T,N] or [B*T,N] patch mask"
+                )
+            pixel_attention_mask = pixel_attention_mask.to(
+                device=pixel_values.device, dtype=torch.bool
+            )
+        elif self.is_naflex:
+            if input_patch_count is None:
+                raise ValueError("NaFlex patch mask is required for patch tensors")
+            pixel_attention_mask = torch.arange(
+                input_patch_count, device=pixel_values.device
+            ).view(1, -1) < (
+                spatial_shapes_flat[:, 0] * spatial_shapes_flat[:, 1]
+            ).unsqueeze(1)
+        output = self._vision_forward(
+            flat, pixel_attention_mask, spatial_shapes_flat
+        )
         tokens = output.last_hidden_state.reshape(
             b, t, output.last_hidden_state.shape[1], -1
         )
         pooled = output.pooler_output.reshape(b, t, -1)
         if tokens.shape[-1] != self.hidden_size or pooled.shape[-1] != self.hidden_size:
             raise ValueError("native SigLIP-2 output dimension mismatch")
-        return ImageEncoding(tokens, pooled)
+        output_patch_count = int(tokens.shape[2])
+        if pixel_attention_mask is None:
+            patch_valid_mask = torch.ones(
+                b * t,
+                output_patch_count,
+                dtype=torch.bool,
+                device=tokens.device,
+            )
+        elif pixel_attention_mask.shape[1] == output_patch_count:
+            patch_valid_mask = pixel_attention_mask
+        else:
+            raise ValueError(
+                "processor patch mask length does not match native visual token count"
+            )
+        if torch.any(
+            spatial_shapes_flat[:, 0] * spatial_shapes_flat[:, 1] > output_patch_count
+        ):
+            raise ValueError("processor spatial_shapes exceed native visual token count")
+        shapes = spatial_shapes_flat.reshape(b, t, 2)
+        if native_image_size is not None:
+            if native_image_size.ndim == 3 and native_image_size.shape[:2] == (b, t):
+                native_image_size = native_image_size.to(
+                    device=tokens.device, dtype=torch.long
+                )
+            elif native_image_size.ndim == 2 and native_image_size.shape == (b * t, 2):
+                native_image_size = native_image_size.reshape(b, t, 2).to(
+                    device=tokens.device, dtype=torch.long
+                )
+            else:
+                raise ValueError("native_image_size must be [B,T,2] or [B*T,2]")
+        return ImageEncoding(
+            patch_tokens=tokens,
+            pooled_embedding=pooled,
+            patch_valid_mask=patch_valid_mask.reshape(b, t, output_patch_count),
+            spatial_shapes=shapes,
+            native_image_size=native_image_size,
+            processed_patch_grid=shapes,
+            transform_hash=transform_hash,
+        )
 
     def encode_text(
         self,
@@ -423,6 +520,8 @@ class Siglip2Backbone(nn.Module):
 
         return {
             "runtime_class": self.runtime_class,
+            "is_naflex": self.is_naflex,
+            "patch_size": self.patch_size,
             "vision_backbone": report(self.vision_model),
             "text_backbone": report(self.text_model),
             "phase_b_top_blocks": self.phase_b_top_blocks,

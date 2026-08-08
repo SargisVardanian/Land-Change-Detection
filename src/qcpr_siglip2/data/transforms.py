@@ -29,3 +29,5 @@ def assert_pair_geometry(t1: Image.Image, t2: Image.Image) -> None:
 
     if t1.mode != t2.mode:
         raise ValueError(f"temporal pair modes differ: {t1.mode!r} vs {t2.mode!r}")
+    if t1.size != t2.size:
+        raise ValueError(f"temporal pair sizes differ: {t1.size!r} vs {t2.size!r}")

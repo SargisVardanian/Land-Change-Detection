@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -54,6 +55,68 @@ def validate_feature_contract(
         )
     if t < 2:
         raise ValueError("temporal retrieval requires at least two frames")
+
+
+def normalize_patch_metadata(
+    frame_tokens: Tensor,
+    patch_valid_mask: Tensor | None = None,
+    spatial_shapes: Tensor | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Validate and normalize variable-length NaFlex patch metadata.
+
+    NaFlex pads every image to the configured patch budget.  The returned mask
+    is therefore the only authoritative indicator of image content; callers
+    must not read padded token values.  ``spatial_shapes`` is in patch-grid
+    coordinates (height, width), as returned by the SigLIP2 processor.
+    """
+
+    require_rank(frame_tokens, 4, "frame_tokens")
+    b, t, n, _ = frame_tokens.shape
+    if patch_valid_mask is not None:
+        require_rank(patch_valid_mask, 3, "patch_valid_mask")
+        if patch_valid_mask.shape != (b, t, n):
+            raise ValueError("patch_valid_mask must be [B,T,N] and align with tokens")
+        patch_valid_mask = patch_valid_mask.to(device=frame_tokens.device, dtype=torch.bool)
+    if spatial_shapes is not None:
+        require_rank(spatial_shapes, 3, "spatial_shapes")
+        if spatial_shapes.shape != (b, t, 2):
+            raise ValueError("spatial_shapes must be [B,T,2]")
+        spatial_shapes = spatial_shapes.to(device=frame_tokens.device, dtype=torch.long)
+        if torch.any(spatial_shapes <= 0):
+            raise ValueError("spatial_shapes must be positive patch-grid dimensions")
+        if torch.any(spatial_shapes[..., 0] * spatial_shapes[..., 1] > n):
+            raise ValueError("spatial_shapes exceed the padded patch-token budget")
+
+    if patch_valid_mask is None and spatial_shapes is None:
+        side = math.isqrt(n)
+        grid = (side, side) if side * side == n else (1, n)
+        spatial_shapes = torch.tensor(
+            grid, dtype=torch.long, device=frame_tokens.device
+        ).view(1, 1, 2).expand(b, t, 2).clone()
+        patch_valid_mask = torch.ones(
+            (b, t, n), dtype=torch.bool, device=frame_tokens.device
+        )
+    elif spatial_shapes is None:
+        counts = patch_valid_mask.sum(dim=-1)
+        shapes: list[tuple[int, int]] = []
+        for count in counts.detach().cpu().reshape(-1).tolist():
+            side = math.isqrt(int(count))
+            shapes.append((side, side) if side * side == int(count) else (1, int(count)))
+        spatial_shapes = torch.tensor(
+            shapes, dtype=torch.long, device=frame_tokens.device
+        ).reshape(b, t, 2)
+    elif patch_valid_mask is None:
+        counts = spatial_shapes[..., 0] * spatial_shapes[..., 1]
+        patch_valid_mask = torch.arange(n, device=frame_tokens.device).view(1, 1, n) < counts.unsqueeze(-1)
+    else:
+        expected = spatial_shapes[..., 0] * spatial_shapes[..., 1]
+        actual = patch_valid_mask.sum(dim=-1)
+        if not torch.equal(expected, actual):
+            raise ValueError("patch_valid_mask counts disagree with spatial_shapes")
+
+    if torch.any(patch_valid_mask.sum(dim=-1) == 0):
+        raise ValueError("every frame must contain at least one valid patch token")
+    return patch_valid_mask, spatial_shapes
 
 
 def validate_relevance_masks(

@@ -154,7 +154,11 @@ def load_batch_rows(
 
 
 def process_images(
-    processor: Any, pairs: list[dict[str, Any]], device: torch.device
+    processor: Any,
+    pairs: list[dict[str, Any]],
+    device: torch.device,
+    *,
+    max_num_patches: int = 256,
 ) -> tuple[
     torch.Tensor, torch.Tensor | None, torch.Tensor | None, list[dict[str, str]]
 ]:
@@ -166,7 +170,9 @@ def process_images(
             with Image.open(path) as image:
                 images.append(image.convert("RGB"))
             image_meta.append({"path": str(path), "sha256": sha256(path)})
-    encoded = processor(images=images, return_tensors="pt")
+    encoded = processor(
+        images=images, max_num_patches=max_num_patches, return_tensors="pt"
+    )
     pixels = (
         encoded["pixel_values"]
         .reshape(len(pairs), 2, *encoded["pixel_values"].shape[1:])
@@ -348,7 +354,9 @@ def deterministic_roundtrip(args: argparse.Namespace) -> int:
     pairs, query_rows, _ = load_batch_rows(
         args.train_manifest, args.physical_batch_size, args.captions_per_pair
     )
-    pixels, pixel_mask, shapes, _ = process_images(processor, pairs, device)
+    pixels, pixel_mask, shapes, _ = process_images(
+        processor, pairs, device, max_num_patches=args.max_num_patches
+    )
     input_ids, attention_mask, _ = process_text(processor, query_rows, device)
     with torch.no_grad(), torch.autocast(device_type=device.type, dtype=torch.bfloat16):
         output = model(
@@ -385,6 +393,7 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--physical-batch-size", type=int, default=8)
     parser.add_argument("--captions-per-pair", type=int, default=2)
+    parser.add_argument("--max-num-patches", type=int, default=256)
     parser.add_argument("--roundtrip-only", action="store_true")
     parser.add_argument("--checkpoint")
     parser.add_argument("--reference-scores")
@@ -423,7 +432,9 @@ def main() -> int:
         args.train_manifest, args.physical_batch_size, args.captions_per_pair
     )
     image_start = time.perf_counter()
-    pixels, pixel_mask, shapes, image_meta = process_images(processor, pairs, device)
+    pixels, pixel_mask, shapes, image_meta = process_images(
+        processor, pairs, device, max_num_patches=args.max_num_patches
+    )
     torch.cuda.synchronize()
     image_decode_seconds = time.perf_counter() - image_start
     input_ids, attention_mask, _texts = process_text(processor, query_rows, device)
@@ -460,14 +471,20 @@ def main() -> int:
     write_json(
         run / "model_contract.json",
         {
-            "architecture": "SigLIP2_fixed_checkpoint_native_SiglipModel_plus_two_layer_temporal_adapter",
+            "architecture": "SigLIP2_resolution_flexible_temporal_adapter",
             "expected_code_sha": args.expected_code_sha,
             "hidden_size": 768,
-            "native_patch_contract": [args.physical_batch_size, 2, 256, 768],
+            "native_patch_contract": [
+                args.physical_batch_size,
+                2,
+                int(args.max_num_patches),
+                Siglip2TemporalConfig().hidden_size,
+            ],
             "query_count": len(query_rows),
             "score_matrix": list(positive.shape),
             "evidence_map": [len(query_rows), len(pairs), 2, 16, 16],
             "multi_positive_runtime": bool(multi_positive_supported),
+            "max_num_patches": args.max_num_patches,
         },
     )
     write_json(
@@ -477,7 +494,7 @@ def main() -> int:
             "captions_per_pair": args.captions_per_pair,
             "query_count": len(query_rows),
             "score_matrix": list(positive.shape),
-            "native_visual_tokens": 256,
+            "native_visual_tokens": int(args.max_num_patches),
             "precision": "bf16",
             "gradient_accumulation": 1,
         },
@@ -694,6 +711,8 @@ def main() -> int:
         str(args.physical_batch_size),
         "--captions-per-pair",
         str(args.captions_per_pair),
+        "--max-num-patches",
+        str(args.max_num_patches),
         "--checkpoint",
         str(checkpoint),
         "--reference-scores",

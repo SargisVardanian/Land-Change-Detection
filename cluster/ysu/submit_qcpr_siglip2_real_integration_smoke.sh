@@ -17,6 +17,7 @@ set -eu
 STEPS=${STEPS:-8}
 PHYSICAL_BATCH_SIZE=${PHYSICAL_BATCH_SIZE:-8}
 CAPTIONS_PER_PAIR=${CAPTIONS_PER_PAIR:-2}
+MAX_NUM_PATCHES=${MAX_NUM_PATCHES:-256}
 SEED=${SEED:-20260805}
 PARTITION=${PARTITION:-research}
 QOS=${QOS:-researcher}
@@ -31,6 +32,7 @@ test "$STEPS" -gt 0
 test "$STEPS" -le 32
 test "$PHYSICAL_BATCH_SIZE" -gt 0
 test "$CAPTIONS_PER_PAIR" -gt 0
+test "$MAX_NUM_PATCHES" -gt 0
 test -d "$WORKTREE"
 test "$(git -C "$WORKTREE" rev-parse HEAD)" = "$EXPECTED_SHA"
 test -z "$(git -C "$WORKTREE" status --porcelain)"
@@ -44,7 +46,7 @@ test -s "$SIGLIP2_MODEL/model.safetensors"
 mkdir -p "$RUN_ROOT"
 export EXPECTED_SHA RUN_ROOT CONFIG_PATH DATA_RELEASE WORKTREE PYTHON
 export SIGLIP2_MODEL TRAIN_MANIFEST DEVELOPMENT_MANIFEST
-export STEPS PHYSICAL_BATCH_SIZE CAPTIONS_PER_PAIR SEED
+export STEPS PHYSICAL_BATCH_SIZE CAPTIONS_PER_PAIR MAX_NUM_PATCHES SEED
 
 sbatch \
   --export=ALL \
@@ -80,4 +82,5 @@ exec \"\$PYTHON\" \"\$WORKTREE/scripts/run_qcpr_siglip2_real_integration_smoke.p
   --steps \"\$STEPS\" \\
   --physical-batch-size \"\$PHYSICAL_BATCH_SIZE\" \\
   --captions-per-pair \"\$CAPTIONS_PER_PAIR\" \\
+  --max-num-patches \"\$MAX_NUM_PATCHES\" \\
   --seed \"\$SEED\""

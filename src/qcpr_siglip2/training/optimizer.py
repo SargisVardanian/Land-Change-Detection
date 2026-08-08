@@ -26,6 +26,8 @@ def _no_decay(name: str) -> bool:
         or "time_projection" in lowered
         or "raw_gate" in lowered
         or "log_temperature" in lowered
+        or "slot_scale" in lowered
+        or "direction_scale" in lowered
     )
 
 
@@ -34,6 +36,8 @@ def _group_name(name: str, phase: str, top_blocks: int) -> tuple[str, float]:
         return "temporal_adapter", 1e-4
     if name.startswith("evidence_bottleneck"):
         return "evidence", 1e-5
+    if name.startswith("relevance_model"):
+        return "relevance", 1e-4
     if name == "log_temperature":
         return "retrieval_temperature", 1e-5
     if phase == "A":

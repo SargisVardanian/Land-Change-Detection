@@ -79,11 +79,14 @@
     ],
     "native_visual_contract": {
       "hidden_size": 768,
-      "patch_grid": [
-        16,
-        16
-      ],
-      "patch_tokens": 256
+      "patch_size": 16,
+      "patch_grid": "runtime [height,width] from processor spatial_shapes",
+      "patch_tokens": "runtime N; supported direct budgets 256, 576, 1024",
+      "patch_valid_mask": "[B,T,N], padded patches are invalid",
+      "native_image_size": "[B,T,2] height,width",
+      "processed_patch_grid": "[B,T,2]",
+      "transform_hash": "same synchronized transform hash for T1/T2",
+      "large_scene_policy": "bounded query-independent reducer; no extra ANN vectors"
     },
     "rejected_primary_verification_states": [
       "generated_unverified",

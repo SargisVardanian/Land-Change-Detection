@@ -25,7 +25,6 @@ from run_qcpr_siglip2_phase import (
     write_json,
     write_sha256sums,
 )
-from torch.nn import functional as F
 from transformers import AutoProcessor
 
 from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
@@ -62,6 +61,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--physical-batch-size", type=int, default=8)
     parser.add_argument("--captions-per-pair", type=int, default=2)
+    # The value is still passed explicitly to the processor.  It is not read
+    # from the processor's internal default, which is the prohibited silent
+    # 256-token cap.
+    parser.add_argument("--max-num-patches", type=int, default=256)
     parser.add_argument("--seed", type=int, default=20260805)
     return parser.parse_args()
 
@@ -111,14 +114,17 @@ def _score_from_weights(
 ) -> torch.Tensor:
     visual = output.temporal.temporal_patch_tokens[pair_index]
     vector = torch.einsum("m,md->d", weights, visual)
-    pair = F.normalize(
-        output.pair_cls[pair_index]
-        + output.evidence.evidence_gate * vector,
-        dim=-1,
+    query_vector = vector.view(1, 1, -1).expand(
+        output.text_embedding.shape[0], 1, -1
     )
-    return (
-        output.text_embedding[query_index] @ pair
-    ) / model.retrieval_temperature
+    score = model.unified_score_from_evidence(
+        output.text_embedding,
+        output.pair_cls,
+        output.temporal.change_tokens,
+        output.evidence.evidence_gate,
+        query_vector,
+    )
+    return score[query_index, pair_index]
 
 
 def _evidence_deletion(
@@ -173,17 +179,13 @@ def _detach_diagnostic(
         detached_output = model(**image_inputs, **text_inputs)
     detached_output.evidence.evidence_vector.retain_grad()
     detached_vector = detached_output.evidence.evidence_vector.detach()
-    detached_pair = F.normalize(
-        detached_output.pair_cls.unsqueeze(0)
-        + detached_output.evidence.evidence_gate * detached_vector,
-        dim=-1,
-    )
     with _device_autocast(torch.device("cuda"), torch.bfloat16):
-        detached_score = (
-            torch.einsum(
-                "qd,qpd->qp", detached_output.text_embedding, detached_pair
-            )
-            / model.retrieval_temperature
+        detached_score = model.unified_score_from_evidence(
+            detached_output.text_embedding,
+            detached_output.pair_cls,
+            detached_output.temporal.change_tokens,
+            detached_output.evidence.evidence_gate,
+            detached_vector,
         )
     detached_score[0, 0].backward()
     detached_gradient = detached_output.evidence.evidence_vector.grad
@@ -335,10 +337,12 @@ def main() -> int:
         write_json(
             run / "model_source.json",
             {
-                "repository": "google/siglip2-base-patch16-256",
+                "repository": config.backbone,
                 "local_path": args.siglip2_model,
                 "weights_sha256": sha256(Path(args.siglip2_model) / "model.safetensors"),
                 "runtime_class": backbone.runtime_class,
+                "is_naflex": backbone.is_naflex,
+                "max_num_patches": args.max_num_patches,
                 "local_files_only": True,
             },
         )
@@ -408,7 +412,12 @@ def main() -> int:
         for step in range(1, args.steps + 1):
             optimizer.zero_grad(set_to_none=True)
             image_start = time.perf_counter()
-            image_inputs = processor_image_inputs(processor, batch.pair_rows, device)
+            image_inputs = processor_image_inputs(
+                processor,
+                batch.pair_rows,
+                device,
+                max_num_patches=args.max_num_patches,
+            )
             timing["image_decode_seconds"] += time.perf_counter() - image_start
             text_start = time.perf_counter()
             text_inputs = processor_text_inputs(processor, batch.query_rows, device)

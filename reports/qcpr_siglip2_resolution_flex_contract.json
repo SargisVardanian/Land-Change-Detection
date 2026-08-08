@@ -1,0 +1,65 @@
+{
+  "status": "MODEL_V3_RESOLUTION_FLEX_CPU_CONTRACT_PASS_REAL_NAFLEX_NOT_RUN",
+  "branch": "codex/qcpr-siglip2-naflex-resolution",
+  "base_sha": "64f7fc47b785f36850a1df17047ee4115801695c",
+  "working_tree_sha": "64f7fc47b785f36850a1df17047ee4115801695c",
+  "target_backbone": "google/siglip2-base-patch16-naflex",
+  "primary_representation": "one normalized query-independent pair vector per physical item or sequence",
+  "direct_patch_budgets": [256, 576, 1024],
+  "large_scene_path": {
+    "enabled": true,
+    "reducer": "bounded query-independent learned region latents",
+    "direct_patch_token_budget": 1024,
+    "primary_ann_vectors_per_item": 1
+  },
+  "contracts": {
+    "visual_tokens": "[B,T,N,D] with T>=2 and variable N",
+    "metadata": [
+      "patch_valid_mask",
+      "spatial_shapes",
+      "native_image_size",
+      "processed_patch_grid",
+      "transform_hash",
+      "temporal_metadata"
+    ],
+    "evidence": "query-conditioned and causally included in the unified relevance score",
+    "loss": "one unified listwise retrieval loss scalar"
+  },
+  "regression_checks": {
+    "synthetic_resolution_contract": "PASS",
+    "budgets_256_576_1024": "PASS",
+    "rectangular_spatial_shapes": "PASS",
+    "padded_token_invariance": "PASS",
+    "large_scene_reducer": "PASS",
+    "explicit_processor_budget": "PASS",
+    "temporal_reversal_and_double_reversal": "PASS",
+    "evidence_gradient_and_checkpoint_roundtrip": "PASS",
+    "single_vector_ann_determinism": "PASS",
+    "focused_tests": "54 passed",
+    "compileall": "PASS",
+    "git_diff_check": "PASS",
+    "ruff": "PASS",
+    "shell_syntax": "PASS"
+  },
+  "real_validation": {
+    "real_siglip2_naflex_processor": "NOT_RUN",
+    "real_universat_or_target_backbone_loading": "NOT_RUN",
+    "real_jina_loading": "NOT_RUN",
+    "real_dataset_loader": "NOT_RUN",
+    "h100_runtime_and_vram": "NOT_RUN",
+    "mechanism_training": "NOT_AUTHORIZED",
+    "main_training": "NOT_AUTHORIZED"
+  },
+  "lineage": {
+    "local_sha": "64f7fc47b785f36850a1df17047ee4115801695c",
+    "remote_branch_sha": null,
+    "pr_6_head_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
+    "worktree_clean": false,
+    "status": "FINAL_LINEAGE_MISMATCH_BEFORE_PUBLICATION"
+  },
+  "dataset_handoff": {
+    "status": "NOT_INDEPENDENTLY_READABLE_FROM_THIS_WORKTREE",
+    "training": "BLOCKED_UNTIL_DATASET_HANDOFF_AND_AUTHORIZATION_ARE_VERIFIED",
+    "note": "No Dataset-v2 handoff was recreated in the model repository."
+  }
+}

@@ -10,6 +10,12 @@ from .manifest import (
     paired_caption_rows,
     read_jsonl,
 )
+from .naflex import (
+    assert_synchronized_pair_views,
+    patch_mask_from_spatial_shapes,
+    synchronized_transform_hash,
+    validate_patch_budget_sequence,
+)
 from .runtime import (
     RawFeatureBatch,
     build_relevance_masks,
@@ -27,6 +33,7 @@ __all__ = [
     "RawFeatureBatch",
     "SynchronizedResize",
     "assert_pair_geometry",
+    "assert_synchronized_pair_views",
     "build_relevance_masks",
     "encode_real_features",
     "encode_real_images",
@@ -37,8 +44,11 @@ __all__ = [
     "make_exact_batches",
     "ordered_id_sha256",
     "paired_caption_rows",
+    "patch_mask_from_spatial_shapes",
     "processor_image_inputs",
     "processor_text_inputs",
     "read_jsonl",
     "select_epoch_rows",
+    "synchronized_transform_hash",
+    "validate_patch_budget_sequence",
 ]
