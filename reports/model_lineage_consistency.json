@@ -1,0 +1,32 @@
+{
+  "status": "PASS_WITH_HISTORICAL_PILOT_CODE_DISTINCT",
+  "current_branch": "codex/qcpr-siglip2-temporal-training",
+  "current_local_sha": "f8c063a6625b476fbb1861f2d2c5c74c6df9f953",
+  "current_remote_sha": "f8c063a6625b476fbb1861f2d2c5c74c6df9f953",
+  "current_pr": {
+    "number": 7,
+    "state": "OPEN",
+    "draft": true,
+    "base": "codex/qcpr-model-v3-temporal-retrieval",
+    "head_sha": "f8c063a6625b476fbb1861f2d2c5c74c6df9f953",
+    "mergeable": true,
+    "merge_state": "CLEAN"
+  },
+  "worktree_clean": true,
+  "historical_pilot_code": {
+    "stage_a_and_stage_b_evaluation_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+    "interpretation": "Pilot metrics remain attributed to the code that executed them; the current SHA contains hardening and report/status synchronization only."
+  },
+  "dataset_final_handoff": {
+    "path": "contracts/qcpr_shared/handoff/dataset_final_to_model.json",
+    "status": "MISSING",
+    "training_state": "WAIT_DATASET_FINAL_HANDOFF"
+  },
+  "validation_state": {
+    "full_pytest": "670 passed, 3 skipped, 16 warnings",
+    "pyright_temporal_scope": "0 errors, 0 warnings",
+    "compileall": "PASS",
+    "shell_syntax": "PASS",
+    "git_diff_check": "PASS"
+  }
+}

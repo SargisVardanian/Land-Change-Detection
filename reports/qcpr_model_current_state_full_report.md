@@ -2,8 +2,9 @@
 
 Дата отчёта: 2026-08-08  
 Ветка: `codex/qcpr-siglip2-temporal-training`  
-Код, на котором выполнены последние пилоты и source audit: `5e49864b33f170a9f020a70b4dfa6dd1af9f507d`  
-Текущая голова ветки после config/launcher/static-analysis hardening: `8a8cd63806e80dacc2c65fabd915638f3fd47a25`
+Код, на котором выполнены последние пилоты и source audit: `5e49864b33f170a9f020a70b4dfa6dd1af9f507d`
+Текущая опубликованная голова ветки после config/launcher/static-analysis/report hardening: `f8c063a6625b476fbb1861f2d2c5c74c6df9f953`
+Исторические пилоты намеренно не переименованы: их `evaluated_code_sha` остаётся SHA, на котором они реально выполнялись.
 Локальный, удалённый и cluster SHA совпадают; worktree чистый.
 PR: #7, draft  
 Финальное Dataset-Agent handoff отсутствует; поэтому это отчёт о проверенном bounded pilot, а не о готовом production training.
