@@ -247,6 +247,8 @@ def build_difficulty_report(
         positive_sizes = [len(row.get("positive_item_ids") or []) for row in rows]
         source_counts = collections.Counter(source_of_item(item_id_from_row(row)) for row in rows)
         item_ids = {item_id_from_row(row) for row in rows if item_id_from_row(row)}
+        if scope == "source_inventory" and source is not None:
+            item_ids = {str(item.get("item_id")) for item in source_items.get(source, [])}
         image_resolutions = collections.Counter()
         gsd_values: collections.Counter[str] = collections.Counter()
         event_counts: collections.Counter[str] = collections.Counter()
@@ -890,6 +892,36 @@ def main() -> None:
         "training_launched": False,
     })
 
+    # Produce the validator evidence against a provisional checksum inventory.
+    # The validator writes outside the release first; the copied result is then
+    # included in the final immutable content index and final SHA256SUMS.
+    provisional_lines = []
+    for path in sorted(release.rglob("*")):
+        if not path.is_file() or path.name == "SHA256SUMS":
+            continue
+        relative = path.relative_to(release).as_posix()
+        provisional_lines.append(f"{sha256_file(path)}  {relative}")
+    (release / "SHA256SUMS").write_text("\n".join(provisional_lines) + "\n", encoding="utf-8")
+    validator = Path(__file__).with_name("validate_qcpr_release_contract.py")
+    validation_output = Path(f"/tmp/qcpr_validate_{release.name}.json")
+    subprocess.run(
+        [
+            str(Path("/mnt/weka/svardanyan/rs_change_project/envs/rschange/bin/python")),
+            str(validator),
+            "--release",
+            str(release),
+            "--output",
+            str(validation_output),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    validation_record = read_json(validation_output)
+    if not validation_record.get("passed"):
+        raise SystemExit("release validator did not pass before freeze")
+    shutil.copy2(validation_output, release / "audits" / "validate_qcpr_release_contract.json")
+
     # Freeze authoritative content before writing release metadata/handoff.
     def content_index_digest() -> str:
         rows = []
@@ -979,6 +1011,7 @@ def main() -> None:
         "sha256sums_path": str(release / "SHA256SUMS"),
         "model_requirements_sha256": args.model_requirements_sha,
         "core_benchmark": benchmark_contract["core_benchmark_reference"],
+        "QCPR_BITEMPORAL_CORE_BENCHMARK_V1": benchmark_contract["core_benchmark_reference"],
         "final_exact_train_manifest": str(release / "exact_core_train.jsonl"),
         "final_exact_development_manifest": str(release / "exact_core_development.jsonl"),
         "final_exact_test_manifest": str(release / "exact_core_test.jsonl"),
@@ -992,6 +1025,14 @@ def main() -> None:
         "ordered_test_query_ids_sha256": ordered_sha(test_query_ids),
         "N_TRAIN_UNIQUE_PHYSICAL_PAIRS": len(train_pair_ids),
         "N_TRAIN_EXACT_QUERIES": len(exact_train),
+        "verified_exact_query_count": len(exact_train),
+        "semantic_group_count": len(read_jsonl(release / "registries/semantic_candidate_groups.jsonl")),
+        "semantic_query_count": 0,
+        "localized_query_count": len(manifest_by_scope["localized"]),
+        "direction_query_count": len(manifest_by_scope["direction"]),
+        "stable_query_count": len(manifest_by_scope["stable"]),
+        "long_series_query_count": len(manifest_by_scope["long_series"]),
+        "disabled_generic_no_change_row_count": generic_disabled,
         "counts": counts,
         "BITEMPORAL_EXACT_READY": True,
         "SEMANTIC_EVAL_READY": False,
