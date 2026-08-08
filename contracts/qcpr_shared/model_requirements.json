@@ -35,7 +35,7 @@
       "query_temporal_extent"
     ]
   },
-  "maximum_frames": 16,
+  "maximum_frames": 8,
   "minimum_frames": 2,
   "owner": "model",
   "query_scopes": [
@@ -89,6 +89,10 @@
       "generated_unverified",
       "derived_eval"
     ],
+    "primary_exact_training_verification": [
+      "human",
+      "human_rewritten"
+    ],
     "required_hashes": [
       "release_sha256",
       "train_manifest_sha256",
@@ -110,8 +114,11 @@
       "variable_length": true
     },
     "training_views": [
-      "retrieval_exact_train_v2.jsonl",
-      "retrieval_exact_development_v2.jsonl"
+      "retrieval_exact_train_v2.jsonl"
+    ],
+    "evaluation_views": [
+      "retrieval_exact_development_v2.jsonl",
+      "retrieval_exact_test_v2.jsonl"
     ]
   },
   "source_balance": {
