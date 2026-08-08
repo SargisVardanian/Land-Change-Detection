@@ -416,4 +416,17 @@ P2_SEMANTIC                     = BLOCKED_DATASET_CONTRACT
 P2_LONG_SERIES                  = BLOCKED_DATASET_CONTRACT
 ```
 
+## 17. Последняя hardening-проверка после этого отчёта
+
+В model-only ветку добавлены строгие защитные проверки:
+
+- `scripts/validate_temporal_siglip_final_handoff.py` возвращает `WAIT_DATASET_FINAL_HANDOFF` с non-zero exit code, если final handoff отсутствует;
+- при наличии handoff проверяются exact train/development/test manifests, SHA256, `N_TRAIN_UNIQUE_PHYSICAL_PAIRS`, capability flags и отсутствие mask/dense-label полей в primary manifests;
+- `run_temporal_siglip.py --final-handoff` запрещает запуск с другим release или manifest;
+- финальный driver пишет `caption_exposure.json` и `source_exposure.json`;
+- `--max-pair-presentations` прерывает run при превышении exposure ceiling;
+- текущий resolution decision зафиксирован как provisional `SigLIP2 B/16 256`, а 384 comparison не запускался.
+
+Focused cluster contract: `4 passed`. Final handoff по-прежнему отсутствует, поэтому эти gates являются подготовкой и не являются разрешением на final GPU training.
+
 Итог: текущий TemporalSigLIP — хороший технический retrieval baseline с положительным bounded Stage-B сигналом. Это ещё не финальная модель для разнообразного Dataset-v2 и не query-conditioned soft segmentation. Следующий правильный шаг — закрыть final Dataset Agent handoff, провести три clean seeds на exact core, затем отдельно разрешить causal evidence mechanism pilot.
