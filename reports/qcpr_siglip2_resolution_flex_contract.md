@@ -38,11 +38,10 @@ handoff is not independently readable here. No training job was submitted.
 
 ## Publication lineage
 
-At report creation, the local implementation changes are uncommitted. The
-local base is `64f7fc47b785f36850a1df17047ee4115801695c`; PR #6 still points
-to `9d95181c3825c2cc49532d14adf1e628a6e746d3`, so the immutable published
-lineage gate is not yet satisfied. This report must be updated after the
-implementation is committed and the exact commit is pushed to the PR branch.
+The implementation was published to PR #6 through the fast-forward lineage
+`9d95181c…` → `cf88efd…` → `7277f6b…` on
+`codex/qcpr-model-v3-temporal-retrieval`. The final metadata commit is checked
+again in `reports/final_lineage.json` after this report is committed.
 
 ## Dataset boundary
 

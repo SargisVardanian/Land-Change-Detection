@@ -1,8 +1,8 @@
 {
   "status": "MODEL_V3_RESOLUTION_FLEX_CPU_CONTRACT_PASS_REAL_NAFLEX_NOT_RUN",
-  "branch": "codex/qcpr-siglip2-naflex-resolution",
+  "branch": "codex/qcpr-model-v3-temporal-retrieval",
   "base_sha": "64f7fc47b785f36850a1df17047ee4115801695c",
-  "working_tree_sha": "64f7fc47b785f36850a1df17047ee4115801695c",
+  "implementation_sha": "cf88efd13b01bd20a91e99289994f8434bd473ae",
   "target_backbone": "google/siglip2-base-patch16-naflex",
   "primary_representation": "one normalized query-independent pair vector per physical item or sequence",
   "direct_patch_budgets": [256, 576, 1024],
@@ -51,11 +51,8 @@
     "main_training": "NOT_AUTHORIZED"
   },
   "lineage": {
-    "local_sha": "64f7fc47b785f36850a1df17047ee4115801695c",
-    "remote_branch_sha": null,
-    "pr_6_head_sha": "9d95181c3825c2cc49532d14adf1e628a6e746d3",
-    "worktree_clean": false,
-    "status": "FINAL_LINEAGE_MISMATCH_BEFORE_PUBLICATION"
+    "published_parent_sha": "7277f6b1af2bd9158c19a1c97861a98efd8f6a8d",
+    "status": "PUBLISHED_LINEAGE_VERIFIED_BEFORE_FINAL_REPORT_COMMIT"
   },
   "dataset_handoff": {
     "status": "NOT_INDEPENDENTLY_READABLE_FROM_THIS_WORKTREE",
