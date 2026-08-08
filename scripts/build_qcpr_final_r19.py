@@ -160,7 +160,6 @@ def add_lineage(row: dict[str, Any], release_name: str, status: str, training_en
         "source_release": "qcpr_bitemporal_v2_train_20260808_final_r18",
         "projection_only": False,
         "native_metadata_added": True,
-        "training_status": status,
     }
     provenance = dict(result.get("provenance") or {})
     provenance["release_lineage"] = release_name
@@ -708,7 +707,8 @@ def main() -> None:
 
     purpose_counts = collections.Counter(str(row.get("query_classification")) for row in updated_queries)
     direction_count = len(manifest_by_scope["direction"])
-    generic_disabled = sum(1 for row in disabled_rows if row.get("query_classification") == "generic_no_change" or row.get("query_scope") == "generic_no_change")
+    generic_disabled = sum(1 for row in diagnostic_rows if row.get("query_classification") == "generic_no_change" or row.get("query_scope") == "generic_no_change")
+    unsupported_disabled = sum(1 for row in disabled_rows if row.get("query_classification") == "unsupported_or_reject")
     purpose_audit = {
         "schema_version": "qcpr-query-purpose-audit-v2",
         "classifier_policy": "normalized collision + semantic neighbours + visual evidence + positive-set analysis + stratified human review; phrase blacklist is not the primary classifier",
@@ -734,7 +734,7 @@ def main() -> None:
         "source": "evaluation_sidecars/dense.jsonl",
     })
 
-    difficulty = build_difficulty_report(release, enriched_items, updated_queries, manifest_by_scope, disabled_rows)
+    difficulty = build_difficulty_report(release, enriched_items, updated_queries, manifest_by_scope, disabled_rows + diagnostic_rows)
     write_json(release / "dataset_difficulty_report.json", difficulty)
 
     calibration = read_json(release / "tier_a_calibration_audit.json")
@@ -810,6 +810,7 @@ def main() -> None:
         "long_series_train_queries": len(read_jsonl(manifest_dir / "long_series_train.jsonl")),
         "direction_queries": len(manifest_by_scope["direction"]),
         "disabled_generic_no_change_rows": generic_disabled,
+        "disabled_unsupported_or_reject_rows": unsupported_disabled,
         "evaluation_mask_sidecars": mask_count,
         "semantic_verified_groups": 0,
         "localized_verified_queries": 0,
@@ -824,6 +825,9 @@ def main() -> None:
         "EXACT_PAPER_CALIBRATION_READY": False,
         "AUTHORIZE_TEMPORALSIGLIP_CORE_TRAINING": True,
         "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": False,
+        "core_training_allowed": True,
+        "main_training_allowed": False,
+        "BITEMPORAL_EXACT_READY": True,
         "SEMANTIC_EVAL_READY": False,
         "SEMANTIC_TRAIN_READY": False,
         "STABLE_EVAL_READY": False,
@@ -856,6 +860,7 @@ def main() -> None:
             "registration_state": {"UNKNOWN_REGISTRATION": len(enriched_items)},
         },
         "paper_calibration": calibration_status,
+        "evaluation_mask_sidecar_schema": "evaluation_sidecars/mask_sidecar_contract.json",
         "model_training_policy": "core exact only; expanded main training not authorized",
         "model_requirements_sha256": args.model_requirements_sha,
     }
@@ -988,6 +993,19 @@ def main() -> None:
         "N_TRAIN_UNIQUE_PHYSICAL_PAIRS": len(train_pair_ids),
         "N_TRAIN_EXACT_QUERIES": len(exact_train),
         "counts": counts,
+        "BITEMPORAL_EXACT_READY": True,
+        "SEMANTIC_EVAL_READY": False,
+        "SEMANTIC_TRAIN_READY": False,
+        "STABLE_EVAL_READY": False,
+        "LOCALIZED_EVAL_READY": False,
+        "LOCALIZED_TRAIN_READY": False,
+        "DIRECTION_EVAL_READY": False,
+        "DIRECTION_TRAIN_READY": False,
+        "LONG_SERIES_EVAL_READY": False,
+        "LONG_SERIES_TRAIN_READY": False,
+        "DUBAI_EXTERNAL_READY": False,
+        "core_training_allowed": True,
+        "main_training_allowed": False,
         "artifact_hashes": artifact_hashes,
         "registry_hashes": {
             "physical_items": sha256_file(release / "registries/physical_items.jsonl"),
@@ -1057,6 +1075,8 @@ def main() -> None:
         "release_path": str(release),
         "authoritative_release_sha256": content_digest,
         "final_training_authorized": True,
+        "core_training_allowed": True,
+        "main_training_allowed": False,
         "main_expanded_training_authorized": False,
         "capabilities": capabilities,
         "counts": counts,
