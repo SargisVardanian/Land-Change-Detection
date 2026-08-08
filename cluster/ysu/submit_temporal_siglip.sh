@@ -10,9 +10,18 @@ set -eu
 : "${WORKTREE:?WORKTREE is required}"
 : "${PYTHON:?PYTHON is required}"
 : "${SIGLIP2_MODEL:?SIGLIP2_MODEL is required}"
+: "${CONFIG_PATH:?CONFIG_PATH is required}"
 : "${DATA_RELEASE:?DATA_RELEASE is required}"
 : "${TRAIN_MANIFEST:?TRAIN_MANIFEST is required}"
 : "${DEVELOPMENT_MANIFEST:?DEVELOPMENT_MANIFEST is required}"
+
+FINAL_RUN=${FINAL_RUN:-0}
+TARGET_PAIR_PRESENTATIONS=${TARGET_PAIR_PRESENTATIONS:-}
+MAX_PAIR_PRESENTATIONS=${MAX_PAIR_PRESENTATIONS:-}
+if test "$FINAL_RUN" = 1; then
+  : "${FINAL_HANDOFF_PATH:?FINAL_HANDOFF_PATH is required for final runs}"
+  test -s "$FINAL_HANDOFF_PATH"
+fi
 
 STEPS=${STEPS:-512}
 PHYSICAL_BATCH_SIZE=${PHYSICAL_BATCH_SIZE:-32}
@@ -46,6 +55,7 @@ test -s "$TRAIN_MANIFEST"
 test -s "$DEVELOPMENT_MANIFEST"
 test -d "$SIGLIP2_MODEL"
 test -s "$SIGLIP2_MODEL/model.safetensors"
+test -s "$CONFIG_PATH"
 if test "$PHASE" = B; then
   : "${CHECKPOINT_PATH:?CHECKPOINT_PATH is required for Stage B}"
   test -s "$CHECKPOINT_PATH"
@@ -54,10 +64,11 @@ else
 fi
 
 mkdir -p "$RUN_ROOT"
-export PHASE EXPECTED_SHA RUN_ROOT WORKTREE PYTHON SIGLIP2_MODEL DATA_RELEASE
+export PHASE EXPECTED_SHA RUN_ROOT WORKTREE PYTHON SIGLIP2_MODEL CONFIG_PATH DATA_RELEASE
 export TRAIN_MANIFEST DEVELOPMENT_MANIFEST CHECKPOINT_PATH STEPS
 export PHYSICAL_BATCH_SIZE LOGICAL_PHYSICAL_BATCH_SIZE CAPTIONS_PER_PAIR SEED
 export AUTHORIZE_LONG_RUN QCPR_ALLOW_LONG_TRAINING QCPR_ALLOW_NONSTANDARD_STEPS
+export FINAL_RUN FINAL_HANDOFF_PATH TARGET_PAIR_PRESENTATIONS MAX_PAIR_PRESENTATIONS
 
 sbatch \
   --export=ALL \
@@ -80,12 +91,15 @@ test -s \"\$TRAIN_MANIFEST\"
 test -s \"\$DEVELOPMENT_MANIFEST\"
 test -d \"\$SIGLIP2_MODEL\"
 test -s \"\$SIGLIP2_MODEL/model.safetensors\"
+test -s \"\$CONFIG_PATH\"
 if test \"\$PHASE\" = B; then test -s \"\$CHECKPOINT_PATH\"; fi
+if test \"\$FINAL_RUN\" = 1; then test -s \"\$FINAL_HANDOFF_PATH\"; fi
 export HF_HUB_OFFLINE=1
 export PYTHONPATH=\"\$WORKTREE/src:\$WORKTREE/scripts\"
 exec \"\$PYTHON\" \"\$WORKTREE/scripts/run_temporal_siglip.py\" \\
   --phase \"\$PHASE\" \\
   --siglip2-model \"\$SIGLIP2_MODEL\" \\
+  --config-path \"\$CONFIG_PATH\" \\
   --data-release \"\$DATA_RELEASE\" \\
   --train-manifest \"\$TRAIN_MANIFEST\" \\
   --development-manifest \"\$DEVELOPMENT_MANIFEST\" \\
@@ -97,4 +111,7 @@ exec \"\$PYTHON\" \"\$WORKTREE/scripts/run_temporal_siglip.py\" \\
   --captions-per-pair \"\$CAPTIONS_PER_PAIR\" \\
   --seed \"\$SEED\" \\
   --initial-checkpoint \"\$CHECKPOINT_PATH\" \\
+  \${FINAL_HANDOFF_PATH:+--final-handoff \"\$FINAL_HANDOFF_PATH\"} \\
+  \${TARGET_PAIR_PRESENTATIONS:+--target-pair-presentations \"\$TARGET_PAIR_PRESENTATIONS\"} \\
+  \${MAX_PAIR_PRESENTATIONS:+--max-pair-presentations \"\$MAX_PAIR_PRESENTATIONS\"} \\
   --authorize-long-run"

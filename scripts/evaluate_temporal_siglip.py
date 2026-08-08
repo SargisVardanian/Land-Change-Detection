@@ -52,9 +52,20 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def load_temporal_config(path: Path) -> TemporalSigLIPConfig:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"INVALID_TEMPORAL_CONFIG: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("INVALID_TEMPORAL_CONFIG: root must be an object")
+    return TemporalSigLIPConfig.from_dict(payload)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--siglip2-model", required=True)
+    parser.add_argument("--config-path", type=Path, required=True)
     parser.add_argument("--data-release", required=True)
     parser.add_argument("--development-manifest", required=True)
     parser.add_argument("--checkpoint", required=True)
@@ -62,6 +73,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-code-sha", required=True)
     parser.add_argument("--pair-batch-size", type=int, default=32)
     parser.add_argument("--query-batch-size", type=int, default=256)
+    parser.add_argument(
+        "--final-handoff",
+        help="Validate the authoritative Dataset-Agent final handoff before evaluation.",
+    )
     parser.add_argument(
         "--include-generic-diagnostic",
         action="store_true",
@@ -98,9 +113,25 @@ def main() -> int:
     checkpoint = Path(args.checkpoint)
     model_path = Path(args.siglip2_model)
     data_release = Path(args.data_release)
-    for required in (manifest, checkpoint, model_path, data_release):
+    config_path = args.config_path
+    for required in (manifest, checkpoint, model_path, data_release, config_path):
         if not required.exists():
             raise FileNotFoundError(required)
+    final_handoff_result: dict[str, Any] | None = None
+    if args.final_handoff:
+        from validate_temporal_siglip_final_handoff import validate_handoff
+
+        final_handoff_result = validate_handoff(
+            Path(args.final_handoff),
+            project_root=Path(__file__).resolve().parents[1],
+        )
+        expected_manifest = Path(
+            str(final_handoff_result["manifests"]["final_exact_development_manifest"]["path"])
+        ).resolve()
+        if manifest.resolve() != expected_manifest:
+            raise RuntimeError("FINAL_HANDOFF_DEVELOPMENT_MANIFEST_MISMATCH")
+        if sha256_path(data_release) != str(final_handoff_result["authoritative_release_sha"]):
+            raise RuntimeError("FINAL_HANDOFF_RELEASE_SHA_MISMATCH")
     all_rows = load_exact_core_rows(manifest, split="development")
     exact_rows = load_exact_pair_rows(manifest, split="development")
     groups = group_rows_by_pair(all_rows)
@@ -113,7 +144,8 @@ def main() -> int:
         local_files_only=True,
         torch_dtype=torch.bfloat16,
     ).to(device)
-    model = TemporalSigLIP(backbone, TemporalSigLIPConfig()).to(device)
+    config = load_temporal_config(config_path)
+    model = TemporalSigLIP(backbone, config).to(device)
     payload = torch.load(checkpoint, map_location="cpu", weights_only=True)
     if not isinstance(payload, dict) or "model_state" not in payload:
         raise ValueError("checkpoint lacks model_state")
@@ -171,6 +203,15 @@ def main() -> int:
         "local_path": str(model_path),
         "weights_sha256": sha256(model_path / "model.safetensors"),
         "active_model": "TemporalSigLIP",
+        "config_path": str(config_path),
+        "config_sha256": sha256(config_path),
+    })
+    write_json(run / "config_resolved.json", {
+        "config_path": str(config_path),
+        "config_sha256": sha256(config_path),
+        "config": config.to_dict(),
+        "checkpoint": str(checkpoint),
+        "checkpoint_sha256": sha256(checkpoint),
     })
     write_json(run / "data_contract.json", {
         "data_release": str(data_release),
@@ -184,6 +225,8 @@ def main() -> int:
         "query_count": len(query_rows),
         "score_shape": list(scores.shape),
         "mask_access": False,
+        "final_handoff": args.final_handoff,
+        "final_handoff_validation": final_handoff_result,
     })
     write_json(run / "evaluation_metrics.json", {
         "protocol": "QCPR_EXACT_FULL_GALLERY_DIRECT_TEMPORALSIGLIP",
@@ -192,6 +235,7 @@ def main() -> int:
         "full_rankings_sha256": ranking_sha,
         "ignored_count": int(ignored.sum()),
         "mandatory_reranking": False,
+        "final_handoff": args.final_handoff,
     })
     write_json(run / "retrieval_integrity_audit.json", {
         "status": "PASS",

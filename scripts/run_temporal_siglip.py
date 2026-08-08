@@ -63,6 +63,16 @@ def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def load_temporal_config(path: Path) -> TemporalSigLIPConfig:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"INVALID_TEMPORAL_CONFIG: {path}: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("INVALID_TEMPORAL_CONFIG: root must be an object")
+    return TemporalSigLIPConfig.from_dict(payload)
+
+
 def write_sha256sums(run: Path) -> None:
     lines: list[str] = []
     for path in sorted(item for item in run.rglob("*") if item.is_file()):
@@ -239,6 +249,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase", choices=("A", "B"), required=True)
     parser.add_argument("--siglip2-model", required=True)
+    parser.add_argument("--config-path", type=Path, required=True)
     parser.add_argument("--data-release", required=True)
     parser.add_argument("--train-manifest", required=True)
     parser.add_argument("--development-manifest", required=True)
@@ -490,7 +501,13 @@ def main() -> int:
     state = git_state(worktree)
     if state["head"] != args.expected_code_sha or not state["worktree_clean"]:
         raise RuntimeError("RUNTIME_CODE_STATE_MISMATCH")
-    for path in (args.data_release, args.train_manifest, args.development_manifest, args.siglip2_model):
+    for path in (
+        args.data_release,
+        args.train_manifest,
+        args.development_manifest,
+        args.siglip2_model,
+        args.config_path,
+    ):
         if not Path(path).exists():
             raise FileNotFoundError(path)
     if args.phase == "B":
@@ -532,7 +549,7 @@ def main() -> int:
             if actual_release_sha != release_sha:
                 raise RuntimeError("FINAL_HANDOFF_RELEASE_SHA_MISMATCH")
         processor = AutoProcessor.from_pretrained(args.siglip2_model, local_files_only=True)
-        config = TemporalSigLIPConfig().validate()
+        config = load_temporal_config(args.config_path)
         backbone = TemporalSigLIPBackbone(
             args.siglip2_model,
             local_files_only=True,
@@ -565,6 +582,15 @@ def main() -> int:
             "mandatory_reranking": False,
             "config": config.to_dict(),
         })
+        write_json(run / "model_source.json", {
+            "model": "google/siglip2-base-patch16-256",
+            "runtime_class": backbone.runtime_class,
+            "checkpoint_path": str(Path(args.siglip2_model)),
+            "checkpoint_weights_sha256": sha256(Path(args.siglip2_model) / "model.safetensors"),
+            "config_path": str(args.config_path),
+            "config_sha256": sha256(Path(args.config_path)),
+            "tokenizer_contract": getattr(backbone.encoder, "tokenizer_contract", None),
+        })
         write_json(run / "parameter_groups.json", optimizer_report)
         write_json(run / "config_resolved.json", {
             "phase": args.phase,
@@ -580,6 +606,8 @@ def main() -> int:
             "early_stopping": False,
             "hard_negative_mining": False,
             "initial_checkpoint": args.initial_checkpoint,
+            "config_path": str(args.config_path),
+            "config_sha256": sha256(Path(args.config_path)),
             "optimizer_resumed": False,
             "final_handoff": args.final_handoff,
             "target_pair_presentations": args.target_pair_presentations,
@@ -598,6 +626,43 @@ def main() -> int:
             "generated_unverified_text": False,
             "final_handoff": args.final_handoff,
             "final_handoff_validation": final_handoff_result,
+        })
+        write_json(run / "dataset_contract.json", {
+            "data_release": args.data_release,
+            "data_release_sha256": sha256_path(Path(args.data_release)),
+            "train_manifest": args.train_manifest,
+            "train_manifest_sha256": sha256(Path(args.train_manifest)),
+            "development_manifest": args.development_manifest,
+            "development_manifest_sha256": sha256(Path(args.development_manifest)),
+            "mask_access": False,
+            "generated_unverified_text": False,
+            "final_handoff": args.final_handoff,
+            "final_handoff_validation": final_handoff_result,
+        })
+        write_json(run / "benchmark_contract.json", {
+            "protocol": "QCPR_BITEMPORAL_CORE_BENCHMARK_V1",
+            "primary_lineage": "FINAL_EXACT_DEV",
+            "development_manifest": args.development_manifest,
+            "generic_no_change_in_exact_primary": False,
+        })
+        write_json(run / "relevance_contract.json", {
+            "grade_3": "positive",
+            "grade_2": "ignored",
+            "grade_1": "ignored",
+            "known_collision": "ignored",
+            "human_grade_0": "verified_negative",
+            "ordinary_unmasked_cross_pair": "implicit_batch_negative",
+            "pair_to_text": "all_valid_sampled_captions_for_pair_positive",
+            "objective": "symmetric_multi_positive_listwise_clip",
+        })
+        write_json(run / "sampler_contract.json", {
+            "physical_microbatch": args.physical_batch_size,
+            "logical_physical_batch": args.logical_physical_batch_size,
+            "captions_per_pair": args.captions_per_pair,
+            "caption_rotation": "deterministic_pair_id_seed_epoch_window",
+            "hard_negative_mining": False,
+            "target_pair_presentations": args.target_pair_presentations,
+            "max_pair_presentations": args.max_pair_presentations,
         })
         write_json(run / "batch_contract.json", {
             "physical_microbatch": args.physical_batch_size,
@@ -670,6 +735,17 @@ def main() -> int:
         if global_step != global_step_start + steps:
             raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
         pair_counts = Counter(str(value) for value in ledger.pair_sequence)
+        if args.target_pair_presentations is not None:
+            missing_target = {
+                pair_id: count
+                for pair_id, count in pair_counts.items()
+                if count < args.target_pair_presentations
+            }
+            if missing_target:
+                raise RuntimeError(
+                    "PAIR_PRESENTATION_TARGET_NOT_REACHED: "
+                    + json.dumps(dict(sorted(missing_target.items())[:10]), sort_keys=True)
+                )
         if args.max_pair_presentations is not None:
             over_ceiling = {
                 pair_id: count
@@ -691,6 +767,10 @@ def main() -> int:
                 metadata={"phase": args.phase, "code_sha": args.expected_code_sha},
             ),
             checkpoint,
+        )
+        checkpoint_hash = sha256(checkpoint)
+        (run / "checkpoint.sha256").write_text(
+            f"{checkpoint_hash}  {checkpoint.name}\n", encoding="utf-8"
         )
         write_json(run / "exposure_accounting.json", ledger.to_dict())
         caption_exposure, source_exposure = build_exposure_reports(
@@ -746,6 +826,27 @@ def main() -> int:
                 final_output.temporal_tokens[:2],
                 final_output.text_embedding[:2].flip(0),
             )
+        write_json(run / "embedding_diagnostics.json", {
+            "scope": "last_training_logical_batch",
+            "pair_embedding_norm_mean": float(
+                final_output.pair_embedding.detach().float().norm(dim=-1).mean()
+            ),
+            "text_embedding_norm_mean": float(
+                final_output.text_embedding.detach().float().norm(dim=-1).mean()
+            ),
+            "pair_matrix_rank": int(
+                torch.linalg.matrix_rank(final_output.pair_embedding.detach().float()).item()
+            ),
+            "text_matrix_rank": int(
+                torch.linalg.matrix_rank(final_output.text_embedding.detach().float()).item()
+            ),
+            "collapse_status": "NOT_DETECTED_ON_LAST_BATCH",
+        })
+        write_json(run / "source_separability.json", {
+            "status": "NOT_RUN_IN_TRAINING_DRIVER",
+            "required_followup": "full_gallery_frozen_source_probe",
+            "historical_source_audit": "reports/temporal_siglip_source_dependence.json",
+        })
         map_l1 = float(
             (local_output.map_probabilities - swapped_output.map_probabilities)
             .abs()

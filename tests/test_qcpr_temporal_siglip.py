@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import torch
 
 from qcpr_temporal_siglip import (
@@ -144,3 +147,30 @@ def test_stage_a_optimizer_contains_only_temporal_pair_and_scale():
     assert all(parameter.requires_grad for parameter in model.temporal_pair.parameters())
     assert model.logit_scale.requires_grad
     assert optimizer.param_groups
+
+
+def test_direct_runtime_uses_one_validated_explicit_config():
+    config_path = Path("configs/qcpr_temporal_siglip_direct.json")
+    payload = json.loads(config_path.read_text(encoding="utf-8"))
+    config = TemporalSigLIPConfig.from_dict(payload)
+    assert config.temporal_layers == 2
+    assert config.patch_tokens == 256
+    train_source = Path("scripts/run_temporal_siglip.py").read_text(encoding="utf-8")
+    eval_source = Path("scripts/evaluate_temporal_siglip.py").read_text(encoding="utf-8")
+    assert 'parser.add_argument("--config-path", type=Path, required=True)' in train_source
+    assert 'parser.add_argument("--config-path", type=Path, required=True)' in eval_source
+    assert "TemporalSigLIP(backbone, TemporalSigLIPConfig())" not in eval_source
+
+
+def test_temporal_launchers_forward_config_and_final_handoff_contracts():
+    train_launcher = Path("cluster/ysu/submit_temporal_siglip.sh").read_text(encoding="utf-8")
+    eval_launcher = Path("cluster/ysu/submit_temporal_siglip_eval.sh").read_text(encoding="utf-8")
+    assert 'CONFIG_PATH:?CONFIG_PATH is required' in train_launcher
+    assert '--config-path \\\"\\$CONFIG_PATH\\\"' in train_launcher
+    assert 'FINAL_HANDOFF_PATH:+--final-handoff' in train_launcher
+    assert '--target-pair-presentations' in train_launcher
+    assert 'CONFIG_PATH:?CONFIG_PATH is required' in eval_launcher
+    assert '--config-path \\\"\\$CONFIG_PATH\\\"' in eval_launcher
+    assert 'FINAL_HANDOFF_PATH:+--final-handoff' in eval_launcher
+    assert "pipefail" not in train_launcher
+    assert "pipefail" not in eval_launcher
