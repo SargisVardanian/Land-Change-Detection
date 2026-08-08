@@ -20,7 +20,7 @@
   "STABLE_EVAL_READY": false,
   "STABLE_TRAIN_READY": false,
   "TAMMS_LONGSERIES_READY": false,
-  "authoritative_release_sha256": "1ef62eeb37071053d6e58fc7af19df83341a2bb1b87878aa8885ed2adc31cb7e",
+  "authoritative_release_sha256": "f78a29dab0997ce0d71841210fab3f6b213b0a4bde213903cea28d1ebace1782",
   "core_training_allowed": true,
   "counts": {
     "canonical_queries": 32284,
@@ -45,7 +45,7 @@
   },
   "evaluation_mask_sidecar_schema": "evaluation_sidecars/mask_sidecar_contract.json",
   "handoff_path": "contracts/qcpr_shared/handoff/dataset_final_to_model.json",
-  "handoff_sha256": "66416f7a5be901ea3095e3353daa52ff394262694a6f5de6656d9f9386c4db27",
+  "handoff_sha256": "78a118613877b57f5005e961383ac4bc42fc76504c239343db44caf16dc869d8",
   "main_training_allowed": false,
   "model_requirements_sha256": "261785bce8ee1d88de05f9d24ab27b16bee940d95487ce257ddce741442b2e8e",
   "model_training_policy": "core exact only; expanded main training not authorized",
@@ -118,9 +118,9 @@
     "schema_version": "qcpr-paper-calibration-status-v2",
     "status": "PAPER_CALIBRATION_PENDING; DOES_NOT_BLOCK_EXACT_CORE_R19"
   },
-  "release": "qcpr_bitemporal_v2_train_20260808_final_r19d",
+  "release": "qcpr_bitemporal_v2_train_20260808_final_r19f",
   "release_immutable": true,
-  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19d",
+  "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19f",
   "schema_version": "qcpr-dataset-capabilities-v2",
   "views": {
     "direction": {
