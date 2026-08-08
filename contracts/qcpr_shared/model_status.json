@@ -53,7 +53,7 @@
   "executable_smoke_code_sha": "c4be84d6fa77a4de2dbad2a7d544fbf2952a6f5e",
   "cpu_gate": {
     "compileall": "PASS",
-    "full_pytest": "664 passed, 3 skipped, 16 warnings (last completed verification before report-only commit)",
+    "full_pytest": "668 passed, 3 skipped, 16 warnings (cluster verification 2026-08-08; 411.96 seconds)",
     "ruff": "NOT_INSTALLED_ON_CLUSTER; compileall and Pyright passed",
     "git_diff_check": "PASS",
     "pyright": "0 errors, 0 warnings",
@@ -75,7 +75,7 @@
   "final_handoff_validator": {
     "script": "scripts/validate_temporal_siglip_final_handoff.py",
     "missing_handoff_result": "WAIT_DATASET_FINAL_HANDOFF",
-    "focused_test": "3 passed",
+    "focused_test": "4 passed, 2 warnings",
     "primary_manifest_mask_scan": "enforced_when_handoff_exists"
   },
   "resolution_selection": {

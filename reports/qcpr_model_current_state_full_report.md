@@ -429,6 +429,6 @@ P2_LONG_SERIES                  = BLOCKED_DATASET_CONTRACT
 - `--max-pair-presentations` прерывает run при превышении exposure ceiling;
 - текущий resolution decision зафиксирован как provisional `SigLIP2 B/16 256`, а 384 comparison не запускался.
 
-Focused cluster contract: `4 passed`. Final handoff по-прежнему отсутствует, поэтому эти gates являются подготовкой и не являются разрешением на final GPU training.
+Focused cluster contract: `4 passed, 2 warnings`. Полный cluster suite: `668 passed, 3 skipped, 16 warnings` за `411.96 секунд` (`6:51`). Final handoff по-прежнему отсутствует, поэтому эти gates являются подготовкой и не являются разрешением на final GPU training.
 
 Итог: текущий TemporalSigLIP — хороший технический retrieval baseline с положительным bounded Stage-B сигналом. Это ещё не финальная модель для разнообразного Dataset-v2 и не query-conditioned soft segmentation. Следующий правильный шаг — закрыть final Dataset Agent handoff, провести три clean seeds на exact core, затем отдельно разрешить causal evidence mechanism pilot.
