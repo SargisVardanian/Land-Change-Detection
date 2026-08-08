@@ -63,7 +63,8 @@
     "pyright": "0 errors, 0 warnings",
     "shell_syntax": "PASS"
   },
-  "dataset_contract_status": "MISSING",
+  "dataset_contract_status": "WAIT_DATASET_FINAL_HANDOFF",
+  "final_handoff_path": "contracts/qcpr_shared/handoff/dataset_final_to_model.json",
   "source_shortcut_audit": {
     "job_id": "209878",
     "status": "PASS_NO_LARGE_STAGE_B_DELTA",
@@ -79,6 +80,14 @@
   "final_handoff_validator": {
     "script": "scripts/validate_temporal_siglip_final_handoff.py",
     "missing_handoff_result": "WAIT_DATASET_FINAL_HANDOFF",
+    "exit_code": 2,
+    "validated_at_code_sha": "fbdda47060e2618f42c3cacfb26c5f0c902053ce",
+    "missing_files": [
+      "contracts/qcpr_shared/handoff/dataset_final_to_model.json",
+      "contracts/qcpr_shared/dataset_status.json",
+      "contracts/qcpr_shared/dataset_capabilities.json",
+      "contracts/qcpr_shared/handoff/dataset_to_model.jsonl"
+    ],
     "focused_test": "4 passed, 2 warnings",
     "primary_manifest_mask_scan": "enforced_when_handoff_exists"
   },
