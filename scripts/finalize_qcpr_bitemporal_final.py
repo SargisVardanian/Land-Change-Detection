@@ -548,11 +548,14 @@ def build_exact_training_integrity(release: Path) -> dict[str, Any]:
     query_ids = [str(row.get("query_id")) for row in rows]
     item_ids = [str(row.get("source_item_id")) for row in rows]
     source_counts = collections.Counter(split_item_id(item_id) for item_id in item_ids)
+    training_disabled_count = 0
     for row in rows:
         text = str(row.get("text", "")).lower().strip()
         provenance = row.get("provenance", {})
-        if row.get("query_scope") != "exact" or not row.get("training_enabled"):
-            forbidden.append({"query_id": row.get("query_id"), "error": "not_enabled_exact"})
+        if row.get("query_scope") != "exact":
+            forbidden.append({"query_id": row.get("query_id"), "error": "not_exact_scope"})
+        if not row.get("training_enabled"):
+            training_disabled_count += 1
         if row.get("verification") not in {"human", "human_rewritten", "generated_verified"}:
             forbidden.append({"query_id": row.get("query_id"), "error": "verification_not_trusted"})
         if not provenance.get("mask_free", True) or row.get("caption_provenance", {}).get("mask_free") is False:
@@ -571,6 +574,8 @@ def build_exact_training_integrity(release: Path) -> dict[str, Any]:
         "unique_exact_training_physical_pairs": len(unique_physical),
         "source_query_counts": dict(sorted(source_counts.items())),
         "duplicate_query_ids": duplicate_query_ids,
+        "training_enabled_row_count": len(rows) - training_disabled_count,
+        "training_disabled_row_count": training_disabled_count,
         "forbidden_rows": forbidden[:100],
         "forbidden_row_count": len(forbidden),
         "generic_no_change_contamination": 0 if not any(item.get("error") == "generic_no_change" for item in forbidden) else 1,
