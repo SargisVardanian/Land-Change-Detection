@@ -999,6 +999,13 @@ def main() -> None:
     }
     write_json(release / "benchmark_contract.json", benchmark_contract)
 
+    # benchmark_contract is part of the immutable content index, so refresh the
+    # digest after it is materialized and rewrite only RELEASE.json (which is
+    # excluded from its own content digest).
+    content_digest = content_index_digest()
+    release_metadata["content_index_sha256"] = content_digest
+    write_json(release / "RELEASE.json", release_metadata)
+
     handoff = {
         "schema_version": "qcpr-dataset-final-to-model-r19",
         "handoff_id": "D2M-QCPR-BITEMPORAL-V2-R19",
