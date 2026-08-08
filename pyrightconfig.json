@@ -1,11 +1,16 @@
 {
-  "include": ["src/qcpr_v3", "src/qcpr_siglip2", "src/qcpr_temporal_siglip"],
+  "include": ["src/qcpr_temporal_siglip"],
+  "venvPath": "/mnt/weka/svardanyan/rs_change_project/envs",
+  "venv": "rschange",
   "executionEnvironments": [
-    {"root": "src/qcpr_v3", "extraPaths": ["src"]},
-    {"root": "src/qcpr_siglip2", "extraPaths": ["src"]}
+    {
+      "root": "src/qcpr_temporal_siglip",
+      "extraPaths": ["src"],
+      "reportPrivateImportUsage": "none"
+    }
   ],
-  "reportMissingImports": "none",
-  "reportPrivateImportUsage": "none",
+  "reportMissingImports": "error",
+  "reportPrivateImportUsage": "error",
   "reportOptionalMemberAccess": "error",
   "reportArgumentType": "error",
   "reportRedeclaration": "error",
