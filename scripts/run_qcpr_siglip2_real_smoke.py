@@ -477,12 +477,21 @@ def main() -> int:
             "native_patch_contract": [
                 args.physical_batch_size,
                 2,
-                int(args.max_num_patches),
+                "N_padded_runtime",
                 Siglip2TemporalConfig().hidden_size,
             ],
             "query_count": len(query_rows),
             "score_matrix": list(positive.shape),
-            "evidence_map": [len(query_rows), len(pairs), 2, 16, 16],
+            "evidence_map": [
+                len(query_rows),
+                len(pairs),
+                2,
+                "H_runtime_from_spatial_shapes",
+                "W_runtime_from_spatial_shapes",
+            ],
+            "processed_patch_grid": (
+                shapes.detach().cpu().tolist() if shapes is not None else None
+            ),
             "multi_positive_runtime": bool(multi_positive_supported),
             "max_num_patches": args.max_num_patches,
         },
@@ -494,7 +503,10 @@ def main() -> int:
             "captions_per_pair": args.captions_per_pair,
             "query_count": len(query_rows),
             "score_matrix": list(positive.shape),
-            "native_visual_tokens": int(args.max_num_patches),
+            "native_visual_tokens": int(pixels.shape[2]),
+            "processed_patch_grid": (
+                shapes.detach().cpu().tolist() if shapes is not None else None
+            ),
             "precision": "bf16",
             "gradient_accumulation": 1,
         },
