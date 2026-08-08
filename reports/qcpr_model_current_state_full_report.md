@@ -3,7 +3,7 @@
 Дата отчёта: 2026-08-08  
 Ветка: `codex/qcpr-siglip2-temporal-training`  
 Код, на котором выполнены последние пилоты и source audit: `5e49864b33f170a9f020a70b4dfa6dd1af9f507d`
-Текущая опубликованная голова ветки после config/launcher/static-analysis/report hardening: `6223d172307fce4a09b739ebc5442d822e437534`
+Последняя зафиксированная голова ветки в этом versioned snapshot: `6223d172307fce4a09b739ebc5442d822e437534` (live local/remote/PR SHA нужно читать из Git, чтобы snapshot не был самоссылочным).
 Исторические пилоты намеренно не переименованы: их `evaluated_code_sha` остаётся SHA, на котором они реально выполнялись.
 Локальный, удалённый и cluster SHA совпадают; worktree чистый.
 PR: #7, draft  
