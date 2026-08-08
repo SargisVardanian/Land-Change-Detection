@@ -3,7 +3,7 @@
 Дата отчёта: 2026-08-08  
 Ветка: `codex/qcpr-siglip2-temporal-training`  
 Код, на котором выполнены последние пилоты и source audit: `5e49864b33f170a9f020a70b4dfa6dd1af9f507d`  
-Текущая голова ветки после status/contract hardening: `247f8c6bc4236a408f81b0183aed84cc7637ac71`
+Текущая голова ветки после config/launcher/static-analysis hardening: `8a8cd63806e80dacc2c65fabd915638f3fd47a25`
 Локальный, удалённый и cluster SHA совпадают; worktree чистый.
 PR: #7, draft  
 Финальное Dataset-Agent handoff отсутствует; поэтому это отчёт о проверенном bounded pilot, а не о готовом production training.
@@ -429,6 +429,6 @@ P2_LONG_SERIES                  = BLOCKED_DATASET_CONTRACT
 - `--max-pair-presentations` прерывает run при превышении exposure ceiling;
 - текущий resolution decision зафиксирован как provisional `SigLIP2 B/16 256`, а 384 comparison не запускался.
 
-Focused cluster contract: `4 passed, 2 warnings`. Полный cluster suite: `668 passed, 3 skipped, 16 warnings` за `411.96 секунд` (`6:51`). Final handoff по-прежнему отсутствует, поэтому эти gates являются подготовкой и не являются разрешением на final GPU training.
+Focused cluster contract: `4 passed, 2 warnings`. Полный cluster suite: `670 passed, 3 skipped, 16 warnings` за `418.72 секунд` (`6:58`). Compileall, shell syntax, git diff check and Model-v3 Pyright scope (`0 errors, 0 warnings`) также прошли. Final handoff по-прежнему отсутствует, поэтому эти gates являются подготовкой и не являются разрешением на final GPU training.
 
 Итог: текущий TemporalSigLIP — хороший технический retrieval baseline с положительным bounded Stage-B сигналом. Это ещё не финальная модель для разнообразного Dataset-v2 и не query-conditioned soft segmentation. Следующий правильный шаг — закрыть final Dataset Agent handoff, провести три clean seeds на exact core, затем отдельно разрешить causal evidence mechanism pilot.
