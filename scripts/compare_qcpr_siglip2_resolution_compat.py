@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import inspect
 import json
 import subprocess
 import sys
@@ -24,13 +25,18 @@ from transformers import AutoProcessor
 from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.manifest import load_exact_core_rows, ordered_id_sha256
-from qcpr_siglip2.data.runtime import encode_real_images, encode_real_text
+from qcpr_siglip2.data.runtime import (
+    encode_real_images,
+    encode_real_text,
+    processor_text_inputs,
+)
+from qcpr_siglip2.evaluation.bootstrap import paired_clustered_rank_bootstrap
 from qcpr_siglip2.evaluation.common_gallery import (
     canonical_pair_rows,
     exact_relevance_masks,
     metrics_by_query_group,
 )
-from qcpr_siglip2.evaluation.retrieval import full_gallery_metrics
+from qcpr_siglip2.evaluation.retrieval import first_positive_ranks, full_gallery_metrics
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 
 
@@ -137,73 +143,108 @@ def _encode_single_vector_gallery(
     )
 
 
-def _paired_physical_pair_bootstrap(
-    naflex_scores: torch.Tensor,
-    fixres_scores: torch.Tensor,
-    positive: torch.Tensor,
-    query_rows: list[dict[str, Any]],
-    selector: torch.Tensor,
-    *,
-    seed: int,
-    replicates: int,
-) -> dict[str, Any]:
-    """Paired bootstrap with physical pairs, never captions, as sampling units."""
-
-    groups: dict[str, list[int]] = {}
-    for index, row in enumerate(query_rows):
-        if bool(selector[index]):
-            groups.setdefault(str(row["canonical_pair_id"]), []).append(index)
-    group_indices = list(groups.values())
-    if not group_indices or replicates <= 0:
-        raise ValueError("bootstrap requires exact physical-pair groups")
-    generator = torch.Generator().manual_seed(seed)
-    deltas: dict[str, list[float]] = {
-        "mrr_full": [],
-        "candidate_hit_at_10": [],
-        "mean_rank": [],
-        "median_rank": [],
-    }
-    for _ in range(replicates):
-        sampled = torch.randint(
-            len(group_indices),
-            (len(group_indices),),
-            generator=generator,
-        )
-        query_indices = torch.tensor(
-            [index for group in sampled.tolist() for index in group_indices[group]],
-            dtype=torch.long,
-        )
-        left = full_gallery_metrics(
-            naflex_scores[query_indices], positive[query_indices]
-        )
-        right = full_gallery_metrics(
-            fixres_scores[query_indices], positive[query_indices]
-        )
-        for metric, values in deltas.items():
-            values.append(float(left[metric] - right[metric]))
+def _constructor_defaults(config: Any) -> dict[str, Any]:
+    signature = inspect.signature(type(config))
     return {
-        "unit": "physical_pair",
-        "physical_pair_count": len(group_indices),
-        "replicates": replicates,
-        "seed": seed,
-        "delta_definition": "naflex_256_minus_fixres_256",
-        "intervals_95": {
-            metric: {
-                "lower": float(torch.quantile(torch.tensor(values), 0.025)),
-                "median": float(torch.quantile(torch.tensor(values), 0.5)),
-                "upper": float(torch.quantile(torch.tensor(values), 0.975)),
-            }
-            for metric, values in deltas.items()
+        name: signature.parameters[name].default
+        for name in ("vocab_size", "bos_token_id", "eos_token_id", "pad_token_id")
+        if name in signature.parameters
+    }
+
+
+def _tokenizer_config_gate(
+    backbone: Siglip2Backbone,
+    processor: Any,
+    model_path: Path,
+    *,
+    repository: str,
+    revision: str,
+    query_rows: list[dict[str, Any]],
+    device: torch.device,
+) -> dict[str, Any]:
+    """Audit raw, constructor-default and actual runtime token contracts."""
+
+    source = json.loads((model_path / "config.json").read_text(encoding="utf-8"))
+    text_inputs = processor_text_inputs(processor, query_rows, device)
+    input_ids = text_inputs["input_ids"].detach().cpu()
+    attention = text_inputs["attention_mask"].detach().cpu().bool()
+    valid_ids = input_ids[attention]
+    runtime = dict(backbone.tokenizer_contract)
+    embedding_vocab = int(runtime["model_embedding_vocab_size"])
+    processor_tokenizer = getattr(processor, "tokenizer", None)
+    processor_ids = {
+        name: getattr(processor_tokenizer, name, None)
+        for name in ("bos_token_id", "eos_token_id", "pad_token_id")
+    }
+    constructor_defaults = _constructor_defaults(backbone.text_model.config)
+    warning_from_defaults = bool(
+        isinstance(constructor_defaults.get("vocab_size"), int)
+        and any(
+            isinstance(constructor_defaults.get(name), int)
+            and constructor_defaults[name] >= constructor_defaults["vocab_size"]
+            for name in ("bos_token_id", "eos_token_id")
+        )
+    )
+    passed = bool(
+        runtime.get("runtime_config_ids_valid")
+        and valid_ids.numel() > 0
+        and int(valid_ids.min()) >= 0
+        and int(valid_ids.max()) < embedding_vocab
+        and processor_ids == runtime.get("special_token_ids")
+    )
+    return {
+        "status": "PASS" if passed else "FAIL",
+        "repository": repository,
+        "revision": revision,
+        "local_path": str(model_path),
+        "config_sha256": _sha256(model_path / "config.json"),
+        "tokenizer_config_sha256": _sha256(model_path / "tokenizer_config.json"),
+        "weights_sha256": _sha256(model_path / "model.safetensors"),
+        "config_class": type(backbone.model.config).__name__,
+        "text_config_class": type(backbone.text_model.config).__name__,
+        "runtime_model_class": backbone.runtime_class,
+        "raw_text_config": source.get("text_config", {}),
+        "upstream_constructor_defaults": constructor_defaults,
+        "warning_provenance": {
+            "emitter": f"{type(backbone.text_model.config).__name__} constructor defaults",
+            "out_of_range_defaults": warning_from_defaults,
+            "scientific_text_path_uses_defaults": False,
+            "runtime_contract_validated_after_load": passed,
+            "warning_suppressed": False,
         },
+        "tokenizer": {
+            "class": type(backbone.tokenizer).__name__,
+            "processor_class": type(processor).__name__,
+            "processor_tokenizer_class": type(processor_tokenizer).__name__,
+            "vocab_size": int(backbone.tokenizer.vocab_size),
+            "special_token_ids": runtime.get("special_token_ids"),
+            "processor_special_token_ids": processor_ids,
+            "model_max_length": getattr(backbone.tokenizer, "model_max_length", None),
+        },
+        "embedding_vocab_size": embedding_vocab,
+        "actual_batch": {
+            "query_count": len(query_rows),
+            "input_shape": list(input_ids.shape),
+            "minimum_valid_input_id": int(valid_ids.min()),
+            "maximum_valid_input_id": int(valid_ids.max()),
+            "attention_mask_shape": list(attention.shape),
+            "attention_token_count": int(attention.sum()),
+            "max_sequence_length": int(input_ids.shape[1]),
+            "all_valid_ids_in_embedding_range": bool(
+                int(valid_ids.min()) >= 0 and int(valid_ids.max()) < embedding_vocab
+            ),
+        },
+        "runtime_contract": runtime,
     }
 
 
 def _linear_source_probe(
     embeddings: torch.Tensor, labels: torch.Tensor, *, seed: int
-) -> float:
+) -> tuple[float, torch.Tensor]:
     generator = torch.Generator().manual_seed(seed)
     order = torch.randperm(labels.numel(), generator=generator)
     scores: list[float] = []
+    predictions = torch.empty_like(labels)
     for fold in range(5):
         test = order[fold::5]
         train = order[~torch.isin(torch.arange(labels.numel()), test)]
@@ -219,14 +260,20 @@ def _linear_source_probe(
             x_train.T @ x_train + regularizer,
             x_train.T @ labels[train].float(),
         )
-        scores.append(float(((x_test @ weights >= 0.5) == labels[test]).float().mean()))
-    return float(torch.tensor(scores).mean())
+        fold_predictions = (x_test @ weights >= 0.5).long()
+        predictions[test] = fold_predictions
+        scores.append(float((fold_predictions == labels[test]).float().mean()))
+    return float(torch.tensor(scores).mean()), predictions
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--naflex-model", required=True)
     parser.add_argument("--fixres-model", required=True)
+    parser.add_argument("--naflex-repository", required=True)
+    parser.add_argument("--fixres-repository", required=True)
+    parser.add_argument("--naflex-revision", required=True)
+    parser.add_argument("--fixres-revision", required=True)
     parser.add_argument("--data-release", required=True)
     parser.add_argument("--development-manifest", required=True)
     parser.add_argument("--config-path", required=True)
@@ -303,9 +350,21 @@ def main() -> int:
     device = torch.device("cuda")
     outputs: dict[str, torch.Tensor] = {}
     embeddings_by_model: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
-    for name, model_path, budget in (
-        ("naflex_256", args.naflex_model, 256),
-        ("fixres_256", args.fixres_model, None),
+    for name, model_path, repository, revision, budget in (
+        (
+            "naflex_256",
+            args.naflex_model,
+            args.naflex_repository,
+            args.naflex_revision,
+            256,
+        ),
+        (
+            "fixres_256",
+            args.fixres_model,
+            args.fixres_repository,
+            args.fixres_revision,
+            None,
+        ),
     ):
         torch.cuda.reset_peak_memory_stats(device)
         started = time.perf_counter()
@@ -315,6 +374,17 @@ def main() -> int:
         processor = AutoProcessor.from_pretrained(model_path, local_files_only=True)
         model = Siglip2TemporalRetrievalModel(backbone, config).to(device).eval()
         restore = _restore_adapter(model, checkpoint)
+        tokenizer_gate = _tokenizer_config_gate(
+            backbone,
+            processor,
+            Path(model_path),
+            repository=repository,
+            revision=revision,
+            query_rows=query_rows[: args.text_batch_size],
+            device=device,
+        )
+        if tokenizer_gate["status"] != "PASS":
+            raise RuntimeError(f"TOKENIZER_CONFIG_GATE_FAIL:{name}")
         pair_embeddings, text_embeddings, encoding_contract = (
             _encode_single_vector_gallery(
                 model,
@@ -351,14 +421,94 @@ def main() -> int:
                 scores, positive, query_rows
             ),
             "adapter_restore": restore,
+            "tokenizer_config_gate": tokenizer_gate,
             "seconds": time.perf_counter() - started,
             "peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 2**30,
             "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 2**30,
         }
         del model, backbone, processor
         torch.cuda.empty_cache()
+    tokenizer_report = {
+        "status": (
+            "PASS"
+            if all(
+                model["tokenizer_config_gate"]["status"] == "PASS"
+                for model in result["models"].values()
+            )
+            else "FAIL"
+        ),
+        "models": {
+            name: model["tokenizer_config_gate"]
+            for name, model in result["models"].items()
+        },
+    }
+    tokenizer_report_path = output / "reports" / "siglip2_tokenizer_config_gate.json"
+    tokenizer_report_path.parent.mkdir(parents=True, exist_ok=True)
+    tokenizer_report_path.write_text(
+        json.dumps(tokenizer_report, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    result["tokenizer_config_gate"] = {
+        "status": tokenizer_report["status"],
+        "path": str(tokenizer_report_path),
+        "sha256": _sha256(tokenizer_report_path),
+    }
     naflex_scores = outputs["naflex_256"]
     fixres_scores = outputs["fixres_256"]
+    naflex_ranks = first_positive_ranks(naflex_scores, positive)
+    fixres_ranks = first_positive_ranks(fixres_scores, positive)
+    rankings_path = output / "full_rankings.pt"
+    torch.save(
+        {
+            "naflex_256_scores": naflex_scores,
+            "fixres_256_scores": fixres_scores,
+            "naflex_256_ranks": naflex_ranks,
+            "fixres_256_ranks": fixres_ranks,
+            "positive_mask": positive,
+            "ignored_mask": ignored,
+            "pair_ids": pair_ids,
+            "query_ids": [str(row["caption_id"]) for row in query_rows],
+        },
+        rankings_path,
+    )
+    result["full_rankings_sha256"] = _sha256(rankings_path)
+    rank_records = []
+    for index, row in enumerate(query_rows):
+        record: dict[str, Any] = {
+            "query_id": str(row["caption_id"]),
+            "physical_pair_cluster_id": str(row["canonical_pair_id"]),
+            "source": str(row["dataset_name"]),
+            "exact_primary": bool(exact_selector[index]),
+        }
+        for model_name, ranks in (
+            ("naflex_256", naflex_ranks),
+            ("fixres_256", fixres_ranks),
+        ):
+            rank = int(ranks[index])
+            record[model_name] = {
+                "rank": rank,
+                "reciprocal_rank": 1.0 / rank,
+                **{
+                    f"candidate_hit_at_{k}": rank <= k
+                    for k in (1, 5, 10, 50, 100)
+                },
+            }
+        rank_records.append(record)
+    with (output / "per_query_rank_statistics.jsonl").open(
+        "w", encoding="utf-8"
+    ) as handle:
+        for record in rank_records:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    result["per_query_rank_statistics_sha256"] = _sha256(
+        output / "per_query_rank_statistics.jsonl"
+    )
+    prebootstrap = output / "resolution_compatibility_prebootstrap.json"
+    prebootstrap.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    (output / "resolution_compatibility_prebootstrap.sha256").write_text(
+        f"{_sha256(prebootstrap)}  {prebootstrap.name}\n", encoding="utf-8"
+    )
     result["score_matrix_max_abs_difference"] = float((naflex_scores - fixres_scores).abs().max())
     result["score_matrix_pearson"] = float(
         torch.corrcoef(torch.stack([naflex_scores.flatten(), fixres_scores.flatten()]))[0, 1]
@@ -385,15 +535,17 @@ def main() -> int:
         "median_rank_ratio": median_ratio,
         "passed": accepted,
     }
-    result["paired_physical_pair_bootstrap"] = _paired_physical_pair_bootstrap(
-        naflex_scores,
-        fixres_scores,
-        positive,
-        query_rows,
-        exact_selector,
+    exact_indices = exact_selector.nonzero(as_tuple=False).flatten()
+    result["paired_physical_pair_bootstrap"] = paired_clustered_rank_bootstrap(
+        naflex_ranks[exact_indices],
+        fixres_ranks[exact_indices],
+        [str(query_rows[index]["canonical_pair_id"]) for index in exact_indices.tolist()],
         seed=args.bootstrap_seed,
         replicates=args.bootstrap_replicates,
     )
+    result["paired_physical_pair_bootstrap"][
+        "delta_definition"
+    ] = "naflex_256_minus_fixres_256"
     pair_sources = [str(row["dataset_name"]) for row in pair_rows]
     query_sources = [str(row["dataset_name"]) for row in query_rows]
     source_names = sorted(set(pair_sources))
@@ -420,18 +572,63 @@ def main() -> int:
         decoys = full_gallery_metrics(
             wrong_source_decoys[exact_selector], positive[exact_selector]
         )
+        pair_probe_accuracy, _pair_predictions = _linear_source_probe(
+            pair_embeddings, pair_labels, seed=args.bootstrap_seed
+        )
+        text_probe_accuracy, text_predictions = _linear_source_probe(
+            text_embeddings, query_labels, seed=args.bootstrap_seed
+        )
+        pair_tie_break = torch.tensor(
+            [
+                int(hashlib.sha256(pair_id.encode("utf-8")).hexdigest()[:12], 16)
+                / float(16**12)
+                for pair_id in pair_ids
+            ],
+            dtype=torch.float64,
+        )
+        source_only_scores = (
+            (text_predictions[:, None] == pair_labels[None, :]).double()
+            + pair_tie_break[None, :] * 1e-6
+        )
+        source_only = full_gallery_metrics(
+            source_only_scores[exact_selector], positive[exact_selector]
+        )
+        source_rank_distributions = {}
+        model_ranks = first_positive_ranks(scores, positive)
+        for source in source_names:
+            indices = torch.tensor(
+                [
+                    index
+                    for index, value in enumerate(query_sources)
+                    if value == source and bool(exact_selector[index])
+                ],
+                dtype=torch.long,
+            )
+            values = model_ranks[indices].float()
+            source_rank_distributions[source] = {
+                "query_count": int(values.numel()),
+                "mean": float(values.mean()),
+                "median": float(values.median()),
+                "p10": float(torch.quantile(values, 0.10)),
+                "p90": float(torch.quantile(values, 0.90)),
+            }
         source_audit["models"][name] = {
-            "pair_embedding_source_probe_accuracy": _linear_source_probe(
-                pair_embeddings, pair_labels, seed=args.bootstrap_seed
-            ),
-            "text_embedding_source_probe_accuracy": _linear_source_probe(
-                text_embeddings, query_labels, seed=args.bootstrap_seed
-            ),
+            "pair_embedding_source_probe_accuracy": pair_probe_accuracy,
+            "text_embedding_source_probe_accuracy": text_probe_accuracy,
             "full_gallery": full,
             "source_restricted_gallery": within,
             "true_pair_plus_wrong_source_decoys": decoys,
+            "source_only_control": {
+                "formula": "predicted_query_source_match + fixed_pair_hash_tiebreak",
+                "uses_pair_semantics": False,
+                "metrics": source_only,
+            },
+            "per_source_rank_distributions": source_rank_distributions,
             "source_restriction_mrr_gain": float(
                 within["mrr_full"] - full["mrr_full"]
+            ),
+            "source_only_mrr_fraction_of_full": float(
+                source_only["mrr_full"] / max(full["mrr_full"], 1e-12)
             ),
         }
     naflex_source = source_audit["models"]["naflex_256"]
@@ -439,32 +636,31 @@ def main() -> int:
         naflex_source["source_restriction_mrr_gain"]
         / max(naflex_source["full_gallery"]["mrr_full"], 1e-12)
     )
+    source_only_fraction = float(naflex_source["source_only_mrr_fraction_of_full"])
     source_audit["source_separable"] = bool(
         naflex_source["pair_embedding_source_probe_accuracy"] >= 0.75
         or naflex_source["text_embedding_source_probe_accuracy"] >= 0.75
     )
     source_audit["source_restriction_relative_mrr_gain"] = relative_gain
+    source_audit["source_only_mrr_fraction_of_full"] = source_only_fraction
     source_audit["retrieval_evidence"] = (
-        "HIGH" if relative_gain >= 1.0 else "MEDIUM" if relative_gain >= 0.25 else "LOW"
+        "HIGH"
+        if relative_gain >= 1.0 or source_only_fraction >= 0.75
+        else "MEDIUM"
+        if relative_gain >= 0.25 or source_only_fraction >= 0.25
+        else "LOW"
     )
+    source_audit["classification_rule"] = {
+        "HIGH": "source restriction gain >= 100% or source-only MRR >= 75% of full",
+        "MEDIUM": "source restriction gain >= 25% or source-only MRR >= 25% of full",
+        "LOW": "both source-only criteria below MEDIUM thresholds",
+    }
     result["source_shortcut_audit"] = source_audit
     result["status"] = (
         "NAFLEX_256_MATCHED_REGRESSION_PASS"
         if accepted
         else "NAFLEX_256_MATCHED_REGRESSION_FAIL"
     )
-    torch.save(
-        {
-            "naflex_256_scores": naflex_scores,
-            "fixres_256_scores": fixres_scores,
-            "positive_mask": positive,
-            "ignored_mask": ignored,
-            "pair_ids": pair_ids,
-            "query_ids": [str(row["caption_id"]) for row in query_rows],
-        },
-        output / "full_rankings.pt",
-    )
-    result["full_rankings_sha256"] = _sha256(output / "full_rankings.pt")
     (output / "resolution_compatibility.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
