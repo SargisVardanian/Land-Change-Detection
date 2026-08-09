@@ -24,7 +24,7 @@ from qcpr_siglip2.data.manifest import group_rows_by_pair, load_exact_pair_rows
 from qcpr_siglip2.evaluation.evidence import time_reversal_score_change
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.exposure import sequence_sha256
-from qcpr_siglip2.training.objective import multi_positive_listwise_loss
+from qcpr_siglip2.training.objective import symmetric_multi_positive_listwise_loss
 
 _ACTIVE_ARGS: argparse.Namespace | None = None
 
@@ -151,6 +151,72 @@ def load_batch_rows(
         for row in selected
     )
     return pairs, selected, multi_positive
+
+
+def load_batch_artifact_rows(
+    artifact_path: str,
+    physical_batch_size: int,
+    captions_per_pair: int,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], bool]:
+    payload = json.loads(Path(artifact_path).read_text(encoding="utf-8"))
+    item_ids = payload.get("physical_item_ids")
+    query_ids = payload.get("query_ids")
+    query_texts = payload.get("query_texts")
+    native_geometry = payload.get("native_geometry")
+    positive_indices = payload.get("query_to_pair_positive_indices")
+    status_matrix = payload.get("relevance_status_matrix")
+    if not (
+        isinstance(item_ids, list)
+        and isinstance(query_ids, list)
+        and isinstance(query_texts, list)
+        and isinstance(native_geometry, list)
+        and isinstance(positive_indices, dict)
+        and isinstance(status_matrix, list)
+    ):
+        raise TypeError("invalid MULTIPOSITIVE_SMOKE artifact")
+    if len(item_ids) != physical_batch_size or len(query_ids) != len(query_texts):
+        raise ValueError("MULTIPOSITIVE_SMOKE dimensions do not match CLI contract")
+    if len(query_ids) != physical_batch_size * captions_per_pair:
+        raise ValueError("MULTIPOSITIVE_SMOKE query count mismatch")
+    pairs: list[dict[str, Any]] = []
+    for item_id, geometry in zip(item_ids, native_geometry, strict=True):
+        frames = geometry.get("frames", [])
+        if len(frames) != 2 or str(geometry.get("item_id")) != str(item_id):
+            raise ValueError("invalid physical geometry in MULTIPOSITIVE_SMOKE")
+        pairs.append(
+            {
+                "canonical_pair_id": str(item_id),
+                "t1_path": str(frames[0]["path"]),
+                "t2_path": str(frames[1]["path"]),
+            }
+        )
+    queries: list[dict[str, Any]] = []
+    for index, (query_id, text) in enumerate(
+        zip(query_ids, query_texts, strict=True)
+    ):
+        positives = positive_indices.get(str(query_id))
+        if not isinstance(positives, list) or not positives:
+            raise ValueError("query lacks explicit artifact positive")
+        ignored = [
+            item_ids[column]
+            for column, status in enumerate(status_matrix[index])
+            if status == "IGNORE_ambiguous_collision"
+        ]
+        queries.append(
+            {
+                "caption_id": str(query_id),
+                "caption": str(text),
+                "canonical_pair_id": str(item_ids[int(positives[0])]),
+                "positive_pair_ids": [item_ids[int(value)] for value in positives],
+                "ignored_pair_ids": ignored,
+            }
+        )
+    pair_to_text = payload.get("pair_to_text_positive_indices")
+    if not isinstance(pair_to_text, dict) or any(
+        len(indices) < 2 for indices in pair_to_text.values()
+    ):
+        raise ValueError("pair-to-text multi-positive contract is absent")
+    return pairs, queries, True
 
 
 def process_images(
@@ -351,9 +417,16 @@ def deterministic_roundtrip(args: argparse.Namespace) -> int:
     checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=True)
     model.load_state_dict(checkpoint["model_state"], strict=True)
     processor = AutoProcessor.from_pretrained(args.siglip2_model, local_files_only=True)
-    pairs, query_rows, _ = load_batch_rows(
-        args.train_manifest, args.physical_batch_size, args.captions_per_pair
-    )
+    if args.multipositive_artifact:
+        pairs, query_rows, _ = load_batch_artifact_rows(
+            args.multipositive_artifact,
+            args.physical_batch_size,
+            args.captions_per_pair,
+        )
+    else:
+        pairs, query_rows, _ = load_batch_rows(
+            args.train_manifest, args.physical_batch_size, args.captions_per_pair
+        )
     pixels, pixel_mask, shapes, _ = process_images(
         processor, pairs, device, max_num_patches=args.max_num_patches
     )
@@ -393,6 +466,7 @@ def main() -> int:
     parser.add_argument("--steps", type=int, default=8)
     parser.add_argument("--physical-batch-size", type=int, default=8)
     parser.add_argument("--captions-per-pair", type=int, default=2)
+    parser.add_argument("--multipositive-artifact")
     parser.add_argument("--max-num-patches", type=int, default=256)
     parser.add_argument("--roundtrip-only", action="store_true")
     parser.add_argument("--checkpoint")
@@ -428,9 +502,16 @@ def main() -> int:
     device = torch.device("cuda")
     torch.cuda.reset_peak_memory_stats(device)
     processor = AutoProcessor.from_pretrained(args.siglip2_model, local_files_only=True)
-    pairs, query_rows, multi_positive_supported = load_batch_rows(
-        args.train_manifest, args.physical_batch_size, args.captions_per_pair
-    )
+    if args.multipositive_artifact:
+        pairs, query_rows, multi_positive_supported = load_batch_artifact_rows(
+            args.multipositive_artifact,
+            args.physical_batch_size,
+            args.captions_per_pair,
+        )
+    else:
+        pairs, query_rows, multi_positive_supported = load_batch_rows(
+            args.train_manifest, args.physical_batch_size, args.captions_per_pair
+        )
     image_start = time.perf_counter()
     pixels, pixel_mask, shapes, image_meta = process_images(
         processor, pairs, device, max_num_patches=args.max_num_patches
@@ -570,7 +651,7 @@ def main() -> int:
             )
         torch.cuda.synchronize()
         timings["forward_seconds"].append(time.perf_counter() - start)
-        loss = multi_positive_listwise_loss(
+        loss = symmetric_multi_positive_listwise_loss(
             output.score_matrix.float(), positive, ignored
         )
         start = time.perf_counter()
@@ -730,6 +811,8 @@ def main() -> int:
         "--reference-scores",
         str(reference_path),
     ]
+    if args.multipositive_artifact:
+        child_args.extend(["--multipositive-artifact", args.multipositive_artifact])
     roundtrip = subprocess.run(
         child_args, env={**os.environ, "HF_HUB_OFFLINE": "1"}, check=False
     )

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import asdict, dataclass
-from typing import Any
+from typing import Any, Literal
 
 
 @dataclass(frozen=True)
@@ -38,6 +38,9 @@ class Siglip2TemporalConfig:
     supported_patch_budgets: tuple[int, ...] = (256, 576, 1024)
     direct_patch_token_budget: int = 1024
     large_scene_latents: int = 64
+    retrieval_score_mode: Literal[
+        "final_v1_primary", "evidence_mechanism_ablation"
+    ] = "final_v1_primary"
 
     def validate(self) -> Siglip2TemporalConfig:
         if self.hidden_size <= 0:
@@ -92,6 +95,11 @@ class Siglip2TemporalConfig:
             raise ValueError("direct_patch_token_budget must be positive")
         if self.large_scene_latents <= 0:
             raise ValueError("large_scene_latents must be positive")
+        if self.retrieval_score_mode not in {
+            "final_v1_primary",
+            "evidence_mechanism_ablation",
+        }:
+            raise ValueError("unsupported retrieval_score_mode")
         return self
 
     def to_dict(self) -> dict[str, Any]:

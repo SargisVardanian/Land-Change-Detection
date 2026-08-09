@@ -42,7 +42,10 @@ from qcpr_siglip2.training.gradcache import (
     logical_listwise_step,
     module_gradient_report,
 )
-from qcpr_siglip2.training.objective import multi_positive_listwise_loss
+from qcpr_siglip2.training.objective import (
+    multi_positive_listwise_loss,
+    symmetric_multi_positive_listwise_loss,
+)
 from qcpr_siglip2.training.optimizer import build_adamw
 
 
@@ -68,7 +71,10 @@ def test_config_is_minimal_two_layer_contract():
 
 
 def test_model_outputs_causal_evidence_and_map():
-    model = Siglip2TemporalRetrievalModel(None)
+    model = Siglip2TemporalRetrievalModel(
+        None,
+        Siglip2TemporalConfig(retrieval_score_mode="evidence_mechanism_ablation"),
+    )
     out = model.forward_from_features(*_features(q=3, p=2))
     assert out.score_matrix.shape == (3, 2)
     assert out.evidence.evidence_map.shape == (3, 2, 2, 16, 16)
@@ -88,7 +94,10 @@ def test_query_swap_changes_evidence_and_score():
 
 
 def test_evidence_zeroing_changes_final_score():
-    model = Siglip2TemporalRetrievalModel(None)
+    model = Siglip2TemporalRetrievalModel(
+        None,
+        Siglip2TemporalConfig(retrieval_score_mode="evidence_mechanism_ablation"),
+    )
     frame_tokens, frame_embeddings, text_tokens, text_embeddings, text_mask = _features(
         q=2, p=2
     )
@@ -101,6 +110,23 @@ def test_evidence_zeroing_changes_final_score():
         / model.retrieval_temperature
     )
     assert not torch.allclose(normal.score_matrix, zero_score)
+
+
+def test_final_v1_primary_score_is_exactly_single_vector_ann_score():
+    model = Siglip2TemporalRetrievalModel(None)
+    output = model.forward_from_features(*_features(q=2, p=2))
+    expected = (
+        output.text_embedding @ output.pair_cls.transpose(0, 1)
+    ) / model.retrieval_temperature
+    assert torch.equal(output.score_matrix, expected)
+    assert torch.equal(
+        output.global_score_matrix,
+        output.text_embedding @ output.pair_cls.transpose(0, 1),
+    )
+    assert not torch.equal(output.evidence_diagnostic_score_matrix, expected)
+    output.score_matrix.sum().backward()
+    assert model.evidence_bottleneck.raw_gate.grad is None
+    assert model.relevance_model.slot_scale.grad is None
 
 
 def test_one_primary_scalar_loss_and_metrics():
@@ -119,6 +145,17 @@ def test_hit_and_recall_differ_for_multiple_positives():
     positives = torch.tensor([[True, True, False]])
     assert candidate_hit_at_k(scores, positives, 1) == 1.0
     assert multi_positive_recall_at_k(scores, positives, 1) == 0.5
+
+
+def test_symmetric_loss_treats_all_same_pair_captions_as_pair_to_text_positives():
+    scores = torch.tensor([[3.0, 0.0], [2.0, 0.0], [0.0, 4.0]])
+    positives = torch.tensor([[True, False], [True, False], [False, True]])
+    loss = symmetric_multi_positive_listwise_loss(scores, positives)
+    assert loss.ndim == 0 and torch.isfinite(loss)
+    invalid = positives.clone()
+    invalid[:, 1] = False
+    with pytest.raises(ValueError, match="at least one positive text"):
+        symmetric_multi_positive_listwise_loss(scores, invalid)
 
 
 def test_rank_diagnostics_are_explicit():
@@ -336,13 +373,17 @@ def test_phase_a_optimizer_scope_is_temporal_only():
         for group in report["groups"]
         for name in group["parameter_names"]
     )
+    assert all(group["name"] not in {"evidence", "relevance"} for group in report["groups"])
     assert len(optimizer.param_groups) == len(report["groups"])
     optimizer.step()
     scheduler.step()
 
 
 def test_gradient_report_captures_nested_siglip2_top_blocks():
-    model = Siglip2TemporalRetrievalModel(None)
+    model = Siglip2TemporalRetrievalModel(
+        None,
+        Siglip2TemporalConfig(retrieval_score_mode="evidence_mechanism_ablation"),
+    )
     backbone = torch.nn.Module()
     backbone.model = torch.nn.Module()
     backbone.model.vision_model = torch.nn.Linear(3, 3)
@@ -569,7 +610,10 @@ def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
     monkeypatch.setattr(
         "qcpr_siglip2.training.gradcache.encode_real_features", fake_encode
     )
-    model = Siglip2TemporalRetrievalModel(None)
+    model = Siglip2TemporalRetrievalModel(
+        None,
+        Siglip2TemporalConfig(retrieval_score_mode="evidence_mechanism_ablation"),
+    )
     original_forward = model.forward_from_features
     forwarded_metadata = {}
 

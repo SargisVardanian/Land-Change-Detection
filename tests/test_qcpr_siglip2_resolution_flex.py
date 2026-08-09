@@ -520,7 +520,7 @@ def test_temporal_reversal_is_not_silently_ignored_and_double_reversal_restores(
 
 def test_evidence_path_has_nonzero_gradient_and_checkpoint_roundtrip():
     torch.manual_seed(52)
-    config = _config()
+    config = _config(retrieval_score_mode="evidence_mechanism_ablation")
     model = Siglip2TemporalRetrievalModel(None, config).eval()
     inputs = _features(16, batch=2, queries=3)
     first = model.forward_from_features(*inputs)

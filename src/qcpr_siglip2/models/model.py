@@ -18,6 +18,7 @@ from .temporal import TemporalAdapterOutput, TemporalTransformerAdapter
 class RetrievalForwardOutput:
     score_matrix: Tensor
     global_score_matrix: Tensor
+    evidence_diagnostic_score_matrix: Tensor
     text_embedding: Tensor
     pair_cls: Tensor
     pair_for_query: Tensor
@@ -42,6 +43,9 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         self.log_temperature = nn.Parameter(
             torch.tensor(self.config.retrieval_temperature).log()
         )
+        if self.config.retrieval_score_mode == "final_v1_primary":
+            self.evidence_bottleneck.requires_grad_(False)
+            self.relevance_model.requires_grad_(False)
 
     @property
     def retrieval_temperature(self) -> Tensor:
@@ -156,7 +160,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             dim=-1,
         )
         global_score = text_embedding @ pair.transpose(0, 1)
-        score = self.unified_score_from_evidence(
+        evidence_diagnostic_score = self.unified_score_from_evidence(
             text_embedding,
             pair,
             temporal.change_tokens,
@@ -164,9 +168,16 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             evidence.evidence_vector,
             evidence.evidence_score,
         )
+        primary_score = global_score / self.retrieval_temperature
+        score = (
+            evidence_diagnostic_score
+            if self.config.retrieval_score_mode == "evidence_mechanism_ablation"
+            else primary_score
+        )
         return RetrievalForwardOutput(
             score,
             global_score,
+            evidence_diagnostic_score,
             text_embedding,
             pair,
             pair_for_query,

@@ -11,7 +11,7 @@ from torch import Tensor
 
 from ..data.runtime import RawFeatureBatch, _device_autocast, encode_real_features
 from ..models.model import Siglip2TemporalRetrievalModel
-from .objective import multi_positive_listwise_loss
+from .objective import symmetric_multi_positive_listwise_loss
 
 
 @dataclass(frozen=True)
@@ -320,7 +320,7 @@ def logical_listwise_step(
             transform_hash=cached.transform_hash,
             token_coordinates=cached.token_coordinates,
         )
-        loss = multi_positive_listwise_loss(
+        loss = symmetric_multi_positive_listwise_loss(
             output.score_matrix.float(), positive_mask, ignored_mask
         )
     loss.backward()

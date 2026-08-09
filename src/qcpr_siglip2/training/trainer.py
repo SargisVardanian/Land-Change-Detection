@@ -9,7 +9,7 @@ import torch
 from torch import Tensor
 
 from ..models.model import RetrievalForwardOutput, Siglip2TemporalRetrievalModel
-from .objective import multi_positive_listwise_loss
+from .objective import symmetric_multi_positive_listwise_loss
 
 
 @dataclass(frozen=True)
@@ -50,7 +50,7 @@ def train_feature_step(
         batch.text_mask,
         timestamps=batch.timestamps,
     )
-    loss = multi_positive_listwise_loss(
+    loss = symmetric_multi_positive_listwise_loss(
         output.score_matrix.float(), batch.positive_mask, batch.ignored_mask
     )
     if loss.ndim != 0 or not torch.isfinite(loss):

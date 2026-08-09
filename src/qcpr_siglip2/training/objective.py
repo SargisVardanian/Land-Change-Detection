@@ -51,6 +51,31 @@ def multi_positive_listwise_loss(
     return loss
 
 
+def symmetric_multi_positive_listwise_loss(
+    scores: Tensor,
+    positive_mask: Tensor,
+    ignored_mask: Tensor | None = None,
+) -> Tensor:
+    """One scalar loss covering text-to-pair and pair-to-text relevance."""
+
+    if ignored_mask is None:
+        ignored_mask = torch.zeros_like(positive_mask, dtype=torch.bool)
+    query_to_pair = multi_positive_listwise_loss(
+        scores, positive_mask, ignored_mask
+    )
+    if torch.any(positive_mask.sum(dim=0) == 0):
+        raise ValueError("every physical pair needs at least one positive text")
+    pair_to_text = multi_positive_listwise_loss(
+        scores.transpose(0, 1),
+        positive_mask.transpose(0, 1),
+        ignored_mask.transpose(0, 1),
+    )
+    loss = 0.5 * (query_to_pair + pair_to_text)
+    if loss.ndim != 0 or not torch.isfinite(loss):
+        raise FloatingPointError("symmetric listwise loss is non-finite")
+    return loss
+
+
 def listwise_loss_diagnostics(
     scores: Tensor,
     positive_mask: Tensor,

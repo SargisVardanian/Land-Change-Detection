@@ -14,6 +14,7 @@
   "evidence_temperature": 0.07,
   "retrieval_temperature_init": 0.07,
   "evidence_gate_init": 0.05,
+  "retrieval_score_mode": "final_v1_primary",
   "precision": "bf16",
   "phase_a_trainable": ["temporal_adapter", "temporal_embeddings", "evidence_bottleneck", "relevance_model", "retrieval_temperature"],
   "phase_b_backbone_scope": {"vision_top_blocks": 2, "text_top_blocks": 2, "final_norms_and_heads": true},

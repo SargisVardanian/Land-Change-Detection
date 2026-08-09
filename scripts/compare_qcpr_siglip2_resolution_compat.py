@@ -137,6 +137,92 @@ def _encode_single_vector_gallery(
     )
 
 
+def _paired_physical_pair_bootstrap(
+    naflex_scores: torch.Tensor,
+    fixres_scores: torch.Tensor,
+    positive: torch.Tensor,
+    query_rows: list[dict[str, Any]],
+    selector: torch.Tensor,
+    *,
+    seed: int,
+    replicates: int,
+) -> dict[str, Any]:
+    """Paired bootstrap with physical pairs, never captions, as sampling units."""
+
+    groups: dict[str, list[int]] = {}
+    for index, row in enumerate(query_rows):
+        if bool(selector[index]):
+            groups.setdefault(str(row["canonical_pair_id"]), []).append(index)
+    group_indices = list(groups.values())
+    if not group_indices or replicates <= 0:
+        raise ValueError("bootstrap requires exact physical-pair groups")
+    generator = torch.Generator().manual_seed(seed)
+    deltas: dict[str, list[float]] = {
+        "mrr_full": [],
+        "candidate_hit_at_10": [],
+        "mean_rank": [],
+        "median_rank": [],
+    }
+    for _ in range(replicates):
+        sampled = torch.randint(
+            len(group_indices),
+            (len(group_indices),),
+            generator=generator,
+        )
+        query_indices = torch.tensor(
+            [index for group in sampled.tolist() for index in group_indices[group]],
+            dtype=torch.long,
+        )
+        left = full_gallery_metrics(
+            naflex_scores[query_indices], positive[query_indices]
+        )
+        right = full_gallery_metrics(
+            fixres_scores[query_indices], positive[query_indices]
+        )
+        for metric, values in deltas.items():
+            values.append(float(left[metric] - right[metric]))
+    return {
+        "unit": "physical_pair",
+        "physical_pair_count": len(group_indices),
+        "replicates": replicates,
+        "seed": seed,
+        "delta_definition": "naflex_256_minus_fixres_256",
+        "intervals_95": {
+            metric: {
+                "lower": float(torch.quantile(torch.tensor(values), 0.025)),
+                "median": float(torch.quantile(torch.tensor(values), 0.5)),
+                "upper": float(torch.quantile(torch.tensor(values), 0.975)),
+            }
+            for metric, values in deltas.items()
+        },
+    }
+
+
+def _linear_source_probe(
+    embeddings: torch.Tensor, labels: torch.Tensor, *, seed: int
+) -> float:
+    generator = torch.Generator().manual_seed(seed)
+    order = torch.randperm(labels.numel(), generator=generator)
+    scores: list[float] = []
+    for fold in range(5):
+        test = order[fold::5]
+        train = order[~torch.isin(torch.arange(labels.numel()), test)]
+        x_train = embeddings[train].float()
+        x_test = embeddings[test].float()
+        mean = x_train.mean(0, keepdim=True)
+        scale = x_train.std(0, keepdim=True).clamp_min(1e-6)
+        x_train = torch.cat([(x_train - mean) / scale, torch.ones(len(train), 1)], 1)
+        x_test = torch.cat([(x_test - mean) / scale, torch.ones(len(test), 1)], 1)
+        regularizer = torch.eye(x_train.shape[1]) * 1e-2
+        regularizer[-1, -1] = 0.0
+        weights = torch.linalg.solve(
+            x_train.T @ x_train + regularizer,
+            x_train.T @ labels[train].float(),
+        )
+        scores.append(float(((x_test @ weights >= 0.5) == labels[test]).float().mean()))
+    return float(torch.tensor(scores).mean())
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--naflex-model", required=True)
@@ -150,6 +236,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-pairs", type=int, default=0)
     parser.add_argument("--image-batch-size", type=int, default=8)
     parser.add_argument("--text-batch-size", type=int, default=64)
+    parser.add_argument("--bootstrap-replicates", type=int, default=1000)
+    parser.add_argument("--bootstrap-seed", type=int, default=20260809)
     return parser.parse_args()
 
 
@@ -214,6 +302,7 @@ def main() -> int:
     }
     device = torch.device("cuda")
     outputs: dict[str, torch.Tensor] = {}
+    embeddings_by_model: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
     for name, model_path, budget in (
         ("naflex_256", args.naflex_model, 256),
         ("fixres_256", args.fixres_model, None),
@@ -245,6 +334,7 @@ def main() -> int:
         ).masked_fill(ignored, -1.0e4)
         torch.cuda.synchronize(device)
         outputs[name] = scores
+        embeddings_by_model[name] = (pair_embeddings, text_embeddings)
         result["models"][name] = {
             "path": str(model_path),
             "runtime_class": backbone.runtime_class,
@@ -265,7 +355,7 @@ def main() -> int:
             "peak_allocated_gib": torch.cuda.max_memory_allocated(device) / 2**30,
             "peak_reserved_gib": torch.cuda.max_memory_reserved(device) / 2**30,
         }
-        del model, backbone, processor, pair_embeddings, text_embeddings
+        del model, backbone, processor
         torch.cuda.empty_cache()
     naflex_scores = outputs["naflex_256"]
     fixres_scores = outputs["fixres_256"]
@@ -295,6 +385,69 @@ def main() -> int:
         "median_rank_ratio": median_ratio,
         "passed": accepted,
     }
+    result["paired_physical_pair_bootstrap"] = _paired_physical_pair_bootstrap(
+        naflex_scores,
+        fixres_scores,
+        positive,
+        query_rows,
+        exact_selector,
+        seed=args.bootstrap_seed,
+        replicates=args.bootstrap_replicates,
+    )
+    pair_sources = [str(row["dataset_name"]) for row in pair_rows]
+    query_sources = [str(row["dataset_name"]) for row in query_rows]
+    source_names = sorted(set(pair_sources))
+    if len(source_names) != 2 or set(query_sources) != set(source_names):
+        raise ValueError("source audit requires exactly LEVIR-MCI and SECOND-CC")
+    pair_labels = torch.tensor([source_names.index(value) for value in pair_sources])
+    query_labels = torch.tensor([source_names.index(value) for value in query_sources])
+    source_match = query_labels[:, None] == pair_labels[None, :]
+    source_audit: dict[str, Any] = {
+        "sources": source_names,
+        "probe_method": "five_fold_frozen_ridge_linear_probe",
+        "models": {},
+    }
+    for name, scores in outputs.items():
+        pair_embeddings, text_embeddings = embeddings_by_model[name]
+        restricted = scores.masked_fill(~source_match, -1.0e4)
+        wrong_source_decoys = scores.masked_fill(
+            source_match & ~positive, -1.0e4
+        )
+        full = full_gallery_metrics(scores[exact_selector], positive[exact_selector])
+        within = full_gallery_metrics(
+            restricted[exact_selector], positive[exact_selector]
+        )
+        decoys = full_gallery_metrics(
+            wrong_source_decoys[exact_selector], positive[exact_selector]
+        )
+        source_audit["models"][name] = {
+            "pair_embedding_source_probe_accuracy": _linear_source_probe(
+                pair_embeddings, pair_labels, seed=args.bootstrap_seed
+            ),
+            "text_embedding_source_probe_accuracy": _linear_source_probe(
+                text_embeddings, query_labels, seed=args.bootstrap_seed
+            ),
+            "full_gallery": full,
+            "source_restricted_gallery": within,
+            "true_pair_plus_wrong_source_decoys": decoys,
+            "source_restriction_mrr_gain": float(
+                within["mrr_full"] - full["mrr_full"]
+            ),
+        }
+    naflex_source = source_audit["models"]["naflex_256"]
+    relative_gain = float(
+        naflex_source["source_restriction_mrr_gain"]
+        / max(naflex_source["full_gallery"]["mrr_full"], 1e-12)
+    )
+    source_audit["source_separable"] = bool(
+        naflex_source["pair_embedding_source_probe_accuracy"] >= 0.75
+        or naflex_source["text_embedding_source_probe_accuracy"] >= 0.75
+    )
+    source_audit["source_restriction_relative_mrr_gain"] = relative_gain
+    source_audit["retrieval_evidence"] = (
+        "HIGH" if relative_gain >= 1.0 else "MEDIUM" if relative_gain >= 0.25 else "LOW"
+    )
+    result["source_shortcut_audit"] = source_audit
     result["status"] = (
         "NAFLEX_256_MATCHED_REGRESSION_PASS"
         if accepted
