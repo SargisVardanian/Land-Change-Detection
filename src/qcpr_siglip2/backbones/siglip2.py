@@ -290,9 +290,9 @@ class Siglip2Backbone(nn.Module):
 
     @staticmethod
     def _default_spatial_shapes(
-        pixel_values: Tensor, *, patch_size: int
+        pixel_values: Tensor, *, patch_size: int, fixed_image: bool = False
     ) -> Tensor:
-        if pixel_values.ndim == 4:
+        if pixel_values.ndim == 4 and not fixed_image:
             n = int(pixel_values.shape[1])
             side = int(n**0.5)
             grid = (side, side) if side * side == n else (1, n)
@@ -418,7 +418,7 @@ class Siglip2Backbone(nn.Module):
 
         if spatial_shapes is None:
             spatial_shapes_flat = self._default_spatial_shapes(
-                flat, patch_size=self.patch_size
+                flat, patch_size=self.patch_size, fixed_image=self.is_fixed_siglip
             )
         elif spatial_shapes.ndim == 3 and spatial_shapes.shape[:2] == (b, t):
             spatial_shapes_flat = spatial_shapes.reshape(b * t, 2)

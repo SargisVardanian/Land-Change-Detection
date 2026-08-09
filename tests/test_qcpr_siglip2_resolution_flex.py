@@ -7,6 +7,7 @@ import pytest
 import torch
 from PIL import Image
 
+from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.manifest import load_exact_pair_rows
 from qcpr_siglip2.data.naflex import validate_patch_budget_sequence
@@ -256,6 +257,14 @@ def test_explicit_fixed_backbone_mode_overrides_ambiguous_processor_metadata(tmp
     assert result["pixel_values"].shape == (1, 2, 256, 3)
     assert "pixel_attention_mask" not in result
     assert "spatial_shapes" not in result
+
+
+def test_fixed_image_shape_defaults_to_native_patch_grid():
+    image_batch = torch.zeros(4, 3, 256, 256)
+    shapes = Siglip2Backbone._default_spatial_shapes(
+        image_batch, patch_size=16, fixed_image=True
+    )
+    assert shapes.tolist() == [[16, 16]] * 4
 
 
 def test_processor_rejects_mismatched_t1_t2_grid(tmp_path):
