@@ -164,7 +164,7 @@ def main() -> int:
     manifest = Path(args.development_manifest)
     checkpoint = Path(args.checkpoint)
     core_rows = load_exact_core_rows(manifest, split="development")
-    query_rows = [row for row in core_rows if row.get("query_scope") == "exact_pair"]
+    query_rows = list(core_rows)
     pair_rows = canonical_pair_rows(core_rows)
     if args.max_pairs > 0:
         selected_ids = {
@@ -178,6 +178,12 @@ def main() -> int:
         raise ValueError("compatibility comparison needs at least four pairs and queries")
     pair_ids = [str(row["canonical_pair_id"]) for row in pair_rows]
     positive, ignored = exact_relevance_masks(query_rows, pair_rows)
+    exact_selector = torch.tensor(
+        [row.get("query_scope") == "exact_pair" for row in query_rows],
+        dtype=torch.bool,
+    )
+    if not exact_selector.any():
+        raise ValueError("compatibility comparison has no primary exact queries")
     config = _load_config(Path(args.config_path))
     result: dict[str, Any] = {
         "status": "FULL_GALLERY_REGRESSION_PENDING",
@@ -190,6 +196,8 @@ def main() -> int:
         "checkpoint": str(checkpoint),
         "pair_count": len(pair_rows),
         "query_count": len(query_rows),
+        "exact_primary_query_count": int(exact_selector.sum()),
+        "non_exact_diagnostic_query_count": int((~exact_selector).sum()),
         "pair_ids": pair_ids,
         "ordered_pair_ids_sha256": ordered_id_sha256(
             pair_rows, "canonical_pair_id"
@@ -245,7 +253,10 @@ def main() -> int:
             "pair_embedding_shape": list(pair_embeddings.shape),
             "text_embedding_shape": list(text_embeddings.shape),
             "score_shape": list(scores.shape),
-            "metrics": full_gallery_metrics(scores, positive),
+            "metrics": full_gallery_metrics(
+                scores[exact_selector], positive[exact_selector]
+            ),
+            "all_query_diagnostic_metrics": full_gallery_metrics(scores, positive),
             "per_source_metrics": metrics_by_query_group(
                 scores, positive, query_rows
             ),
