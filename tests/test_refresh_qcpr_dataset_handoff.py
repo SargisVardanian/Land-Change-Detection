@@ -124,3 +124,74 @@ def test_refresh_merges_bounded_coordination_status(tmp_path: Path) -> None:
     assert handoff["dubai_external_blocker"] == "license absent"
     assert handoff["compatibility_authority"] == "model_requirements_sha256"
     assert handoff["r19g_remains_valid"] is True
+
+
+def test_refresh_merges_forest_extension_without_rewriting_model_head(tmp_path: Path) -> None:
+    repo = Path(__file__).resolve().parents[1]
+    shared = tmp_path / "shared"
+    (shared / "handoff").mkdir(parents=True)
+    release = tmp_path / "release_handoff.json"
+    release.write_text(
+        json.dumps(
+            {
+                "release_name": "qcpr_bitemporal_v2_train_20260808_final_r19g",
+                "model_agent_branch": "frozen/model",
+                "model_agent_sha": "f" * 40,
+            }
+        )
+    )
+    requirements = tmp_path / "model_requirements.json"
+    requirements.write_text("{}\n")
+    for name in ("dataset_status.json", "dataset_capabilities.json"):
+        (shared / name).write_text("{}\n")
+    artifact = {"path": "/artifact", "sha256": "a" * 64}
+    extension = tmp_path / "extension.json"
+    extension.write_text(
+        json.dumps(
+            {
+                "core_release": "qcpr_bitemporal_v2_train_20260808_final_r19g",
+                "core_unchanged": True,
+                "FOREST_HUMAN_TRAIN_READY": True,
+                "FOREST_LICENSE_STATUS": "PARTIAL",
+                "FOREST_USE_SCOPE": "RESEARCH_ONLY_UNTIL_CLARIFIED",
+                "CORE_PLUS_FOREST_HUMAN_TRAIN": artifact,
+                "FOREST_HUMAN_TRAIN": artifact,
+                "FOREST_FROZEN_DOMAIN_SHIFT_EVAL": artifact,
+                "FOREST_PROVENANCE_LICENSE_AUDIT": artifact,
+                "FOREST_SAMPLER_PROPOSAL": artifact,
+                "SOURCE_SHORTCUT_CONTROL_METADATA": artifact,
+                "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": True,
+                "authorization_scope": "later matched research-only data ablation",
+                "HIGHRES_PHYSICAL_READY": True,
+                "HIGHRES_RUNTIME_STRESS_READY": True,
+                "HIGHRES_EVAL_READY": False,
+                "HIGHRES_TRAIN_READY": False,
+                "DUBAI_EXTERNAL_READY": False,
+                "DUBAI_TRAIN_READY": False,
+            }
+        )
+    )
+    subprocess.run(
+        [
+            sys.executable,
+            str(repo / "scripts/refresh_qcpr_dataset_handoff.py"),
+            "--release-handoff",
+            str(release),
+            "--shared-root",
+            str(shared),
+            "--model-requirements",
+            str(requirements),
+            "--dataset-code-sha",
+            "2" * 40,
+            "--forest-extension-status",
+            str(extension),
+        ],
+        check=True,
+    )
+    handoff = json.loads((shared / "dataset_final_to_model.json").read_text())
+    assert handoff["model_agent_branch"] == "frozen/model"
+    assert handoff["model_agent_sha"] == "f" * 40
+    assert handoff["FOREST_LICENSE_STATUS"] == "PARTIAL"
+    assert handoff["AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION"] is True
+    assert handoff["HIGHRES_EVAL_READY"] is False
+    assert handoff["HIGHRES_TRAIN_READY"] is False

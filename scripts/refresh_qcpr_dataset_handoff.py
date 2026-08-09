@@ -36,12 +36,15 @@ def main() -> int:
     parser.add_argument("--release-handoff", type=Path, required=True)
     parser.add_argument("--shared-root", type=Path, required=True)
     parser.add_argument("--model-requirements", type=Path, required=True)
-    parser.add_argument("--model-branch", required=True)
-    parser.add_argument("--model-sha", required=True)
+    parser.add_argument("--model-branch")
+    parser.add_argument("--model-sha")
     parser.add_argument("--dataset-code-sha", required=True)
     parser.add_argument("--dataset-remote-sha")
     parser.add_argument("--coordination-status", type=Path)
+    parser.add_argument("--forest-extension-status", type=Path)
     args = parser.parse_args()
+    if bool(args.model_branch) != bool(args.model_sha):
+        parser.error("--model-branch and --model-sha must be provided together")
 
     handoff = _read(args.release_handoff)
     release_name = str(handoff.get("release_name") or "")
@@ -94,6 +97,53 @@ def main() -> int:
             coordination_fields["dubai_external_blocker"] = _read(dubai_status_path).get(
                 "blocker"
             )
+
+    extension_fields: dict[str, Any] = {}
+    if args.forest_extension_status:
+        extension = _read(args.forest_extension_status)
+        if extension.get("core_release") != release_name:
+            parser.error("Forest extension does not target authoritative r19g")
+        if extension.get("core_unchanged") is not True:
+            parser.error("Forest extension does not preserve immutable r19g")
+        extension_fields = {
+            "FOREST_HUMAN_TRAIN_READY": extension["FOREST_HUMAN_TRAIN_READY"],
+            "FOREST_LICENSE_STATUS": extension["FOREST_LICENSE_STATUS"],
+            "FOREST_USE_SCOPE": extension["FOREST_USE_SCOPE"],
+            "CORE_PLUS_FOREST_HUMAN_TRAIN": extension["CORE_PLUS_FOREST_HUMAN_TRAIN"],
+            "FOREST_HUMAN_TRAIN": extension["FOREST_HUMAN_TRAIN"],
+            "FOREST_FROZEN_DOMAIN_SHIFT_EVAL": extension[
+                "FOREST_FROZEN_DOMAIN_SHIFT_EVAL"
+            ],
+            "FOREST_PROVENANCE_LICENSE_AUDIT": extension[
+                "FOREST_PROVENANCE_LICENSE_AUDIT"
+            ],
+            "FOREST_SAMPLER_PROPOSAL": extension["FOREST_SAMPLER_PROPOSAL"],
+            "SOURCE_SHORTCUT_CONTROL_METADATA": extension[
+                "SOURCE_SHORTCUT_CONTROL_METADATA"
+            ],
+            "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": extension[
+                "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION"
+            ],
+            "domain_expanded_ablation_authorization_scope": extension[
+                "authorization_scope"
+            ],
+            "HIGHRES_PHYSICAL_READY": extension["HIGHRES_PHYSICAL_READY"],
+            "HIGHRES_RUNTIME_STRESS_READY": extension["HIGHRES_RUNTIME_STRESS_READY"],
+            "HIGHRES_EVAL_READY": extension["HIGHRES_EVAL_READY"],
+            "HIGHRES_TRAIN_READY": extension["HIGHRES_TRAIN_READY"],
+            "DUBAI_EXTERNAL_READY": extension["DUBAI_EXTERNAL_READY"],
+            "DUBAI_TRAIN_READY": extension["DUBAI_TRAIN_READY"],
+            "forest_extension_status": {
+                "path": str(args.forest_extension_status),
+                "sha256": _sha256(args.forest_extension_status),
+            },
+        }
+    model_fields = {}
+    if args.model_branch and args.model_sha:
+        model_fields = {
+            "model_agent_branch": args.model_branch,
+            "model_agent_sha": args.model_sha,
+        }
     handoff.update(
         {
             "dataset_code_sha": args.dataset_code_sha,
@@ -103,13 +153,13 @@ def main() -> int:
             "dataset_remote_verification": (
                 "VERIFIED" if args.dataset_remote_sha else "NOT_AVAILABLE_GITHUB_SSH_AUTH_REQUIRED"
             ),
-            "model_agent_branch": args.model_branch,
-            "model_agent_sha": args.model_sha,
             "model_requirements_sha256": requirements_sha,
             "compatibility_authority": "model_requirements_sha256",
             "shared_handoff_refresh_only": True,
             "immutable_release_mutated": False,
             **coordination_fields,
+            **extension_fields,
+            **model_fields,
         }
     )
 
@@ -135,6 +185,7 @@ def main() -> int:
         value["model_requirements_sha256"] = requirements_sha
         value["compatibility_authority"] = "model_requirements_sha256"
         value.update(coordination_fields)
+        value.update(extension_fields)
         value["handoff_path"] = "contracts/qcpr_shared/handoff/dataset_final_to_model.json"
         value["handoff_sha256"] = handoff_sha
         value["handoff_schema_complete"] = True
