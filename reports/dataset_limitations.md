@@ -8,8 +8,10 @@
    the predecessor audit.
 3. The 20.99% normalized duplicate rate and a collision group of size 1,361 make naive
    in-batch negative treatment unsafe.
-4. Cross-source and explicit cross-split perceptual near-duplicate statistics are not
-   present in the immutable release's within-source dHash artifact.
+4. The immutable release's dHash artifact is within-source only. An external supplement
+   found 1,443 cross-split and 186 cross-source perceptual candidates with zero exact
+   byte duplicates; human classification into crop/resize, scene-family, source-safe
+   and independent cases is still pending.
 5. Source separability is unresolved. Batch quota balancing is not evidence that the
    model cannot exploit LEVIR/SECOND style.
 6. GSD and footprint are unknown for every frame; registration is unknown for every
@@ -26,4 +28,3 @@
 
 These limits do not invalidate the LEVIR+SECOND exact core. They prohibit claims that
 r19g is a retrieval-semantically complete expanded dataset.
-

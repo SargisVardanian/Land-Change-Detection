@@ -92,9 +92,12 @@ selection are model-side operations; pair transforms must remain synchronized.
 
 SHA256 and schema checks, exact/reverse pair leakage, physical-group split leakage,
 native dimension consistency, mask isolation, and same-pair relevance passed in r19g.
-The existing 64-bit dHash audit covers all frames at Hamming threshold 4 but is
-exhaustive only within source; cross-source and explicit cross-split perceptual review
-remain open evidence gaps. Human false-negative rate and exact-scope precision are
+The immutable 64-bit dHash audit covers all frames at Hamming threshold 4 within source.
+An external final-audit supplement extends comparison across source and split boundaries:
+4,208 different-item perceptual candidates, including 1,443 cross-split and 186
+cross-source pairs, with zero exact-byte duplicates across either boundary. The 200
+stored examples remain human-review candidates, not confirmed leakage. Human
+false-negative rate and exact-scope precision are
 `NOT_AVAILABLE` because 0/1,500 paper-calibration decisions are complete.
 
 Core source accounting is incomplete relative to official inventories: LEVIR has
@@ -106,4 +109,3 @@ fully machine-readable, so the release never silently restores those items.
 Only the LEVIR+SECOND exact core is authorized. Expanded/domain, semantic,
 localized, stable, high-resolution and long-series training are not authorized.
 See `reports/source_provenance_matrix.md` and `reports/dataset_limitations.md`.
-

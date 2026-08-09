@@ -36,12 +36,16 @@ false-negative rate is `NOT_AVAILABLE`; no immutable judgments support an estima
 ## Baselines and unresolved measurements
 
 The release links a frozen-anchor data-only comparison; a random retrieval baseline is
-not present in r19g metadata. Existing visual dHash evidence decoded all frames with a
-64-bit grayscale dHash at Hamming threshold 4, but comparisons are exhaustive only
-within source. Cross-source and explicit cross-split perceptual candidate statistics
-must be produced outside r19g before claiming a complete visual-overlap audit.
+not present in r19g metadata. Existing release-local dHash evidence decoded all frames
+at Hamming threshold 4 within source. The external final audit at
+`runs/qcpr_dataset_final_audit_20260809/visual_cross_boundary_audit.json` (SHA256
+`06372bc7258a6c527228fdff7b561555fa1540b6e4bfe37d6ca1afb5f99e60bc`)
+recomputed all 66,742 frames and found 65,192 unique dHashes. It reports 4,208
+different-item candidates: distance 0/1/2/3/4 counts 1,674/296/477/734/1,027;
+1,443 are cross-split and 186 cross-source. Exact-byte duplicates across both boundary
+types are zero. The stored perceptual candidates still require human scene-family,
+crop/resize and independence adjudication.
 
 Balanced 64/64 LEVIR/SECOND sampling controls batch counts but does not prove source
 invariance. A source-classification/separability test on frozen image and text features
 is still required.
-

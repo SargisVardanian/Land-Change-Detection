@@ -12,6 +12,8 @@
   reuse `identities.hashing.sha256_file`.
 - Restored the missing canonical decision-package helper required by the retained final
   Dataset-v2 builder, removing a real full-suite collection failure.
+- Added a read-only cross-source/cross-split dHash auditor with an external-output guard;
+  its evidence is stored under `runs/`, never in immutable r19g.
 - Added canonical Dataset Card, Data Dictionary, source-provenance, difficulty and
   limitations reports.
 - Classified historical builders as LEGACY_REQUIRED rather than deleting lineage.
