@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass
 from hashlib import sha256
+from itertools import pairwise
 
 import torch
 from PIL import Image
@@ -156,3 +157,33 @@ def chunk_patch_coordinates(
     global_x = (chunk.left + local_x).clamp(max=float(native_width)) / native_width
     coordinates = torch.stack((global_x, global_y), dim=-1).reshape(-1, 2)
     return coordinates, valid.reshape(-1)
+
+
+def chunk_plan_coverage_fraction(plan: SynchronizedChunkPlan) -> float:
+    """Compute exact native-pixel coverage without allocating an image mask."""
+
+    boundaries = sorted(
+        {0, plan.native_height}
+        | {chunk.top for chunk in plan.chunks}
+        | {chunk.bottom for chunk in plan.chunks}
+    )
+    covered_area = 0
+    for top, bottom in pairwise(boundaries):
+        intervals = sorted(
+            (chunk.left, chunk.right)
+            for chunk in plan.chunks
+            if chunk.top < bottom and chunk.bottom > top
+        )
+        merged_width = 0
+        if intervals:
+            left, right = intervals[0]
+            for next_left, next_right in intervals[1:]:
+                if next_left > right:
+                    merged_width += right - left
+                    left, right = next_left, next_right
+                else:
+                    right = max(right, next_right)
+            merged_width += right - left
+        covered_area += (bottom - top) * merged_width
+    native_area = plan.native_height * plan.native_width
+    return covered_area / native_area

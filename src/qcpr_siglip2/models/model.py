@@ -116,6 +116,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         gsd: Tensor | None = None,
         metadata_missing: Tensor | None = None,
         token_coordinates: Tensor | None = None,
+        force_region_reduction: bool = False,
     ) -> RetrievalForwardOutput:
         validate_feature_contract(
             frame_tokens,
@@ -140,6 +141,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             gsd=gsd,
             metadata_missing=metadata_missing,
             token_coordinates=token_coordinates,
+            force_region_reduction=force_region_reduction,
         )
         text_embedding = F.normalize(text_embeddings, dim=-1)
         pair = temporal.pair_cls
@@ -238,6 +240,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
                 if token_coordinates is None
                 else token_coordinates
             ),
+            force_region_reduction=image.force_region_reduction,
         )
 
     def trainable_parameter_report(self) -> dict[str, dict[str, int]]:

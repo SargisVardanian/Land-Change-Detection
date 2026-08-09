@@ -19,7 +19,6 @@ from typing import Any
 
 from qcpr_siglip2.training.milestones import (
     milestone_evaluation_path,
-    required_milestones,
 )
 
 
@@ -72,8 +71,15 @@ def run() -> int:
             raise FileNotFoundError(manifest_path)
         manifest = json.loads(manifest_path.read_text())
         phase = str(manifest.get("phase", ""))
-        expected_steps = list(required_milestones(phase))
-        if manifest.get("required_milestones") != expected_steps:
+        if phase not in {"A", "B"}:
+            raise RuntimeError("MILESTONE_MANIFEST_PHASE_INVALID")
+        expected_steps = manifest.get("required_milestones")
+        if (
+            not isinstance(expected_steps, list)
+            or not expected_steps
+            or any(not isinstance(step, int) or step <= 0 for step in expected_steps)
+            or expected_steps != sorted(set(expected_steps))
+        ):
             raise RuntimeError("MILESTONE_MANIFEST_CONTRACT_MISMATCH")
         records = manifest.get("milestones")
         if not isinstance(records, list) or [int(item["step"]) for item in records] != expected_steps:

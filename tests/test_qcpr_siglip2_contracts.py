@@ -702,13 +702,37 @@ def test_phase_driver_requires_explicit_long_run_authorization(monkeypatch):
 
     from run_qcpr_siglip2_phase import resolve_steps
 
-    args = Namespace(phase="A", steps=8, authorize_long_run=False)
+    args = Namespace(
+        phase="A",
+        steps=8,
+        authorize_long_run=False,
+        logical_physical_batch_size=128,
+    )
     monkeypatch.setenv("QCPR_ALLOW_NONSTANDARD_STEPS", "1")
     with pytest.raises(RuntimeError, match="LONG_TRAINING"):
-        resolve_steps(Namespace(phase="A", steps=256, authorize_long_run=False))
+        resolve_steps(
+            Namespace(
+                phase="A",
+                steps=256,
+                authorize_long_run=False,
+                logical_physical_batch_size=128,
+            ),
+            unique_pairs=7291,
+        )
     monkeypatch.setenv("QCPR_ALLOW_LONG_TRAINING", "1")
-    assert resolve_steps(Namespace(phase="A", steps=256, authorize_long_run=True)) == 256
-    assert resolve_steps(args) == 8
+    assert (
+        resolve_steps(
+            Namespace(
+                phase="A",
+                steps=256,
+                authorize_long_run=True,
+                logical_physical_batch_size=128,
+            ),
+            unique_pairs=7291,
+        )
+        == 256
+    )
+    assert resolve_steps(args, unique_pairs=7291) == 8
 
 
 def test_phase_driver_requires_exact_core_and_runtime_gates() -> None:
@@ -735,12 +759,20 @@ def test_phase_driver_requires_exact_core_and_runtime_gates() -> None:
 
 
 def test_phase_milestones_are_complete_and_phase_specific():
-    from qcpr_siglip2.training.milestones import required_milestones
+    from qcpr_siglip2.training.milestones import (
+        required_milestones,
+        steps_for_exposure,
+    )
 
-    assert required_milestones("A") == (0, 128, 256)
-    assert required_milestones("B") == (256, 512, 1024, 1792)
+    assert steps_for_exposure(8, unique_pairs=7291, logical_batch_size=128) == 456
+    assert required_milestones(
+        "A", unique_pairs=7291, logical_batch_size=128
+    ) == (456,)
+    assert required_milestones(
+        "B", unique_pairs=7291, logical_batch_size=128
+    ) == (684, 912, 1140, 1368)
     with pytest.raises(ValueError, match="unsupported"):
-        required_milestones("C")
+        required_milestones("C", unique_pairs=7291, logical_batch_size=128)
 
 
 def test_georsclip_temporal_baseline_is_frozen_tower_and_fixed_step() -> None:

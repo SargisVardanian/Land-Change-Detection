@@ -13,11 +13,16 @@ from qcpr_siglip2.data.chunking import (
     apply_synchronized_chunk_plan,
     build_synchronized_chunk_plan,
     chunk_patch_coordinates,
+    chunk_plan_coverage_fraction,
 )
 from qcpr_siglip2.data.manifest import load_exact_pair_rows
 from qcpr_siglip2.data.naflex import (
     build_patch_budget_schedule,
     validate_patch_budget_sequence,
+)
+from qcpr_siglip2.data.resolution import (
+    effective_resolution_record,
+    use_partition_mode,
 )
 from qcpr_siglip2.data.runtime import encode_large_scene_images, processor_image_inputs
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
@@ -155,18 +160,80 @@ def test_synchronized_large_scene_chunks_share_geometry_and_native_coordinates()
         [Image.new("RGB", (2, 3)), Image.new("RGB", (2, 3))], small_plan
     )
     assert small_chunks[0][0].size == (2, 3)
+    assert chunk_plan_coverage_fraction(plan) == 1.0
+    assert chunk_plan_coverage_fraction(small_plan) == 1.0
+
+
+def test_effective_resolution_distinguishes_direct_downsampling_from_native_tiles():
+    direct = effective_resolution_record(
+        native_height=1024,
+        native_width=1024,
+        patch_size=16,
+        actual_valid_patch_count=1024,
+        max_num_patches=1024,
+        processing_mode="DIRECT_NAFLEX",
+        processed_patch_grid=(32, 32),
+    )
+    assert direct["processed_width"] == 512
+    assert direct["native_information_preserved_fraction"] == 0.25
+    plan = build_synchronized_chunk_plan(
+        (1024, 1024), chunk_size=(512, 512), overlap=(64, 64)
+    )
+    hierarchical = effective_resolution_record(
+        native_height=1024,
+        native_width=1024,
+        patch_size=16,
+        actual_valid_patch_count=sum(
+            (chunk.valid_height // 16) * (chunk.valid_width // 16)
+            for chunk in plan.chunks
+        ),
+        max_num_patches=1024,
+        processing_mode="HIERARCHICAL_NATIVE",
+        chunk_plan=plan,
+        overview_patch_grid=(16, 16),
+    )
+    assert hierarchical["processed_width"] == 1024
+    assert hierarchical["native_pixel_coverage_fraction"] == 1.0
+    assert hierarchical["native_information_preserved_fraction"] == 1.0
+    assert hierarchical["tile_count"] == 9
+
+
+def test_partition_mode_schedule_is_deterministic_and_bounded():
+    ids = [f"pair-{index:04d}" for index in range(1000)]
+    first = [
+        item_id
+        for item_id in ids
+        if use_partition_mode(item_id, epoch=3, fraction=0.25, seed=71)
+    ]
+    second = [
+        item_id
+        for item_id in ids
+        if use_partition_mode(item_id, epoch=3, fraction=0.25, seed=71)
+    ]
+    assert first == second
+    assert 200 <= len(first) <= 300
+    assert all(
+        not use_partition_mode(item_id, epoch=0, fraction=0.0, seed=71)
+        for item_id in ids
+    )
 
 
 class _ChunkProcessor:
     def __call__(self, *, images, max_num_patches, return_tensors):
-        assert max_num_patches == 4
+        assert max_num_patches in (4, 9)
         assert return_tensors == "pt"
+        patch_count = 4 if max_num_patches == 4 else 9
+        side = 2 if patch_count == 4 else 3
+        values = []
+        for image in images:
+            channel_means = torch.tensor(list(image.resize((1, 1)).getpixel((0, 0))))
+            values.append(channel_means.float().view(1, 3).expand(patch_count, 3))
         return {
-            "pixel_values": torch.arange(len(images) * 12, dtype=torch.float32).reshape(
-                len(images), 4, 3
+            "pixel_values": torch.stack(values),
+            "pixel_attention_mask": torch.ones(
+                len(images), patch_count, dtype=torch.bool
             ),
-            "pixel_attention_mask": torch.ones(len(images), 4, dtype=torch.bool),
-            "spatial_shapes": torch.tensor([[2, 2]] * len(images)),
+            "spatial_shapes": torch.tensor([[side, side]] * len(images)),
         }
 
 
@@ -215,12 +282,18 @@ def test_large_scene_runtime_uses_shared_backbone_and_one_pair_vector(tmp_path):
         torch.device("cpu"),
         chunk_size=(4, 4),
         max_num_patches=4,
+        overview_max_num_patches=4,
         dtype=torch.float32,
     )
-    assert backbone.calls == 1
+    assert backbone.calls == 3
     assert encoded.patch_tokens.shape == (1, 2, 24, 32)
     assert encoded.token_coordinates.shape == (1, 2, 24, 2)
     assert encoded.chunk_plan_hashes is not None
+    assert encoded.processing_mode == "HIERARCHICAL_NATIVE"
+    assert encoded.force_region_reduction is True
+    assert encoded.chunk_counts == (6,)
+    assert encoded.chunk_valid_patch_counts == ((4, 4, 4, 4, 4, 4),)
+    assert encoded.overview_processed_patch_grid is not None
     model = Siglip2TemporalRetrievalModel(
         None, _config(direct_patch_token_budget=8, large_scene_latents=4)
     ).eval()
@@ -239,9 +312,37 @@ def test_large_scene_runtime_uses_shared_backbone_and_one_pair_vector(tmp_path):
         processed_patch_grid=encoded.processed_patch_grid,
         transform_hash=encoded.transform_hash,
         token_coordinates=encoded.token_coordinates,
+        force_region_reduction=encoded.force_region_reduction,
     )
     assert output.pair_cls.shape == (1, 32)
     assert output.temporal.reduced is True
+
+
+def test_large_scene_tile_batch_size_does_not_change_encoding(tmp_path):
+    paths = []
+    for index, color in enumerate(((20, 40, 60), (60, 40, 20))):
+        path = tmp_path / f"frame-{index}.png"
+        Image.new("RGB", (10, 6), color).save(path)
+        paths.append(str(path))
+    values = []
+    for tile_batch_size in (1, 4):
+        values.append(
+            encode_large_scene_images(
+                _SharedChunkBackbone(),
+                _ChunkProcessor(),
+                [{"frames": paths}],
+                torch.device("cpu"),
+                chunk_size=(4, 4),
+                max_num_patches=4,
+                overview_max_num_patches=9,
+                tile_batch_size=tile_batch_size,
+                dtype=torch.float32,
+            )
+        )
+    assert torch.equal(values[0].patch_tokens, values[1].patch_tokens)
+    assert torch.equal(values[0].patch_valid_mask, values[1].patch_valid_mask)
+    assert torch.equal(values[0].token_coordinates, values[1].token_coordinates)
+    assert torch.equal(values[0].pooled_embedding, values[1].pooled_embedding)
 
 
 def test_metadata_and_native_geometry_propagate_through_temporal_adapter():

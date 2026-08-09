@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from scripts.collect_qcpr_slurm_completion import _artifact_inventory, _job_record
+from scripts.collect_qcpr_slurm_completion import _artifact_inventory, main
+from scripts.enrich_qcpr_slurm_completion import main as enrich_main
 
 
 def test_completion_inventory_is_deterministic_and_excludes_self(tmp_path: Path) -> None:
@@ -15,21 +17,60 @@ def test_completion_inventory_is_deterministic_and_excludes_self(tmp_path: Path)
     assert all(len(str(record["sha256"])) == 64 for record in records)
 
 
-def test_job_record_uses_explicit_sacct_binary(monkeypatch) -> None:
-    observed: dict[str, object] = {}
+def test_compute_collector_is_idempotent_and_never_requires_accounting(
+    tmp_path: Path, monkeypatch
+) -> None:
+    (tmp_path / "metrics.json").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "collect",
+            "--job-id",
+            "210239",
+            "--collector-job-id",
+            "210240",
+            "--run-root",
+            str(tmp_path),
+            "--expected-code-sha",
+            "a" * 40,
+            "--required-artifact",
+            "metrics.json",
+        ],
+    )
+    assert main() == 0
+    first = (tmp_path / "completion.json").read_bytes()
+    assert main() == 0
+    assert (tmp_path / "completion.json").read_bytes() == first
+    payload = json.loads(first)
+    assert payload["accounting_status"] == "NOT_AVAILABLE_ON_COMPUTE"
+    assert payload["required_artifacts_complete"] is True
+
+
+def test_login_enrichment_calls_sacct_once(tmp_path: Path, monkeypatch) -> None:
+    (tmp_path / "completion.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "qcpr-slurm-completion-v2",
+                "upstream_job_id": "210239",
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls = []
 
     def fake_check_output(command, text):
-        observed["command"] = command
-        observed["text"] = text
-        return "210234|COMPLETED|0:0|01:51:00|gpu03|\n"
+        calls.append((command, text))
+        return "210239|COMPLETED|0:0|00:00:38|gpu03|\n"
 
     monkeypatch.setattr("subprocess.check_output", fake_check_output)
-    record = _job_record("210234", "/opt/slurm/bin/sacct")
-    assert observed["command"][0] == "/opt/slurm/bin/sacct"
-    assert record["state"] == "COMPLETED"
-
-
-def test_job_record_falls_back_for_afterany_compute_node(tmp_path: Path) -> None:
-    record = _job_record("210239", str(tmp_path / "missing-sacct"))
-    assert record["state"] == "TERMINAL_BY_AFTERANY_DEPENDENCY"
-    assert record["exit_code"] == "UNRESOLVED_ON_COMPUTE_NODE"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["enrich", "--run-root", str(tmp_path), "--sacct-bin", "sacct"],
+    )
+    assert enrich_main() == 0
+    assert len(calls) == 1
+    payload = json.loads(
+        (tmp_path / "completion_accounting.json").read_text(encoding="utf-8")
+    )
+    assert payload["accounting_status"] == "RESOLVED_ON_LOGIN"
+    assert payload["exit_code"] == "0:0"

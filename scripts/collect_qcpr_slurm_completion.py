@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import subprocess
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,45 +20,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _job_record(job_id: str, sacct_bin: str = "/opt/slurm/bin/sacct") -> dict[str, str]:
-    if not Path(sacct_bin).is_file():
-        return {
-            "job_id": job_id,
-            "state": "TERMINAL_BY_AFTERANY_DEPENDENCY",
-            "exit_code": "UNRESOLVED_ON_COMPUTE_NODE",
-            "elapsed": "UNRESOLVED_ON_COMPUTE_NODE",
-            "node_list": "UNRESOLVED_ON_COMPUTE_NODE",
-        }
-    output = subprocess.check_output(
-        [
-            sacct_bin,
-            "-X",
-            "-j",
-            job_id,
-            "--format=JobIDRaw,State,ExitCode,Elapsed,NodeList",
-            "-n",
-            "-P",
-        ],
-        text=True,
-    )
-    rows = [line.split("|") for line in output.splitlines() if line.strip()]
-    exact = [row for row in rows if row[0] == job_id]
-    if len(exact) != 1 or len(exact[0]) < 5:
-        raise RuntimeError(f"cannot resolve exact sacct row for {job_id}")
-    row = exact[0]
-    return {
-        "job_id": row[0],
-        "state": row[1],
-        "exit_code": row[2],
-        "elapsed": row[3],
-        "node_list": row[4],
-    }
-
-
 def _artifact_inventory(run_root: Path) -> list[dict[str, Any]]:
     records = []
     for path in sorted(item for item in run_root.rglob("*") if item.is_file()):
-        if path.name == "completion.json" or path.name.endswith(".tmp"):
+        is_completion = path.name in {
+            "completion.json",
+            "completion_accounting.json",
+        }
+        if is_completion or path.name.endswith(".tmp"):
             continue
         records.append(
             {
@@ -73,9 +42,10 @@ def _artifact_inventory(run_root: Path) -> list[dict[str, Any]]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-id", required=True)
+    parser.add_argument("--collector-job-id", default=None)
     parser.add_argument("--run-root", required=True)
     parser.add_argument("--expected-code-sha", required=True)
-    parser.add_argument("--sacct-bin", default="/opt/slurm/bin/sacct")
+    parser.add_argument("--required-artifact", action="append", default=[])
     return parser.parse_args()
 
 
@@ -84,16 +54,43 @@ def main() -> int:
     run_root = Path(args.run_root)
     if not run_root.is_dir():
         raise FileNotFoundError(run_root)
-    record = _job_record(args.job_id, args.sacct_bin)
+    collector_job_id = args.collector_job_id or os.environ.get(
+        "SLURM_JOB_ID", "NOT_RUNNING_UNDER_SLURM"
+    )
+    artifacts = _artifact_inventory(run_root)
+    present_paths = {str(item["path"]) for item in artifacts}
+    required = {
+        str(path): str(path) in present_paths for path in args.required_artifact
+    }
     payload = {
-        "schema_version": "qcpr-slurm-completion-v1",
-        "collected_at": datetime.now(UTC).isoformat(),
+        "schema_version": "qcpr-slurm-completion-v2",
+        "timestamp": datetime.now(UTC).isoformat(),
+        "upstream_job_id": args.job_id,
+        "collector_job_id": collector_job_id,
+        "run_root": str(run_root.resolve()),
         "expected_code_sha": args.expected_code_sha,
-        "accounting_resolved": record["exit_code"] != "UNRESOLVED_ON_COMPUTE_NODE",
-        "upstream": record,
-        "artifacts": _artifact_inventory(run_root),
+        "accounting_status": "NOT_AVAILABLE_ON_COMPUTE",
+        "required_artifact_present": required,
+        "required_artifacts_complete": all(required.values()),
+        "artifacts": artifacts,
     }
     target = run_root / "completion.json"
+    if target.is_file():
+        existing = json.loads(target.read_text(encoding="utf-8"))
+        comparable_fields = (
+            "schema_version",
+            "upstream_job_id",
+            "collector_job_id",
+            "run_root",
+            "expected_code_sha",
+            "accounting_status",
+            "required_artifact_present",
+            "required_artifacts_complete",
+            "artifacts",
+        )
+        if all(existing.get(key) == payload.get(key) for key in comparable_fields):
+            return 0
+        raise RuntimeError("completion.json exists with different immutable content")
     temporary = run_root / "completion.json.tmp"
     temporary.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"

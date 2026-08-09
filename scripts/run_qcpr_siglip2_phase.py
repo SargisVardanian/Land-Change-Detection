@@ -38,6 +38,7 @@ from qcpr_siglip2.training.milestones import (
     milestone_checkpoint_path,
     milestone_evaluation_path,
     required_milestones,
+    steps_for_exposure,
 )
 from qcpr_siglip2.training.optimizer import build_adamw
 
@@ -134,8 +135,18 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolve_steps(args: argparse.Namespace) -> int:
-    expected = 256 if args.phase == "A" else 1536
+def resolve_steps(args: argparse.Namespace, *, unique_pairs: int) -> int:
+    phase_a_end = steps_for_exposure(
+        8,
+        unique_pairs=unique_pairs,
+        logical_batch_size=args.logical_physical_batch_size,
+    )
+    total_end = steps_for_exposure(
+        24,
+        unique_pairs=unique_pairs,
+        logical_batch_size=args.logical_physical_batch_size,
+    )
+    expected = phase_a_end if args.phase == "A" else total_end - phase_a_end
     steps = expected if args.steps is None else int(args.steps)
     if steps != expected and os.environ.get("QCPR_ALLOW_NONSTANDARD_STEPS") != "1":
         raise ValueError(
@@ -347,7 +358,6 @@ def main() -> int:
     args = parse_args()
     run = Path(args.output_dir)
     run.mkdir(parents=True, exist_ok=True)
-    steps = resolve_steps(args)
     if args.phase == "B" and not args.initial_checkpoint:
         raise ValueError("Phase B requires --initial-checkpoint from valid Phase A")
     if args.logical_physical_batch_size % args.physical_batch_size:
@@ -411,6 +421,10 @@ def main() -> int:
             raise RuntimeError("PHASE_TRAINING_REQUIRES_CUDA")
         torch.set_float32_matmul_precision("high")
         train_rows = load_exact_pair_rows(args.train_manifest, split="train")
+        unique_pair_count = len(
+            {str(row["canonical_pair_id"]) for row in train_rows}
+        )
+        steps = resolve_steps(args, unique_pairs=unique_pair_count)
         development_rows = load_exact_pair_rows(
             args.development_manifest, split="development"
         )
@@ -429,6 +443,8 @@ def main() -> int:
         backbone = Siglip2Backbone(
             args.siglip2_model, local_files_only=True, torch_dtype=torch.bfloat16
         )
+        if not backbone.is_naflex:
+            raise RuntimeError("LEGACY_FIXRES_256PX_IS_EVALUATION_ONLY")
         model = Siglip2TemporalRetrievalModel(
             backbone, model_config
         ).to(device)
@@ -439,13 +455,29 @@ def main() -> int:
                 2, gradient_checkpointing=model_config.gradient_checkpointing
             )
             initial_payload = load_checkpoint_weights(model, args.initial_checkpoint)
-            steps_start = int(initial_payload.get("global_step", 256)) if initial_payload else 256
-            if steps_start != 256:
-                raise ValueError("Phase B must start from a Phase-A step-256 checkpoint")
+            phase_a_end = steps_for_exposure(
+                8,
+                unique_pairs=unique_pair_count,
+                logical_batch_size=args.logical_physical_batch_size,
+            )
+            steps_start = (
+                int(initial_payload.get("global_step", phase_a_end))
+                if initial_payload
+                else phase_a_end
+            )
+            if steps_start != phase_a_end:
+                raise ValueError(
+                    "Phase B must start from the dynamic 8-presentations-per-pair "
+                    "Phase-A checkpoint"
+                )
         optimizer, optimizer_report, scheduler = build_adamw(
             model, phase=args.phase, total_steps=steps
         )
-        milestone_steps = required_milestones(args.phase)
+        milestone_steps = required_milestones(
+            args.phase,
+            unique_pairs=unique_pair_count,
+            logical_batch_size=args.logical_physical_batch_size,
+        )
         phase_end = steps_start + steps
         if not all(steps_start <= milestone <= phase_end for milestone in milestone_steps):
             raise RuntimeError("MILESTONE_CONTRACT_NOT_COVERED")
@@ -497,7 +529,10 @@ def main() -> int:
                 "initial_checkpoint": args.initial_checkpoint,
                 "optimizer_resumed": False,
                 "required_evaluation_milestones": list(milestone_steps),
+                "unique_training_physical_pairs": unique_pair_count,
+                "training_depth_unit": "presentations_per_unique_physical_pair",
                 "max_num_patches": args.max_num_patches,
+                "patch_budget_name": f"NAFLEX_{args.max_num_patches}_PATCH_BUDGET",
                 "tokenizer_gate": str(tokenizer_gate_path),
                 "tokenizer_gate_sha256": sha256(tokenizer_gate_path),
                 "multipositive_contract": str(multipositive_path),

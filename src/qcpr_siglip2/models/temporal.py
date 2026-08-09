@@ -386,6 +386,10 @@ class TemporalTransformerAdapter(nn.Module):
         nn.init.trunc_normal_(self.change_tokens, std=0.02)
         nn.init.trunc_normal_(self.spatial_position, std=0.02)
         self.region_reducer = BoundedRegionReducer(config)
+        self.region_geometry_projection = nn.Linear(
+            4, config.hidden_size, bias=False
+        )
+        nn.init.zeros_(self.region_geometry_projection.weight)
         self.blocks = nn.ModuleList(
             [LayerScaleTransformerBlock(config) for _ in range(config.temporal_layers)]
         )
@@ -586,7 +590,8 @@ class TemporalTransformerAdapter(nn.Module):
     ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
         b, t, _n, _ = frame_tokens.shape
         k = self.config.large_scene_latents
-        reduced, assignment, _ = self.region_reducer(frame_tokens, valid_mask)
+        positioned_tokens = frame_tokens + self._coordinate_position(native_coordinates)
+        reduced, assignment, _ = self.region_reducer(positioned_tokens, valid_mask)
         reduced_mask = torch.ones(
             b, t, k, dtype=torch.bool, device=frame_tokens.device
         )
@@ -595,6 +600,16 @@ class TemporalTransformerAdapter(nn.Module):
         ).view(1, 1, 2).expand(b, t, 2)
         region_coordinates = torch.einsum(
             "btkn,btnd->btkd", assignment, native_coordinates
+        )
+        coordinate_second_moment = torch.einsum(
+            "btkn,btnd->btkd", assignment, native_coordinates.square()
+        )
+        region_scale = (
+            coordinate_second_moment - region_coordinates.square()
+        ).clamp_min(0.0).sqrt()
+        geometry = torch.cat((region_coordinates, region_scale), dim=-1)
+        reduced = reduced + self.region_geometry_projection(geometry.float()).to(
+            dtype=reduced.dtype
         )
         return reduced, reduced_mask, reduced_shapes, assignment, region_coordinates
 
@@ -614,6 +629,7 @@ class TemporalTransformerAdapter(nn.Module):
         gsd: Tensor | None = None,
         metadata_missing: Tensor | None = None,
         token_coordinates: Tensor | None = None,
+        force_region_reduction: bool = False,
     ) -> TemporalAdapterOutput:
         if frame_tokens.ndim != 4 or frame_embeddings.ndim != 3:
             raise ValueError(
@@ -658,7 +674,7 @@ class TemporalTransformerAdapter(nn.Module):
         native_valid_mask = valid_mask
         native_shapes = shapes
         pair_initial = F.normalize(frame_embeddings.sum(dim=1), dim=-1)
-        reduced = n > self.config.direct_patch_token_budget
+        reduced = force_region_reduction or n > self.config.direct_patch_token_budget
         region_assignment: Tensor | None = None
         if reduced:
             tokens, valid_mask, shapes, region_assignment, region_coordinates = (

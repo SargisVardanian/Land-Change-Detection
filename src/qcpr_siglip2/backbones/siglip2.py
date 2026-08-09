@@ -32,6 +32,14 @@ class ImageEncoding:
     transform_hash: str | None = None
     token_coordinates: Tensor | None = None
     chunk_plan_hashes: tuple[str, ...] | None = None
+    processing_mode: str = "DIRECT_NAFLEX"
+    force_region_reduction: bool = False
+    chunk_counts: tuple[int, ...] | None = None
+    chunk_valid_patch_counts: tuple[tuple[int, ...], ...] | None = None
+    chunk_size: tuple[int, int] | None = None
+    chunk_overlap: tuple[int, int] | None = None
+    tile_batch_size: int | None = None
+    overview_processed_patch_grid: Tensor | None = None
 
 
 @dataclass

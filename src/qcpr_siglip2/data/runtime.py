@@ -291,6 +291,8 @@ def encode_large_scene_images(
     chunk_size: tuple[int, int],
     overlap: tuple[int, int] = (0, 0),
     max_num_patches: int,
+    tile_batch_size: int = 4,
+    overview_max_num_patches: int = 256,
     dtype: torch.dtype = torch.bfloat16,
     no_grad: bool = True,
 ) -> ImageEncoding:
@@ -307,7 +309,10 @@ def encode_large_scene_images(
         raise ValueError("large-scene native chunking requires a NaFlex backbone")
     if max_num_patches <= 0:
         raise ValueError("max_num_patches must be explicit and positive")
+    if tile_batch_size <= 0 or overview_max_num_patches <= 0:
+        raise ValueError("tile batch size and overview budget must be positive")
     all_chunk_frames: list[Image.Image] = []
+    overview_frames: list[Image.Image] = []
     chunk_records: list[tuple[int, SynchronizedChunkPlan, int]] = []
     frame_count: int | None = None
     plans: list[SynchronizedChunkPlan] = []
@@ -334,6 +339,7 @@ def encode_large_scene_images(
                 frames.append(image.convert("RGB"))
         if any(frame.size != frames[0].size for frame in frames[1:]):
             raise ValueError("large-scene temporal frames must share native geometry")
+        overview_frames.extend(frames)
         plan = build_synchronized_chunk_plan(
             (frames[0].height, frames[0].width),
             chunk_size=chunk_size,
@@ -347,86 +353,136 @@ def encode_large_scene_images(
             all_chunk_frames.extend(temporal_chunk)
     if frame_count is None:
         raise AssertionError("frame count was not initialized")
-    processed = processor(
-        images=all_chunk_frames,
-        max_num_patches=max_num_patches,
+    total_chunks = len(chunk_records)
+    combined_hash = sha256(
+        "\n".join(plan.transform_hash for plan in plans).encode("utf-8")
+    ).hexdigest()
+    encoded_chunks: list[
+        tuple[Tensor, Tensor, Tensor, Tensor, tuple[int, int]]
+    ] = []
+    for start in range(0, total_chunks, tile_batch_size):
+        stop = min(start + tile_batch_size, total_chunks)
+        frame_start = start * frame_count
+        frame_stop = stop * frame_count
+        processed = processor(
+            images=all_chunk_frames[frame_start:frame_stop],
+            max_num_patches=max_num_patches,
+            return_tensors="pt",
+        )
+        pixel_values = processed["pixel_values"]
+        patch_mask = processed.get("pixel_attention_mask")
+        spatial_shapes = processed.get("spatial_shapes")
+        if patch_mask is None or spatial_shapes is None:
+            raise ValueError("NaFlex processor must return patch masks and spatial shapes")
+        chunk_batch = stop - start
+        pixel_values = pixel_values.reshape(
+            chunk_batch, frame_count, *pixel_values.shape[1:]
+        ).to(device)
+        patch_mask = patch_mask.reshape(chunk_batch, frame_count, -1).to(device)
+        spatial_shapes = spatial_shapes.reshape(chunk_batch, frame_count, 2).to(device)
+        if not torch.equal(
+            spatial_shapes, spatial_shapes[:, :1].expand_as(spatial_shapes)
+        ):
+            raise ValueError("every temporal chunk must have a synchronized patch grid")
+        native_sizes = torch.tensor(
+            [
+                [
+                    plan.chunks[chunk_index].valid_height,
+                    plan.chunks[chunk_index].valid_width,
+                ]
+                for _, plan, chunk_index in chunk_records[start:stop]
+            ],
+            dtype=torch.long,
+            device=device,
+        ).view(chunk_batch, 1, 2).expand(chunk_batch, frame_count, 2).clone()
+        with (torch.no_grad() if no_grad else nullcontext()), _device_autocast(
+            device, dtype
+        ):
+            encoded_batch = backbone.encode_images(
+                pixel_values,
+                pixel_attention_mask=patch_mask,
+                spatial_shapes=spatial_shapes,
+                native_image_size=native_sizes,
+                transform_hash=combined_hash,
+            )
+        for local_index in range(chunk_batch):
+            grid_values = tuple(
+                int(value) for value in spatial_shapes[local_index, 0].tolist()
+            )
+            encoded_chunks.append(
+                (
+                    encoded_batch.patch_tokens[local_index],
+                    encoded_batch.patch_valid_mask[local_index],
+                    encoded_batch.spatial_shapes[local_index],
+                    encoded_batch.pooled_embedding[local_index],
+                    grid_values,
+                )
+            )
+
+    overview_processed = processor(
+        images=overview_frames,
+        max_num_patches=overview_max_num_patches,
         return_tensors="pt",
     )
-    pixel_values = processed["pixel_values"]
-    total_chunks = len(chunk_records)
-    pixel_values = pixel_values.reshape(
-        total_chunks, frame_count, *pixel_values.shape[1:]
+    overview_pixels = overview_processed["pixel_values"].reshape(
+        len(pair_rows), frame_count, *overview_processed["pixel_values"].shape[1:]
     ).to(device)
-    patch_mask = processed.get("pixel_attention_mask")
-    spatial_shapes = processed.get("spatial_shapes")
-    if patch_mask is None or spatial_shapes is None:
-        raise ValueError("NaFlex processor must return patch masks and spatial shapes")
-    patch_mask = patch_mask.reshape(total_chunks, frame_count, -1).to(device)
-    spatial_shapes = spatial_shapes.reshape(total_chunks, frame_count, 2).to(device)
-    if not torch.equal(
-        spatial_shapes, spatial_shapes[:, :1].expand_as(spatial_shapes)
-    ):
-        raise ValueError("every temporal chunk must have a synchronized patch grid")
-    chunk_native_size = torch.tensor(
-        [
-            [
-                plan.chunks[chunk_index].valid_height,
-                plan.chunks[chunk_index].valid_width,
-            ]
-            for _, plan, chunk_index in chunk_records
-            for _ in range(frame_count)
-        ],
+    overview_mask = overview_processed.get("pixel_attention_mask")
+    overview_shapes = overview_processed.get("spatial_shapes")
+    if overview_mask is None or overview_shapes is None:
+        raise ValueError("NaFlex overview must return patch masks and spatial shapes")
+    overview_mask = overview_mask.reshape(len(pair_rows), frame_count, -1).to(device)
+    overview_shapes = overview_shapes.reshape(len(pair_rows), frame_count, 2).to(device)
+    overview_native_size = torch.tensor(
+        [[plan.native_height, plan.native_width] for plan in plans],
         dtype=torch.long,
         device=device,
-    ).reshape(total_chunks, frame_count, 2)
-    context = torch.no_grad() if no_grad else nullcontext()
-    with context, _device_autocast(device, dtype):
-        encoded = backbone.encode_images(
-            pixel_values,
-            pixel_attention_mask=patch_mask,
-            spatial_shapes=spatial_shapes,
-            native_image_size=chunk_native_size,
-            transform_hash=sha256(
-                "\n".join(plan.transform_hash for plan in plans).encode("utf-8")
-            ).hexdigest(),
+    ).view(len(pair_rows), 1, 2).expand(len(pair_rows), frame_count, 2).clone()
+    with (torch.no_grad() if no_grad else nullcontext()), _device_autocast(
+        device, dtype
+    ):
+        overview = backbone.encode_images(
+            overview_pixels,
+            pixel_attention_mask=overview_mask,
+            spatial_shapes=overview_shapes,
+            native_image_size=overview_native_size,
+            transform_hash=combined_hash,
         )
-    patch_count = encoded.patch_tokens.shape[2]
-    hidden = encoded.patch_tokens.shape[-1]
+
+    hidden = encoded_chunks[0][0].shape[-1]
     chunks_per_pair = [len(plan.chunks) for plan in plans]
-    packed_count = max(chunks_per_pair) * patch_count
+    packed_counts = [0] * len(pair_rows)
+    for encoded_index, (pair_index, _plan, _chunk_index) in enumerate(chunk_records):
+        packed_counts[pair_index] += encoded_chunks[encoded_index][0].shape[1]
+    packed_count = max(packed_counts)
     batch = len(pair_rows)
-    tokens = encoded.patch_tokens.new_zeros(batch, frame_count, packed_count, hidden)
+    tokens = encoded_chunks[0][0].new_zeros(batch, frame_count, packed_count, hidden)
     valid = torch.zeros(
         batch, frame_count, packed_count, dtype=torch.bool, device=device
     )
-    coordinates = encoded.patch_tokens.new_zeros(
-        batch, frame_count, packed_count, 2
-    )
-    pooled_lists: list[list[Tensor]] = [[] for _ in range(batch)]
+    coordinates = tokens.new_zeros(batch, frame_count, packed_count, 2)
     pair_chunk_offsets = [0] * batch
+    chunk_valid_counts: list[list[int]] = [[] for _ in range(batch)]
     for encoded_index, (pair_index, plan, chunk_index) in enumerate(chunk_records):
-        offset = pair_chunk_offsets[pair_index] * patch_count
-        pair_chunk_offsets[pair_index] += 1
-        tokens[pair_index, :, offset : offset + patch_count] = encoded.patch_tokens[
-            encoded_index
-        ]
-        pooled_lists[pair_index].append(encoded.pooled_embedding[encoded_index])
-        grid_values = [
-            int(value) for value in spatial_shapes[encoded_index, 0].tolist()
-        ]
-        grid = (grid_values[0], grid_values[1])
+        chunk_tokens, processor_valid, _chunk_shapes, _chunk_pooled, grid = (
+            encoded_chunks[encoded_index]
+        )
+        patch_count = chunk_tokens.shape[1]
+        offset = pair_chunk_offsets[pair_index]
+        pair_chunk_offsets[pair_index] += patch_count
+        chunk_valid_counts[pair_index].append(int(processor_valid[0].sum()))
+        tokens[pair_index, :, offset : offset + patch_count] = chunk_tokens
         chunk_coordinates, geometry_valid = chunk_patch_coordinates(
             plan.chunks[chunk_index],
             native_size=(plan.native_height, plan.native_width),
             patch_grid=grid,
             device=device,
-            dtype=encoded.patch_tokens.dtype,
+            dtype=chunk_tokens.dtype,
         )
         coordinate_count = chunk_coordinates.shape[0]
         coordinates[
             pair_index, :, offset : offset + coordinate_count
         ] = chunk_coordinates.view(1, coordinate_count, 2)
-        processor_valid = encoded.patch_valid_mask[encoded_index]
         geometry_mask = torch.zeros(
             patch_count, dtype=torch.bool, device=device
         )
@@ -434,9 +490,7 @@ def encode_large_scene_images(
         valid[pair_index, :, offset : offset + patch_count] = (
             processor_valid & geometry_mask.view(1, patch_count)
         )
-    pooled = torch.stack(
-        [torch.stack(values, dim=0).mean(dim=0) for values in pooled_lists], dim=0
-    )
+    pooled = overview.pooled_embedding
     valid_counts = valid.sum(dim=-1)
     if not torch.equal(valid_counts, valid_counts[:, :1].expand_as(valid_counts)):
         raise ValueError("synchronized chunks produced unequal temporal valid counts")
@@ -448,9 +502,6 @@ def encode_large_scene_images(
         dtype=torch.long,
         device=device,
     ).view(batch, 1, 2).expand(batch, frame_count, 2).clone()
-    combined_hash = sha256(
-        "\n".join(plan.transform_hash for plan in plans).encode("utf-8")
-    ).hexdigest()
     return ImageEncoding(
         patch_tokens=tokens,
         pooled_embedding=pooled,
@@ -461,6 +512,16 @@ def encode_large_scene_images(
         transform_hash=combined_hash,
         token_coordinates=coordinates,
         chunk_plan_hashes=tuple(plan.transform_hash for plan in plans),
+        processing_mode="HIERARCHICAL_NATIVE",
+        force_region_reduction=True,
+        chunk_counts=tuple(chunks_per_pair),
+        chunk_valid_patch_counts=tuple(
+            tuple(values) for values in chunk_valid_counts
+        ),
+        chunk_size=tuple(map(int, chunk_size)),
+        chunk_overlap=tuple(map(int, overlap)),
+        tile_batch_size=int(tile_batch_size),
+        overview_processed_patch_grid=overview.processed_patch_grid,
     )
 
 
