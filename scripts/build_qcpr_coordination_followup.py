@@ -56,18 +56,91 @@ def stable_sample(rows: Iterable[dict[str, Any]], count: int, key: str) -> list[
 
 
 def build_multipositive_contract(release: Path, output: Path) -> tuple[dict[str, Any], str]:
-    source = release / "audits/real_128x256_batch_artifact_r19g.json"
-    artifact = read_json(source)
-    exact_rows = {row["query_id"]: row for row in read_jsonl(release / "exact_core_train.jsonl")}
-    pair_ids = list(artifact["physical_item_ids"])
-    query_ids = list(artifact["query_ids"])
-    query_texts = list(artifact["query_texts"])
-    positives = artifact["pair_to_text_positive_indices"]
+    from qcpr_data.queries.purpose import normalize_query_text
+
+    rejected_source = release / "audits/real_128x256_batch_artifact_r19g.json"
+    rejected = read_json(rejected_source)
+    exact_rows = read_jsonl(release / "exact_core_train.jsonl")
+    exact_by_id = {row["query_id"]: row for row in exact_rows}
+    rejected_missing_ids = [
+        query_id for query_id in rejected["query_ids"] if query_id not in exact_by_id
+    ]
+
+    rows_by_pair: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in exact_rows:
+        if row.get("verification") not in {"human", "human_rewritten", "human_adjudicated"}:
+            continue
+        rows_by_pair[row["source_item_id"]].append(row)
+    selected_by_source: dict[str, list[tuple[str, list[dict[str, Any]]]]] = defaultdict(list)
+    used_normalized_text: set[str] = set()
+    ordered_pairs = sorted(
+        rows_by_pair,
+        key=lambda pair_id: hashlib.sha256(pair_id.encode("utf-8")).hexdigest(),
+    )
+    for pair_id in ordered_pairs:
+        source_name = pair_id.split(":", 1)[0]
+        if len(selected_by_source[source_name]) >= 32:
+            continue
+        unique_rows = []
+        local_texts: set[str] = set()
+        for row in sorted(rows_by_pair[pair_id], key=lambda value: value["query_id"]):
+            normalized = normalize_query_text(row["text"])
+            if normalized in used_normalized_text or normalized in local_texts:
+                continue
+            local_texts.add(normalized)
+            unique_rows.append(row)
+        if len(unique_rows) < 2:
+            continue
+        selected_by_source[source_name].append((pair_id, unique_rows))
+        used_normalized_text.update(local_texts)
+        if all(len(selected_by_source[name]) >= 32 for name in ("levir_mci", "second_cc")):
+            break
+    selected_pairs = selected_by_source["levir_mci"] + selected_by_source["second_cc"]
+    pair_ids = [pair_id for pair_id, _ in selected_pairs]
+    selected_queries = [row for _, rows in selected_pairs for row in rows]
+    query_ids = [row["query_id"] for row in selected_queries]
+    query_texts = [row["text"] for row in selected_queries]
+    query_index = {query_id: index for index, query_id in enumerate(query_ids)}
+    positives = {
+        pair_id: [query_index[row["query_id"]] for row in rows]
+        for pair_id, rows in selected_pairs
+    }
+
+    collision_items_by_text: dict[str, set[str]] = defaultdict(set)
+    for row in read_jsonl(release / "collision_groups.jsonl"):
+        collision_items_by_text[str(row["normalized_text"])].update(
+            str(item_id) for item_id in row.get("physical_item_ids", [])
+        )
+    positive_mask: list[list[bool]] = []
+    ignore_mask: list[list[bool]] = []
+    implicit_negative_mask: list[list[bool]] = []
+    status_counts: Counter[str] = Counter()
+    for pair_id in pair_ids:
+        positive_row = []
+        ignore_row = []
+        negative_row = []
+        for query in selected_queries:
+            positive = pair_id in query.get("positive_item_ids", [])
+            collision = pair_id in collision_items_by_text.get(
+                normalize_query_text(query["text"]), set()
+            )
+            ignore = not positive and collision
+            implicit_negative = not positive and not ignore
+            positive_row.append(positive)
+            ignore_row.append(ignore)
+            negative_row.append(implicit_negative)
+            status_counts["positive" if positive else "ignore" if ignore else "implicit_negative"] += 1
+        positive_mask.append(positive_row)
+        ignore_mask.append(ignore_row)
+        implicit_negative_mask.append(negative_row)
+
     errors: list[str] = []
-    if len(pair_ids) != 128 or len(query_ids) != 256:
+    if len(pair_ids) != 64 or not 128 <= len(query_ids) <= 320:
         errors.append("unexpected batch shape")
     if len(set(pair_ids)) != len(pair_ids) or len(set(query_ids)) != len(query_ids):
         errors.append("pair/query ordering contains duplicate identities")
+    if len(set(normalize_query_text(text) for text in query_texts)) != len(query_texts):
+        errors.append("caption text was duplicated to create multipositive exposure")
     caption_count_distribution: Counter[int] = Counter()
     for pair_id in pair_ids:
         indices = [int(value) for value in positives.get(pair_id, [])]
@@ -80,7 +153,7 @@ def build_multipositive_contract(release: Path, output: Path) -> tuple[dict[str,
             errors.append(f"{pair_id}: duplicated caption text")
         for index in indices:
             query_id = query_ids[index]
-            row = exact_rows.get(query_id)
+            row = exact_by_id.get(query_id)
             if row is None:
                 errors.append(f"{query_id}: absent from exact core")
             elif row.get("verification") not in {"human", "human_rewritten", "human_adjudicated"}:
@@ -90,22 +163,40 @@ def build_multipositive_contract(release: Path, output: Path) -> tuple[dict[str,
     result = {
         "schema_version": "qcpr-multipositive-smoke-contract-v1",
         "release": release.name,
-        "source_artifact": str(source),
-        "source_artifact_sha256": sha256_file(source),
+        "rejected_prior_artifact": str(rejected_source),
+        "rejected_prior_artifact_sha256": sha256_file(rejected_source),
+        "rejected_prior_artifact_query_ids_absent_from_final_exact_core": rejected_missing_ids,
+        "source_manifest": str(release / "exact_core_train.jsonl"),
+        "source_manifest_sha256": sha256_file(release / "exact_core_train.jsonl"),
         "physical_pair_count": len(pair_ids),
         "text_query_count": len(query_ids),
         "caption_count_per_pair_distribution": dict(sorted(caption_count_distribution.items())),
         "variable_caption_counts_supported_by_contract": True,
-        "this_bounded_artifact_caption_count_per_pair": 2,
-        "all_same_pair_captions_positive": artifact["audit"]["same_pair_captions_never_negative"],
-        "positive_cell_count": 256,
-        "ignore_cell_count": artifact["audit"]["ambiguous_ignore_count"],
-        "implicit_negative_cell_count": 31899,
+        "this_bounded_artifact_has_variable_caption_counts": len(caption_count_distribution) > 1,
+        "all_same_pair_captions_positive": True,
+        "positive_cell_count": status_counts["positive"],
+        "ignore_cell_count": status_counts["ignore"],
+        "implicit_negative_cell_count": status_counts["implicit_negative"],
         "deterministic_pair_order_sha256": hashlib.sha256("\n".join(pair_ids).encode()).hexdigest(),
         "deterministic_query_order_sha256": hashlib.sha256("\n".join(query_ids).encode()).hexdigest(),
         "no_caption_text_was_duplicated_or_fabricated": not errors,
+        "physical_item_ids": pair_ids,
+        "queries": [
+            {
+                "query_id": row["query_id"],
+                "text": row["text"],
+                "verification": row["verification"],
+                "source_item_id": row["source_item_id"],
+                "positive_item_ids": row["positive_item_ids"],
+            }
+            for row in selected_queries
+        ],
+        "pair_to_text_positive_indices": positives,
+        "positive_mask": positive_mask,
+        "ignore_mask": ignore_mask,
+        "implicit_negative_mask": implicit_negative_mask,
         "errors": errors,
-        "MULTIPOSITIVE_SMOKE_READY": not errors,
+        "MULTIPOSITIVE_SMOKE_READY": not errors and len(caption_count_distribution) > 1,
     }
     return result, write_json(output, result)
 
