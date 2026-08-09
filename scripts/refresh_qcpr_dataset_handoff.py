@@ -40,6 +40,7 @@ def main() -> int:
     parser.add_argument("--model-sha", required=True)
     parser.add_argument("--dataset-code-sha", required=True)
     parser.add_argument("--dataset-remote-sha")
+    parser.add_argument("--coordination-status", type=Path)
     args = parser.parse_args()
 
     handoff = _read(args.release_handoff)
@@ -47,6 +48,52 @@ def main() -> int:
     if not release_name.endswith("r19g"):
         parser.error("release handoff is not authoritative r19g")
     requirements_sha = _sha256(args.model_requirements)
+    coordination: dict[str, Any] = {}
+    if args.coordination_status:
+        coordination = _read(args.coordination_status)
+        if coordination.get("release") != release_name:
+            parser.error("coordination status does not target authoritative r19g")
+        if coordination.get("immutable_release_mutated") is not False:
+            parser.error("coordination status does not preserve immutable r19g")
+
+    coordination_fields: dict[str, Any] = {}
+    if coordination:
+        coordination_fields = {
+            "MULTIPOSITIVE_SMOKE_READY": coordination["MULTIPOSITIVE_SMOKE_READY"],
+            "multipositive_compatibility_artifact": coordination["multipositive_artifact"],
+            "HIGHRES_RUNTIME_STRESS_READY": coordination["HIGHRES_RUNTIME_STRESS_READY"],
+            "highres_physical_stress_manifest": coordination["highres_physical_manifest"],
+            "VERIFIED_CROSS_SPLIT_LEAKAGE_COUNT": coordination[
+                "VERIFIED_CROSS_SPLIT_LEAKAGE_COUNT"
+            ],
+            "UNRESOLVED_HIGH_RISK_DUPLICATES": coordination[
+                "UNRESOLVED_HIGH_RISK_DUPLICATES"
+            ],
+            "perceptual_cross_split_confirmation": coordination[
+                "perceptual_confirmation_artifact"
+            ],
+            "FOREST_HUMAN_CAPTION_IDENTIFIED": coordination["FOREST_HUMAN_TRAIN_READY"],
+            "FOREST_HUMAN_TRAIN_READY": coordination["FOREST_HUMAN_TRAIN_READY"],
+            "forest_human_only_candidate": coordination["forest_human_candidate"],
+            "DUBAI_EXTERNAL_READY": coordination["DUBAI_EXTERNAL_READY"],
+            "dubai_external_status": coordination["dubai_status"],
+            "AUTHORIZE_TEMPORALSIGLIP_CORE_TRAINING": coordination[
+                "AUTHORIZE_TEMPORALSIGLIP_CORE_TRAINING"
+            ],
+            "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": coordination[
+                "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION"
+            ],
+            "r19g_remains_valid": coordination["r19g_remains_valid"],
+            "coordination_followup_status": {
+                "path": str(args.coordination_status),
+                "sha256": _sha256(args.coordination_status),
+            },
+        }
+        dubai_status_path = Path(coordination["dubai_status"]["path"])
+        if dubai_status_path.is_file():
+            coordination_fields["dubai_external_blocker"] = _read(dubai_status_path).get(
+                "blocker"
+            )
     handoff.update(
         {
             "dataset_code_sha": args.dataset_code_sha,
@@ -59,8 +106,10 @@ def main() -> int:
             "model_agent_branch": args.model_branch,
             "model_agent_sha": args.model_sha,
             "model_requirements_sha256": requirements_sha,
+            "compatibility_authority": "model_requirements_sha256",
             "shared_handoff_refresh_only": True,
             "immutable_release_mutated": False,
+            **coordination_fields,
         }
     )
 
@@ -84,6 +133,8 @@ def main() -> int:
         if name == "dataset_status.json":
             value["dataset_head_sha"] = args.dataset_code_sha
         value["model_requirements_sha256"] = requirements_sha
+        value["compatibility_authority"] = "model_requirements_sha256"
+        value.update(coordination_fields)
         value["handoff_path"] = "contracts/qcpr_shared/handoff/dataset_final_to_model.json"
         value["handoff_sha256"] = handoff_sha
         value["handoff_schema_complete"] = True
