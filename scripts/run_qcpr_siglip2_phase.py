@@ -112,6 +112,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--phase", choices=("A", "B"), required=True)
     parser.add_argument("--siglip2-model", required=True)
+    parser.add_argument("--siglip2-repository", required=True)
+    parser.add_argument("--siglip2-revision", required=True)
     parser.add_argument("--data-release", required=True)
     parser.add_argument("--train-manifest", required=True)
     parser.add_argument("--development-manifest", required=True)
@@ -124,6 +126,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--captions-per-pair", type=int, default=2)
     parser.add_argument("--seed", type=int, default=20260805)
     parser.add_argument("--initial-checkpoint")
+    parser.add_argument("--max-num-patches", type=int, required=True)
+    parser.add_argument("--final-handoff", required=True)
+    parser.add_argument("--tokenizer-gate", required=True)
+    parser.add_argument("--multipositive-contract", required=True)
     parser.add_argument("--authorize-long-run", action="store_true")
     return parser.parse_args()
 
@@ -355,6 +361,41 @@ def main() -> int:
     for required in (args.data_release, args.train_manifest, args.development_manifest):
         if not Path(required).exists():
             raise FileNotFoundError(required)
+    handoff_path = Path(args.final_handoff)
+    tokenizer_gate_path = Path(args.tokenizer_gate)
+    multipositive_path = Path(args.multipositive_contract)
+    for required in (handoff_path, tokenizer_gate_path, multipositive_path):
+        if not required.is_file():
+            raise FileNotFoundError(required)
+    handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+    if not (
+        handoff.get("EXACT_TRAINING_READY") is True
+        and handoff.get("AUTHORIZE_TEMPORALSIGLIP_CORE_TRAINING") is True
+        and handoff.get("main_training_allowed") is False
+    ):
+        raise RuntimeError("R19G_EXACT_CORE_AUTHORIZATION_MISMATCH")
+    if Path(str(handoff.get("final_exact_train_manifest"))) != Path(
+        args.train_manifest
+    ):
+        raise RuntimeError("R19G_TRAIN_MANIFEST_MISMATCH")
+    tokenizer_gate = json.loads(tokenizer_gate_path.read_text(encoding="utf-8"))
+    naflex_gate = tokenizer_gate.get("models", {}).get("naflex_256", {})
+    if not (
+        tokenizer_gate.get("status") == "PASS"
+        and naflex_gate.get("status") == "PASS"
+        and naflex_gate.get("repository") == args.siglip2_repository
+        and naflex_gate.get("revision") == args.siglip2_revision
+        and naflex_gate.get("actual_batch", {}).get(
+            "all_valid_ids_in_embedding_range"
+        )
+        is True
+    ):
+        raise RuntimeError("TOKENIZER_CONFIG_GATE_FAILED")
+    multipositive = json.loads(multipositive_path.read_text(encoding="utf-8"))
+    if multipositive.get("MULTIPOSITIVE_SMOKE_READY") is not True:
+        raise RuntimeError("MULTIPOSITIVE_CONTRACT_NOT_READY")
+    if args.max_num_patches not in (256, 576, 1024):
+        raise ValueError("max_num_patches must be an audited NaFlex budget")
     config_path = Path(args.config_path)
     if not config_path.is_file():
         raise FileNotFoundError(config_path)
@@ -416,7 +457,8 @@ def main() -> int:
         write_json(
             run / "model_source.json",
             {
-                "repository": "google/siglip2-base-patch16-256",
+                "repository": args.siglip2_repository,
+                "revision": args.siglip2_revision,
                 "local_path": args.siglip2_model,
                 "weights_sha256": sha256(Path(args.siglip2_model) / "model.safetensors"),
                 "runtime_class": backbone.runtime_class,
@@ -455,6 +497,13 @@ def main() -> int:
                 "initial_checkpoint": args.initial_checkpoint,
                 "optimizer_resumed": False,
                 "required_evaluation_milestones": list(milestone_steps),
+                "max_num_patches": args.max_num_patches,
+                "tokenizer_gate": str(tokenizer_gate_path),
+                "tokenizer_gate_sha256": sha256(tokenizer_gate_path),
+                "multipositive_contract": str(multipositive_path),
+                "multipositive_contract_sha256": sha256(multipositive_path),
+                "final_handoff": str(handoff_path),
+                "final_handoff_sha256": sha256(handoff_path),
             },
         )
         write_json(
@@ -475,6 +524,9 @@ def main() -> int:
                 "allowed_sources": ["levir_mci", "second_cc"],
                 "mask_access": False,
                 "generated_unverified_text": False,
+                "exact_training_ready": True,
+                "expanded_training_allowed": False,
+                "final_handoff_sha256": sha256(handoff_path),
             },
         )
         write_json(

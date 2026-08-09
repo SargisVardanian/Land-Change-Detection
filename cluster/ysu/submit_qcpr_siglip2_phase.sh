@@ -13,8 +13,14 @@ set -eu
 : "${WORKTREE:?WORKTREE is required}"
 : "${PYTHON:?PYTHON is required}"
 : "${SIGLIP2_MODEL:?SIGLIP2_MODEL is required}"
+: "${SIGLIP2_REPOSITORY:?SIGLIP2_REPOSITORY is required}"
+: "${SIGLIP2_REVISION:?SIGLIP2_REVISION is required}"
 : "${TRAIN_MANIFEST:?TRAIN_MANIFEST is required}"
 : "${DEVELOPMENT_MANIFEST:?DEVELOPMENT_MANIFEST is required}"
+: "${MAX_NUM_PATCHES:?MAX_NUM_PATCHES is required}"
+: "${FINAL_HANDOFF:?FINAL_HANDOFF is required}"
+: "${TOKENIZER_GATE:?TOKENIZER_GATE is required}"
+: "${MULTIPOSITIVE_CONTRACT:?MULTIPOSITIVE_CONTRACT is required}"
 
 STEPS=${STEPS:-256}
 PHYSICAL_BATCH_SIZE=${PHYSICAL_BATCH_SIZE:-32}
@@ -51,6 +57,9 @@ test -s "$TRAIN_MANIFEST"
 test -s "$DEVELOPMENT_MANIFEST"
 test -d "$SIGLIP2_MODEL"
 test -s "$SIGLIP2_MODEL/model.safetensors"
+test -s "$FINAL_HANDOFF"
+test -s "$TOKENIZER_GATE"
+test -s "$MULTIPOSITIVE_CONTRACT"
 if test "$PHASE" = B; then
   test "$CHECKPOINT_PATH" != none
   test -s "$CHECKPOINT_PATH"
@@ -61,6 +70,8 @@ fi
 mkdir -p "$RUN_ROOT"
 export PHASE EXPECTED_SHA RUN_ROOT CONFIG_PATH DATA_RELEASE CHECKPOINT_PATH
 export WORKTREE PYTHON SIGLIP2_MODEL TRAIN_MANIFEST DEVELOPMENT_MANIFEST
+export SIGLIP2_REPOSITORY SIGLIP2_REVISION MAX_NUM_PATCHES
+export FINAL_HANDOFF TOKENIZER_GATE MULTIPOSITIVE_CONTRACT
 export STEPS PHYSICAL_BATCH_SIZE LOGICAL_PHYSICAL_BATCH_SIZE CAPTIONS_PER_PAIR SEED
 export AUTHORIZE_LONG_RUN QCPR_ALLOW_LONG_TRAINING QCPR_ALLOW_NONSTANDARD_STEPS
 
@@ -97,6 +108,8 @@ export PYTHONPATH=\"\$WORKTREE/src:\$WORKTREE/scripts\"
 exec \"\$PYTHON\" \"\$WORKTREE/scripts/run_qcpr_siglip2_phase.py\" \\
   --phase \"\$PHASE\" \\
   --siglip2-model \"\$SIGLIP2_MODEL\" \\
+  --siglip2-repository \"\$SIGLIP2_REPOSITORY\" \\
+  --siglip2-revision \"\$SIGLIP2_REVISION\" \\
   --data-release \"\$DATA_RELEASE\" \\
   --train-manifest \"\$TRAIN_MANIFEST\" \\
   --development-manifest \"\$DEVELOPMENT_MANIFEST\" \\
@@ -109,4 +122,8 @@ exec \"\$PYTHON\" \"\$WORKTREE/scripts/run_qcpr_siglip2_phase.py\" \\
   --captions-per-pair \"\$CAPTIONS_PER_PAIR\" \\
   --seed \"\$SEED\" \\
   --initial-checkpoint \"\$CHECKPOINT_PATH\" \\
+  --max-num-patches \"\$MAX_NUM_PATCHES\" \\
+  --final-handoff \"\$FINAL_HANDOFF\" \\
+  --tokenizer-gate \"\$TOKENIZER_GATE\" \\
+  --multipositive-contract \"\$MULTIPOSITIVE_CONTRACT\" \\
   --authorize-long-run"

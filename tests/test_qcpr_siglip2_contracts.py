@@ -711,6 +711,29 @@ def test_phase_driver_requires_explicit_long_run_authorization(monkeypatch):
     assert resolve_steps(args) == 8
 
 
+def test_phase_driver_requires_exact_core_and_runtime_gates() -> None:
+    from pathlib import Path
+
+    source = Path("scripts/run_qcpr_siglip2_phase.py").read_text()
+    launcher = Path("cluster/ysu/submit_qcpr_siglip2_phase.sh").read_text()
+    for marker in (
+        "R19G_EXACT_CORE_AUTHORIZATION_MISMATCH",
+        "TOKENIZER_CONFIG_GATE_FAILED",
+        "MULTIPOSITIVE_CONTRACT_NOT_READY",
+        "--max-num-patches",
+        "--siglip2-repository",
+        "--siglip2-revision",
+    ):
+        assert marker in source
+    for variable in (
+        "FINAL_HANDOFF",
+        "TOKENIZER_GATE",
+        "MULTIPOSITIVE_CONTRACT",
+        "MAX_NUM_PATCHES",
+    ):
+        assert variable in launcher
+
+
 def test_phase_milestones_are_complete_and_phase_specific():
     from qcpr_siglip2.training.milestones import required_milestones
 

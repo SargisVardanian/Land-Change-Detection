@@ -21,6 +21,14 @@ def _sha256(path: Path) -> str:
 
 
 def _job_record(job_id: str, sacct_bin: str = "/opt/slurm/bin/sacct") -> dict[str, str]:
+    if not Path(sacct_bin).is_file():
+        return {
+            "job_id": job_id,
+            "state": "TERMINAL_BY_AFTERANY_DEPENDENCY",
+            "exit_code": "UNRESOLVED_ON_COMPUTE_NODE",
+            "elapsed": "UNRESOLVED_ON_COMPUTE_NODE",
+            "node_list": "UNRESOLVED_ON_COMPUTE_NODE",
+        }
     output = subprocess.check_output(
         [
             sacct_bin,
@@ -76,14 +84,12 @@ def main() -> int:
     run_root = Path(args.run_root)
     if not run_root.is_dir():
         raise FileNotFoundError(run_root)
-    sacct_bin = Path(args.sacct_bin)
-    if not sacct_bin.is_file():
-        raise FileNotFoundError(sacct_bin)
-    record = _job_record(args.job_id, str(sacct_bin))
+    record = _job_record(args.job_id, args.sacct_bin)
     payload = {
         "schema_version": "qcpr-slurm-completion-v1",
         "collected_at": datetime.now(UTC).isoformat(),
         "expected_code_sha": args.expected_code_sha,
+        "accounting_resolved": record["exit_code"] != "UNRESOLVED_ON_COMPUTE_NODE",
         "upstream": record,
         "artifacts": _artifact_inventory(run_root),
     }

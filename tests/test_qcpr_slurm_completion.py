@@ -27,3 +27,9 @@ def test_job_record_uses_explicit_sacct_binary(monkeypatch) -> None:
     record = _job_record("210234", "/opt/slurm/bin/sacct")
     assert observed["command"][0] == "/opt/slurm/bin/sacct"
     assert record["state"] == "COMPLETED"
+
+
+def test_job_record_falls_back_for_afterany_compute_node(tmp_path: Path) -> None:
+    record = _job_record("210239", str(tmp_path / "missing-sacct"))
+    assert record["state"] == "TERMINAL_BY_AFTERANY_DEPENDENCY"
+    assert record["exit_code"] == "UNRESOLVED_ON_COMPUTE_NODE"
