@@ -276,6 +276,12 @@ def checkpoint_roundtrip(
             features.text_tokens,
             features.text_embeddings,
             features.text_mask,
+            patch_valid_mask=features.patch_valid_mask,
+            spatial_shapes=features.spatial_shapes,
+            native_image_size=features.native_image_size,
+            processed_patch_grid=features.processed_patch_grid,
+            transform_hash=features.transform_hash,
+            token_coordinates=features.token_coordinates,
         ).score_matrix.float()
 
     fresh_backbone = Siglip2Backbone(
@@ -307,6 +313,12 @@ def checkpoint_roundtrip(
             fresh_features.text_tokens,
             fresh_features.text_embeddings,
             fresh_features.text_mask,
+            patch_valid_mask=fresh_features.patch_valid_mask,
+            spatial_shapes=fresh_features.spatial_shapes,
+            native_image_size=fresh_features.native_image_size,
+            processed_patch_grid=fresh_features.processed_patch_grid,
+            transform_hash=fresh_features.transform_hash,
+            token_coordinates=fresh_features.token_coordinates,
         ).score_matrix.float()
     difference = (reference - reloaded).abs()
     max_difference = float(difference.max())
@@ -534,6 +546,8 @@ def main() -> int:
                 captions_per_pair=args.captions_per_pair,
                 scheduler=scheduler,
                 recompute_backbone=args.phase == "B",
+                max_num_patches=args.max_num_patches,
+                is_naflex=backbone.is_naflex,
             )
             ledger.record_step(batch.pair_ids, batch.query_ids)
             global_step += 1

@@ -549,18 +549,33 @@ def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
         pair_count = len(pair_rows)
         query_count = len(query_rows)
         calls.append((pair_count, query_count))
+        valid = torch.zeros(pair_count, 2, 256, dtype=torch.bool)
+        valid[..., :128] = True
         return RawFeatureBatch(
             features[0][:pair_count].clone(),
             features[1][:pair_count].clone(),
             features[2][:query_count].clone(),
             features[3][:query_count].clone(),
             features[4][:query_count].clone(),
+            patch_valid_mask=valid,
+            spatial_shapes=torch.tensor([[[8, 16], [8, 16]]] * pair_count),
+            native_image_size=torch.tensor([[[256, 512], [256, 512]]] * pair_count),
+            processed_patch_grid=torch.tensor([[[8, 16], [8, 16]]] * pair_count),
+            transform_hash="microbatch-transform",
         )
 
     monkeypatch.setattr(
         "qcpr_siglip2.training.gradcache.encode_real_features", fake_encode
     )
     model = Siglip2TemporalRetrievalModel(None)
+    original_forward = model.forward_from_features
+    forwarded_metadata = {}
+
+    def capture_forward(*args, **kwargs):
+        forwarded_metadata.update(kwargs)
+        return original_forward(*args, **kwargs)
+
+    monkeypatch.setattr(model, "forward_from_features", capture_forward)
     optimizer, _, scheduler = build_adamw(model, phase="A", total_steps=1)
     queries = [
         {"caption_id": "q0", "positive_pair_ids": ["p0"]},
@@ -593,6 +608,15 @@ def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
     assert result["gradient_report"]["relevance_model"]["parameters_with_grad"] > 0
     assert result["gradient_report"]["siglip2_vision_backbone"]["trainable_count"] == 0
     assert calls == [(1, 2), (1, 2)]
+    assert forwarded_metadata["patch_valid_mask"].shape == (2, 2, 256)
+    assert forwarded_metadata["patch_valid_mask"].sum().item() == 512
+    assert forwarded_metadata["spatial_shapes"].tolist() == [
+        [[8, 16], [8, 16]],
+        [[8, 16], [8, 16]],
+    ]
+    assert forwarded_metadata["native_image_size"].shape == (2, 2, 2)
+    assert forwarded_metadata["processed_patch_grid"].shape == (2, 2, 2)
+    assert forwarded_metadata["transform_hash"] is not None
 
 
 def test_common_gallery_metrics_keep_global_and_rerank_scores_aligned():

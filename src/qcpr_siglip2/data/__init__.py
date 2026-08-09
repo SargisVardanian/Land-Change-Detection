@@ -1,5 +1,12 @@
 """Schema-validated exact-core data helpers for the SigLIP-2 track."""
 
+from .chunking import (
+    AlignedChunk,
+    SynchronizedChunkPlan,
+    apply_synchronized_chunk_plan,
+    build_synchronized_chunk_plan,
+    chunk_patch_coordinates,
+)
 from .loader import ExactBatch, make_exact_batches, select_epoch_rows
 from .manifest import (
     ALLOWED_DATASETS,
@@ -11,7 +18,10 @@ from .manifest import (
     read_jsonl,
 )
 from .naflex import (
+    PatchBudgetAssignment,
+    PatchBudgetSchedule,
     assert_synchronized_pair_views,
+    build_patch_budget_schedule,
     patch_mask_from_spatial_shapes,
     synchronized_transform_hash,
     validate_patch_budget_sequence,
@@ -19,6 +29,7 @@ from .naflex import (
 from .runtime import (
     RawFeatureBatch,
     build_relevance_masks,
+    encode_large_scene_images,
     encode_real_features,
     encode_real_images,
     encode_real_text,
@@ -29,12 +40,21 @@ from .transforms import SynchronizedResize, assert_pair_geometry
 
 __all__ = [
     "ALLOWED_DATASETS",
+    "AlignedChunk",
     "ExactBatch",
+    "PatchBudgetAssignment",
+    "PatchBudgetSchedule",
     "RawFeatureBatch",
+    "SynchronizedChunkPlan",
     "SynchronizedResize",
+    "apply_synchronized_chunk_plan",
     "assert_pair_geometry",
     "assert_synchronized_pair_views",
+    "build_patch_budget_schedule",
     "build_relevance_masks",
+    "build_synchronized_chunk_plan",
+    "chunk_patch_coordinates",
+    "encode_large_scene_images",
     "encode_real_features",
     "encode_real_images",
     "encode_real_text",

@@ -14,6 +14,12 @@ from PIL import Image
 from torch import Tensor
 
 from ..backbones.siglip2 import ImageEncoding, Siglip2Backbone, TextEncoding
+from .chunking import (
+    SynchronizedChunkPlan,
+    apply_synchronized_chunk_plan,
+    build_synchronized_chunk_plan,
+    chunk_patch_coordinates,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +36,7 @@ class RawFeatureBatch:
     native_image_size: Tensor | None = None
     processed_patch_grid: Tensor | None = None
     transform_hash: str | None = None
+    token_coordinates: Tensor | None = None
 
 
 def file_sha256(path: str | Path) -> str:
@@ -275,6 +282,181 @@ def encode_real_images(
         return backbone.encode_images(**image_inputs)
 
 
+def encode_large_scene_images(
+    backbone: Siglip2Backbone,
+    processor: Any,
+    pair_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    device: torch.device,
+    *,
+    chunk_size: tuple[int, int],
+    overlap: tuple[int, int] = (0, 0),
+    max_num_patches: int,
+    dtype: torch.dtype = torch.bfloat16,
+    no_grad: bool = True,
+) -> ImageEncoding:
+    """Encode synchronized native-resolution chunks through one shared backbone.
+
+    Chunk embeddings are never exposed as ANN keys. Their native-coordinate
+    patch tokens are packed into one temporal item and consumed by the bounded,
+    query-independent reducer before the canonical single-vector output.
+    """
+
+    if not pair_rows:
+        raise ValueError("at least one large-scene temporal item is required")
+    if not backbone.is_naflex:
+        raise ValueError("large-scene native chunking requires a NaFlex backbone")
+    if max_num_patches <= 0:
+        raise ValueError("max_num_patches must be explicit and positive")
+    all_chunk_frames: list[Image.Image] = []
+    chunk_records: list[tuple[int, SynchronizedChunkPlan, int]] = []
+    frame_count: int | None = None
+    plans: list[SynchronizedChunkPlan] = []
+    for pair_index, row in enumerate(pair_rows):
+        frame_paths = row.get("frames")
+        if frame_paths is None:
+            frame_paths = [row["t1_path"], row["t2_path"]]
+        if not isinstance(frame_paths, Sequence) or isinstance(
+            frame_paths, (str, bytes)
+        ):
+            raise TypeError("frames must be a sequence of image paths")
+        if len(frame_paths) < 2:
+            raise ValueError("temporal items require at least two frames")
+        if frame_count is None:
+            frame_count = len(frame_paths)
+        elif len(frame_paths) != frame_count:
+            raise ValueError("all temporal items must have the same frame count")
+        frames: list[Image.Image] = []
+        for value in frame_paths:
+            path = Path(str(value))
+            if not path.is_file():
+                raise FileNotFoundError(path)
+            with Image.open(path) as image:
+                frames.append(image.convert("RGB"))
+        if any(frame.size != frames[0].size for frame in frames[1:]):
+            raise ValueError("large-scene temporal frames must share native geometry")
+        plan = build_synchronized_chunk_plan(
+            (frames[0].height, frames[0].width),
+            chunk_size=chunk_size,
+            overlap=overlap,
+        )
+        plans.append(plan)
+        for chunk_index, temporal_chunk in enumerate(
+            apply_synchronized_chunk_plan(frames, plan)
+        ):
+            chunk_records.append((pair_index, plan, chunk_index))
+            all_chunk_frames.extend(temporal_chunk)
+    if frame_count is None:
+        raise AssertionError("frame count was not initialized")
+    processed = processor(
+        images=all_chunk_frames,
+        max_num_patches=max_num_patches,
+        return_tensors="pt",
+    )
+    pixel_values = processed["pixel_values"]
+    total_chunks = len(chunk_records)
+    pixel_values = pixel_values.reshape(
+        total_chunks, frame_count, *pixel_values.shape[1:]
+    ).to(device)
+    patch_mask = processed.get("pixel_attention_mask")
+    spatial_shapes = processed.get("spatial_shapes")
+    if patch_mask is None or spatial_shapes is None:
+        raise ValueError("NaFlex processor must return patch masks and spatial shapes")
+    patch_mask = patch_mask.reshape(total_chunks, frame_count, -1).to(device)
+    spatial_shapes = spatial_shapes.reshape(total_chunks, frame_count, 2).to(device)
+    if not torch.equal(
+        spatial_shapes, spatial_shapes[:, :1].expand_as(spatial_shapes)
+    ):
+        raise ValueError("every temporal chunk must have a synchronized patch grid")
+    chunk_native_size = torch.tensor(
+        [chunk_size] * total_chunks * frame_count,
+        dtype=torch.long,
+        device=device,
+    ).reshape(total_chunks, frame_count, 2)
+    context = torch.no_grad() if no_grad else nullcontext()
+    with context, _device_autocast(device, dtype):
+        encoded = backbone.encode_images(
+            pixel_values,
+            pixel_attention_mask=patch_mask,
+            spatial_shapes=spatial_shapes,
+            native_image_size=chunk_native_size,
+            transform_hash=sha256(
+                "\n".join(plan.transform_hash for plan in plans).encode("utf-8")
+            ).hexdigest(),
+        )
+    patch_count = encoded.patch_tokens.shape[2]
+    hidden = encoded.patch_tokens.shape[-1]
+    chunks_per_pair = [len(plan.chunks) for plan in plans]
+    packed_count = max(chunks_per_pair) * patch_count
+    batch = len(pair_rows)
+    tokens = encoded.patch_tokens.new_zeros(batch, frame_count, packed_count, hidden)
+    valid = torch.zeros(
+        batch, frame_count, packed_count, dtype=torch.bool, device=device
+    )
+    coordinates = encoded.patch_tokens.new_zeros(
+        batch, frame_count, packed_count, 2
+    )
+    pooled_lists: list[list[Tensor]] = [[] for _ in range(batch)]
+    pair_chunk_offsets = [0] * batch
+    for encoded_index, (pair_index, plan, chunk_index) in enumerate(chunk_records):
+        offset = pair_chunk_offsets[pair_index] * patch_count
+        pair_chunk_offsets[pair_index] += 1
+        tokens[pair_index, :, offset : offset + patch_count] = encoded.patch_tokens[
+            encoded_index
+        ]
+        pooled_lists[pair_index].append(encoded.pooled_embedding[encoded_index])
+        grid_values = [
+            int(value) for value in spatial_shapes[encoded_index, 0].tolist()
+        ]
+        grid = (grid_values[0], grid_values[1])
+        chunk_coordinates, geometry_valid = chunk_patch_coordinates(
+            plan.chunks[chunk_index],
+            native_size=(plan.native_height, plan.native_width),
+            patch_grid=grid,
+            device=device,
+            dtype=encoded.patch_tokens.dtype,
+        )
+        coordinate_count = chunk_coordinates.shape[0]
+        coordinates[
+            pair_index, :, offset : offset + coordinate_count
+        ] = chunk_coordinates.view(1, coordinate_count, 2)
+        processor_valid = encoded.patch_valid_mask[encoded_index]
+        geometry_mask = torch.zeros(
+            patch_count, dtype=torch.bool, device=device
+        )
+        geometry_mask[:coordinate_count] = geometry_valid
+        valid[pair_index, :, offset : offset + patch_count] = (
+            processor_valid & geometry_mask.view(1, patch_count)
+        )
+    pooled = torch.stack(
+        [torch.stack(values, dim=0).mean(dim=0) for values in pooled_lists], dim=0
+    )
+    valid_counts = valid.sum(dim=-1)
+    if not torch.equal(valid_counts, valid_counts[:, :1].expand_as(valid_counts)):
+        raise ValueError("synchronized chunks produced unequal temporal valid counts")
+    packed_shapes = torch.stack(
+        (torch.ones_like(valid_counts), valid_counts), dim=-1
+    )
+    original_sizes = torch.tensor(
+        [[plan.native_height, plan.native_width] for plan in plans],
+        dtype=torch.long,
+        device=device,
+    ).view(batch, 1, 2).expand(batch, frame_count, 2).clone()
+    combined_hash = sha256(
+        "\n".join(plan.transform_hash for plan in plans).encode("utf-8")
+    ).hexdigest()
+    return ImageEncoding(
+        patch_tokens=tokens,
+        pooled_embedding=pooled,
+        patch_valid_mask=valid,
+        spatial_shapes=packed_shapes,
+        native_image_size=original_sizes,
+        processed_patch_grid=packed_shapes,
+        transform_hash=combined_hash,
+        token_coordinates=coordinates,
+        chunk_plan_hashes=tuple(plan.transform_hash for plan in plans),
+    )
+
+
 def encode_real_text(
     backbone: Siglip2Backbone,
     processor: Any,
@@ -343,6 +525,7 @@ def encode_real_features(
         native_image_size=image.native_image_size,
         processed_patch_grid=image.processed_patch_grid,
         transform_hash=image.transform_hash,
+        token_coordinates=image.token_coordinates,
     )
 
 

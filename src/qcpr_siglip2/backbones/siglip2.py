@@ -30,6 +30,8 @@ class ImageEncoding:
     native_image_size: Tensor | None = None
     processed_patch_grid: Tensor | None = None
     transform_hash: str | None = None
+    token_coordinates: Tensor | None = None
+    chunk_plan_hashes: tuple[str, ...] | None = None
 
 
 @dataclass

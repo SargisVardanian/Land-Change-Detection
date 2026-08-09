@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 from typing import Any, cast
 
 import torch
@@ -20,6 +21,12 @@ class CachedLogicalFeatures:
     text_tokens: Tensor
     text_embeddings: Tensor
     text_mask: Tensor
+    patch_valid_mask: Tensor | None = None
+    spatial_shapes: Tensor | None = None
+    native_image_size: Tensor | None = None
+    processed_patch_grid: Tensor | None = None
+    transform_hash: str | None = None
+    token_coordinates: Tensor | None = None
 
 
 def module_gradient_report(
@@ -107,7 +114,44 @@ def cache_features(features: RawFeatureBatch) -> CachedLogicalFeatures:
         text_tokens=_requires_grad(features.text_tokens),
         text_embeddings=_requires_grad(features.text_embeddings),
         text_mask=features.text_mask.detach(),
+        patch_valid_mask=(
+            features.patch_valid_mask.detach()
+            if features.patch_valid_mask is not None
+            else None
+        ),
+        spatial_shapes=(
+            features.spatial_shapes.detach()
+            if features.spatial_shapes is not None
+            else None
+        ),
+        native_image_size=(
+            features.native_image_size.detach()
+            if features.native_image_size is not None
+            else None
+        ),
+        processed_patch_grid=(
+            features.processed_patch_grid.detach()
+            if features.processed_patch_grid is not None
+            else None
+        ),
+        transform_hash=features.transform_hash,
+        token_coordinates=(
+            features.token_coordinates.detach()
+            if features.token_coordinates is not None
+            else None
+        ),
     )
+
+
+def _cat_optional_tensor(
+    chunks: list[RawFeatureBatch], attribute: str
+) -> Tensor | None:
+    values = [getattr(chunk, attribute) for chunk in chunks]
+    if all(value is None for value in values):
+        return None
+    if any(value is None for value in values):
+        raise ValueError(f"inconsistent optional feature metadata: {attribute}")
+    return torch.cat(cast(list[Tensor], values), dim=0)
 
 
 def _feature_surrogate(
@@ -153,6 +197,8 @@ def _encode_logical_features_in_chunks(
     captions_per_pair: int,
     dtype: torch.dtype,
     no_grad: bool,
+    max_num_patches: int | None = None,
+    is_naflex: bool | None = None,
 ) -> RawFeatureBatch:
     """Encode one logical batch through bounded physical microbatches.
 
@@ -177,10 +223,21 @@ def _encode_logical_features_in_chunks(
                 device,
                 dtype=dtype,
                 no_grad=no_grad,
+                max_num_patches=max_num_patches,
+                is_naflex=is_naflex,
             )
         )
     if not chunks:
         raise ValueError("logical batch must contain at least one pair")
+    transform_hashes = [chunk.transform_hash for chunk in chunks]
+    if all(value is None for value in transform_hashes):
+        transform_hash = None
+    elif any(value is None for value in transform_hashes):
+        raise ValueError("inconsistent optional feature metadata: transform_hash")
+    else:
+        transform_hash = sha256(
+            "\n".join(cast(list[str], transform_hashes)).encode("utf-8")
+        ).hexdigest()
     return RawFeatureBatch(
         frame_tokens=torch.cat([chunk.frame_tokens for chunk in chunks], dim=0),
         frame_embeddings=torch.cat(
@@ -191,6 +248,12 @@ def _encode_logical_features_in_chunks(
             [chunk.text_embeddings for chunk in chunks], dim=0
         ),
         text_mask=torch.cat([chunk.text_mask for chunk in chunks], dim=0),
+        patch_valid_mask=_cat_optional_tensor(chunks, "patch_valid_mask"),
+        spatial_shapes=_cat_optional_tensor(chunks, "spatial_shapes"),
+        native_image_size=_cat_optional_tensor(chunks, "native_image_size"),
+        processed_patch_grid=_cat_optional_tensor(chunks, "processed_patch_grid"),
+        transform_hash=transform_hash,
+        token_coordinates=_cat_optional_tensor(chunks, "token_coordinates"),
     )
 
 
@@ -211,6 +274,8 @@ def logical_listwise_step(
     dtype: torch.dtype = torch.bfloat16,
     gradient_clip_norm: float = 1.0,
     recompute_backbone: bool = False,
+    max_num_patches: int | None = None,
+    is_naflex: bool | None = None,
 ) -> dict[str, Any]:
     """Run one common logical score matrix and exact feature-gradient replay.
 
@@ -236,6 +301,8 @@ def logical_listwise_step(
         captions_per_pair=captions_per_pair,
         dtype=dtype,
         no_grad=True,
+        max_num_patches=max_num_patches,
+        is_naflex=is_naflex,
     )
     cached = cache_features(frozen_features)
     model.train()
@@ -246,6 +313,12 @@ def logical_listwise_step(
             cached.text_tokens,
             cached.text_embeddings,
             cached.text_mask,
+            patch_valid_mask=cached.patch_valid_mask,
+            spatial_shapes=cached.spatial_shapes,
+            native_image_size=cached.native_image_size,
+            processed_patch_grid=cached.processed_patch_grid,
+            transform_hash=cached.transform_hash,
+            token_coordinates=cached.token_coordinates,
         )
         loss = multi_positive_listwise_loss(
             output.score_matrix.float(), positive_mask, ignored_mask
@@ -272,6 +345,12 @@ def logical_listwise_step(
             Tensor, cached_grads["text_embeddings"]
         ).detach().clone(),
         text_mask=cached.text_mask,
+        patch_valid_mask=cached.patch_valid_mask,
+        spatial_shapes=cached.spatial_shapes,
+        native_image_size=cached.native_image_size,
+        processed_patch_grid=cached.processed_patch_grid,
+        transform_hash=cached.transform_hash,
+        token_coordinates=cached.token_coordinates,
     )
     if recompute_backbone:
         for start in range(0, len(pair_rows), physical_batch_size):
@@ -285,6 +364,8 @@ def logical_listwise_step(
                 device,
                 dtype=dtype,
                 no_grad=False,
+                max_num_patches=max_num_patches,
+                is_naflex=is_naflex,
             )
             _feature_surrogate(
                 features,

@@ -7,11 +7,19 @@ import pytest
 import torch
 from PIL import Image
 
-from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
+from qcpr_siglip2.backbones.siglip2 import ImageEncoding, Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
+from qcpr_siglip2.data.chunking import (
+    apply_synchronized_chunk_plan,
+    build_synchronized_chunk_plan,
+    chunk_patch_coordinates,
+)
 from qcpr_siglip2.data.manifest import load_exact_pair_rows
-from qcpr_siglip2.data.naflex import validate_patch_budget_sequence
-from qcpr_siglip2.data.runtime import processor_image_inputs
+from qcpr_siglip2.data.naflex import (
+    build_patch_budget_schedule,
+    validate_patch_budget_sequence,
+)
+from qcpr_siglip2.data.runtime import encode_large_scene_images, processor_image_inputs
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.models.temporal import TemporalTransformerAdapter
 
@@ -120,6 +128,114 @@ def test_large_native_scene_uses_bounded_query_independent_reducer():
     assert output.evidence.processed_evidence_map is not None
 
 
+def test_synchronized_large_scene_chunks_share_geometry_and_native_coordinates():
+    plan = build_synchronized_chunk_plan(
+        (6, 10), chunk_size=(4, 4), overlap=(0, 0)
+    )
+    assert len(plan.chunks) == 6
+    t1 = Image.new("RGB", (10, 6), "red")
+    t2 = Image.new("RGB", (10, 6), "blue")
+    chunks = apply_synchronized_chunk_plan([t1, t2], plan)
+    assert all(len(value) == 2 for value in chunks)
+    assert all(frame.size == (4, 4) for value in chunks for frame in value)
+    first_coordinates, first_valid = chunk_patch_coordinates(
+        plan.chunks[0], native_size=(6, 10), patch_grid=(2, 2)
+    )
+    last_coordinates, last_valid = chunk_patch_coordinates(
+        plan.chunks[-1], native_size=(6, 10), patch_grid=(2, 2)
+    )
+    assert first_valid.all() and last_valid.all()
+    assert first_coordinates[:, 0].max() < last_coordinates[:, 0].min()
+    assert first_coordinates[:, 1].max() < last_coordinates[:, 1].min()
+
+
+class _ChunkProcessor:
+    def __call__(self, *, images, max_num_patches, return_tensors):
+        assert max_num_patches == 4
+        assert return_tensors == "pt"
+        return {
+            "pixel_values": torch.arange(len(images) * 12, dtype=torch.float32).reshape(
+                len(images), 4, 3
+            ),
+            "pixel_attention_mask": torch.ones(len(images), 4, dtype=torch.bool),
+            "spatial_shapes": torch.tensor([[2, 2]] * len(images)),
+        }
+
+
+class _SharedChunkBackbone:
+    is_naflex = True
+
+    def __init__(self):
+        self.calls = 0
+
+    def encode_images(
+        self,
+        pixel_values,
+        *,
+        pixel_attention_mask,
+        spatial_shapes,
+        native_image_size,
+        transform_hash,
+    ):
+        self.calls += 1
+        batch, frames, patches = pixel_values.shape[:3]
+        tokens = pixel_values.new_zeros(batch, frames, patches, 32)
+        tokens[..., :3] = pixel_values
+        pooled = tokens.mean(dim=2)
+        return ImageEncoding(
+            patch_tokens=tokens,
+            pooled_embedding=pooled,
+            patch_valid_mask=pixel_attention_mask,
+            spatial_shapes=spatial_shapes,
+            native_image_size=native_image_size,
+            processed_patch_grid=spatial_shapes,
+            transform_hash=transform_hash,
+        )
+
+
+def test_large_scene_runtime_uses_shared_backbone_and_one_pair_vector(tmp_path):
+    paths = []
+    for index, color in enumerate(("red", "blue")):
+        path = tmp_path / f"t{index}.png"
+        Image.new("RGB", (10, 6), color).save(path)
+        paths.append(str(path))
+    backbone = _SharedChunkBackbone()
+    encoded = encode_large_scene_images(
+        backbone,
+        _ChunkProcessor(),
+        [{"frames": paths}],
+        torch.device("cpu"),
+        chunk_size=(4, 4),
+        max_num_patches=4,
+        dtype=torch.float32,
+    )
+    assert backbone.calls == 1
+    assert encoded.patch_tokens.shape == (1, 2, 24, 32)
+    assert encoded.token_coordinates.shape == (1, 2, 24, 2)
+    assert encoded.chunk_plan_hashes is not None
+    model = Siglip2TemporalRetrievalModel(
+        None, _config(direct_patch_token_budget=8, large_scene_latents=4)
+    ).eval()
+    _, _, text_tokens, text_embeddings, text_mask = _features(
+        4, batch=1, queries=2
+    )
+    output = model.forward_from_features(
+        encoded.patch_tokens,
+        encoded.pooled_embedding,
+        text_tokens,
+        text_embeddings,
+        text_mask,
+        patch_valid_mask=encoded.patch_valid_mask,
+        spatial_shapes=encoded.spatial_shapes,
+        native_image_size=encoded.native_image_size,
+        processed_patch_grid=encoded.processed_patch_grid,
+        transform_hash=encoded.transform_hash,
+        token_coordinates=encoded.token_coordinates,
+    )
+    assert output.pair_cls.shape == (1, 32)
+    assert output.temporal.reduced is True
+
+
 def test_metadata_and_native_geometry_propagate_through_temporal_adapter():
     model = Siglip2TemporalRetrievalModel(None, _config()).eval()
     features = _features(16, batch=1, queries=1)
@@ -169,6 +285,33 @@ def test_patch_budget_contract_is_explicit_and_deterministic():
     assert first == second
     with pytest.raises(ValueError):
         validate_patch_budget_sequence([256, 512], supported=(256, 576, 1024))
+
+
+def test_budget_schedule_prevents_patch_count_from_identifying_source():
+    ids = ["levir:0", "levir:1", "second:0", "second:1"]
+    sources = ["LEVIR-MCI", "LEVIR-MCI", "SECOND-CC", "SECOND-CC"]
+    first = build_patch_budget_schedule(ids, sources, cycles=3, seed=19)
+    second = build_patch_budget_schedule(ids, sources, cycles=3, seed=19)
+    assert first == second
+    assert first.schedule_sha256 == second.schedule_sha256
+    by_item = {
+        item_id: {
+            row.max_num_patches
+            for row in first.assignments
+            if row.item_id == item_id
+        }
+        for item_id in ids
+    }
+    assert all(values == {256, 576, 1024} for values in by_item.values())
+    by_source = {
+        source: {
+            row.max_num_patches
+            for row in first.assignments
+            if row.source == source
+        }
+        for source in set(sources)
+    }
+    assert all(values == {256, 576, 1024} for values in by_source.values())
 
 
 class _FakeNaflexProcessor:

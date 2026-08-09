@@ -222,7 +222,11 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             sensor_ids=sensor_ids,
             gsd=gsd,
             metadata_missing=metadata_missing,
-            token_coordinates=token_coordinates,
+            token_coordinates=(
+                image.token_coordinates
+                if token_coordinates is None
+                else token_coordinates
+            ),
         )
 
     def trainable_parameter_report(self) -> dict[str, dict[str, int]]:

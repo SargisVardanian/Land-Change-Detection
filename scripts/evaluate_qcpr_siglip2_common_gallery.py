@@ -14,6 +14,7 @@ import os
 import resource
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -142,6 +143,17 @@ def _autocast(device: torch.device):
     return nullcontext()
 
 
+@dataclass(frozen=True)
+class GalleryFeatureCache:
+    frame_tokens: Tensor
+    frame_embeddings: Tensor
+    pair_embeddings: Tensor
+    patch_valid_mask: Tensor
+    spatial_shapes: Tensor
+    native_image_size: Tensor
+    processed_patch_grid: Tensor
+
+
 def encode_gallery_features(
     model: Siglip2TemporalRetrievalModel,
     backbone: Siglip2Backbone,
@@ -149,27 +161,61 @@ def encode_gallery_features(
     pair_rows: list[dict[str, Any]],
     device: torch.device,
     batch_size: int,
-) -> tuple[Tensor, Tensor, Tensor]:
+    max_num_patches: int,
+) -> GalleryFeatureCache:
     frame_tokens: list[torch.Tensor] = []
     frame_embeddings: list[torch.Tensor] = []
     pair_embeddings: list[torch.Tensor] = []
+    patch_valid_masks: list[torch.Tensor] = []
+    spatial_shape_rows: list[torch.Tensor] = []
+    native_image_sizes: list[torch.Tensor] = []
+    processed_patch_grids: list[torch.Tensor] = []
     for start in range(0, len(pair_rows), batch_size):
         image = encode_real_images(
-            backbone, processor, pair_rows[start : start + batch_size], device
+            backbone,
+            processor,
+            pair_rows[start : start + batch_size],
+            device,
+            max_num_patches=max_num_patches,
         )
+        if any(
+            value is None
+            for value in (
+                image.patch_valid_mask,
+                image.spatial_shapes,
+                image.native_image_size,
+                image.processed_patch_grid,
+            )
+        ):
+            raise RuntimeError("VARIABLE_TOKEN_METADATA_MISSING")
         with torch.no_grad(), _autocast(device):
             temporal = model.temporal_adapter(
-                image.patch_tokens, image.pooled_embedding
+                image.patch_tokens,
+                image.pooled_embedding,
+                patch_valid_mask=image.patch_valid_mask,
+                spatial_shapes=image.spatial_shapes,
+                native_image_size=image.native_image_size,
+                processed_patch_grid=image.processed_patch_grid,
             )
         frame_tokens.append(image.patch_tokens.detach().to("cpu"))
         frame_embeddings.append(image.pooled_embedding.detach().to("cpu"))
         pair_embeddings.append(
             torch.nn.functional.normalize(temporal.pair_cls.float(), dim=-1).cpu()
         )
-    return (
-        torch.cat(frame_tokens, dim=0),
-        torch.cat(frame_embeddings, dim=0),
-        torch.cat(pair_embeddings, dim=0),
+        patch_valid_masks.append(image.patch_valid_mask.detach().to("cpu"))
+        spatial_shape_rows.append(image.spatial_shapes.detach().to("cpu"))
+        native_image_sizes.append(image.native_image_size.detach().to("cpu"))
+        processed_patch_grids.append(
+            image.processed_patch_grid.detach().to("cpu")
+        )
+    return GalleryFeatureCache(
+        frame_tokens=torch.cat(frame_tokens, dim=0),
+        frame_embeddings=torch.cat(frame_embeddings, dim=0),
+        pair_embeddings=torch.cat(pair_embeddings, dim=0),
+        patch_valid_mask=torch.cat(patch_valid_masks, dim=0),
+        spatial_shapes=torch.cat(spatial_shape_rows, dim=0),
+        native_image_size=torch.cat(native_image_sizes, dim=0),
+        processed_patch_grid=torch.cat(processed_patch_grids, dim=0),
     )
 
 
@@ -201,6 +247,10 @@ def rerank_top_k(
     model: Siglip2TemporalRetrievalModel,
     gallery_frame_tokens: Tensor,
     gallery_frame_embeddings: Tensor,
+    gallery_patch_valid_mask: Tensor,
+    gallery_spatial_shapes: Tensor,
+    gallery_native_image_size: Tensor,
+    gallery_processed_patch_grid: Tensor,
     query_token_embeddings: Tensor,
     query_pooled_embeddings: Tensor,
     query_attention_masks: Tensor,
@@ -231,6 +281,18 @@ def rerank_top_k(
         frame_embeddings = gallery_frame_embeddings[local_indices].to(
             device, non_blocking=True
         )
+        patch_valid_mask = gallery_patch_valid_mask[local_indices].to(
+            device, non_blocking=True
+        )
+        spatial_shapes = gallery_spatial_shapes[local_indices].to(
+            device, non_blocking=True
+        )
+        native_image_size = gallery_native_image_size[local_indices].to(
+            device, non_blocking=True
+        )
+        processed_patch_grid = gallery_processed_patch_grid[local_indices].to(
+            device, non_blocking=True
+        )
         text_tokens = query_token_embeddings[start:end].to(device, non_blocking=True)
         text_embeddings = query_pooled_embeddings[start:end].to(
             device, non_blocking=True
@@ -243,6 +305,10 @@ def rerank_top_k(
                 text_tokens,
                 text_embeddings,
                 text_mask,
+                patch_valid_mask=patch_valid_mask,
+                spatial_shapes=spatial_shapes,
+                native_image_size=native_image_size,
+                processed_patch_grid=processed_patch_grid,
             )
         local_candidates = torch.tensor(
             [[local_index[int(value)] for value in row] for row in candidate_block.tolist()],
@@ -267,6 +333,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gallery-batch-size", type=int, default=8)
     parser.add_argument("--query-batch-size", type=int, default=64)
     parser.add_argument("--rerank-query-batch-size", type=int, default=1)
+    parser.add_argument("--max-num-patches", type=int, required=True)
     parser.add_argument("--rerank-k", type=int, action="append", default=None)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     args = parser.parse_args()
@@ -331,13 +398,14 @@ def main() -> int:
         backbone.freeze_all()
 
         started = time.perf_counter()
-        gallery_frame_tokens, gallery_frame_embeddings, gallery_embeddings = encode_gallery_features(
+        gallery = encode_gallery_features(
             model,
             backbone,
             processor,
             pair_rows,
             device,
             args.gallery_batch_size,
+            args.max_num_patches,
         )
         query_token_embeddings, query_pooled_embeddings, query_attention_masks = encode_queries(
             backbone,
@@ -351,7 +419,7 @@ def main() -> int:
         )
         temperature = float(model.retrieval_temperature.detach().cpu())
         raw_global_scores = global_stage_scores(
-            query_embeddings, gallery_embeddings, temperature
+            query_embeddings, gallery.pair_embeddings, temperature
         )
         # Ignored ambiguity records are excluded from ranking, not treated as
         # hard negatives.  Keep a finite floor so integrity checks remain
@@ -362,8 +430,12 @@ def main() -> int:
         max_k = min(max(args.rerank_k), len(pair_rows))
         max_reranked_scores, evidence_maps = rerank_top_k(
             model,
-            gallery_frame_tokens,
-            gallery_frame_embeddings,
+            gallery.frame_tokens,
+            gallery.frame_embeddings,
+            gallery.patch_valid_mask,
+            gallery.spatial_shapes,
+            gallery.native_image_size,
+            gallery.processed_patch_grid,
             query_token_embeddings,
             query_pooled_embeddings,
             query_attention_masks,
@@ -433,8 +505,9 @@ def main() -> int:
                 "checkpoint_sha256": _sha256_file(checkpoint_path),
                 "siglip2_model": str(args.siglip2_model),
                 "runtime_class": backbone.runtime_class,
-                "native_visual_tokens": list(gallery_frame_tokens.shape),
-                "pair_embedding_shape": list(gallery_embeddings.shape),
+                "native_visual_tokens": list(gallery.frame_tokens.shape),
+                "pair_embedding_shape": list(gallery.pair_embeddings.shape),
+                "max_num_patches": args.max_num_patches,
                 "text_embedding_shape": list(query_embeddings.shape),
                 "temperature": temperature,
                 "rerank_k": sorted(set(args.rerank_k)),

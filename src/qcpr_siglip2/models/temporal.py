@@ -285,7 +285,7 @@ class BoundedRegionReducer(nn.Module):
             raise ValueError(
                 "region reducer expects [B,T,N,D] tokens and [B,T,N] mask"
             )
-        batch, frames, patches, hidden = tokens.shape
+        batch, frames, patches, _hidden = tokens.shape
         if frames < 2:
             raise ValueError("large-scene reduction requires at least two frames")
         valid_float = valid_mask.to(dtype=tokens.dtype)
@@ -450,6 +450,26 @@ class TemporalTransformerAdapter(nn.Module):
                 ]
         return positions, coordinates
 
+    def _coordinate_position(self, coordinates: Tensor) -> Tensor:
+        """Sample the learned 2-D position table at normalized native coordinates."""
+
+        if coordinates.ndim != 4 or coordinates.shape[-1] != 2:
+            raise ValueError("token coordinates must be [B,T,N,2]")
+        batch, frames, tokens, _ = coordinates.shape
+        table = self.spatial_position.float().expand(batch * frames, -1, -1, -1)
+        grid = coordinates.float().reshape(batch * frames, tokens, 1, 2)
+        grid = grid.mul(2.0).sub(1.0).clamp(-1.0, 1.0)
+        sampled = F.grid_sample(
+            table,
+            grid,
+            mode="bilinear",
+            padding_mode="border",
+            align_corners=True,
+        )
+        return sampled.squeeze(-1).transpose(1, 2).reshape(
+            batch, frames, tokens, self.config.hidden_size
+        ).to(dtype=coordinates.dtype)
+
     def _time_features(
         self,
         timestamps: Tensor | None,
@@ -564,7 +584,7 @@ class TemporalTransformerAdapter(nn.Module):
         valid_mask: Tensor,
         native_coordinates: Tensor,
     ) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
-        b, t, n, _ = frame_tokens.shape
+        b, t, _n, _ = frame_tokens.shape
         k = self.config.large_scene_latents
         reduced, assignment, _ = self.region_reducer(frame_tokens, valid_mask)
         reduced_mask = torch.ones(
@@ -649,10 +669,12 @@ class TemporalTransformerAdapter(nn.Module):
             tokens = frame_tokens
             coordinates = native_coordinates
         _, _, token_count, _ = tokens.shape
-        if not reduced:
-            spatial, _ = self._spatial_metadata(valid_mask, shapes, dtype=tokens.dtype)
+        if token_coordinates is not None:
+            spatial = self._coordinate_position(coordinates)
         else:
-            spatial, _ = self._spatial_metadata(valid_mask, shapes, dtype=tokens.dtype)
+            spatial, _ = self._spatial_metadata(
+                valid_mask, shapes, dtype=tokens.dtype
+            )
         time_features = self._time_features(
             timestamps,
             batch=b,
