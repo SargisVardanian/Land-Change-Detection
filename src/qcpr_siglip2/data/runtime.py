@@ -368,7 +368,14 @@ def encode_large_scene_images(
     ):
         raise ValueError("every temporal chunk must have a synchronized patch grid")
     chunk_native_size = torch.tensor(
-        [chunk_size] * total_chunks * frame_count,
+        [
+            [
+                plan.chunks[chunk_index].valid_height,
+                plan.chunks[chunk_index].valid_width,
+            ]
+            for _, plan, chunk_index in chunk_records
+            for _ in range(frame_count)
+        ],
         dtype=torch.long,
         device=device,
     ).reshape(total_chunks, frame_count, 2)

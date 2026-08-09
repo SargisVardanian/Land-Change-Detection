@@ -148,6 +148,13 @@ def test_synchronized_large_scene_chunks_share_geometry_and_native_coordinates()
     assert first_coordinates[:, 0].max() < last_coordinates[:, 0].min()
     assert first_coordinates[:, 1].max() <= last_coordinates[:, 1].min()
     assert first_coordinates[:, 1].mean() < last_coordinates[:, 1].mean()
+    small_plan = build_synchronized_chunk_plan(
+        (3, 2), chunk_size=(4, 4), overlap=(0, 0)
+    )
+    small_chunks = apply_synchronized_chunk_plan(
+        [Image.new("RGB", (2, 3)), Image.new("RGB", (2, 3))], small_plan
+    )
+    assert small_chunks[0][0].size == (2, 3)
 
 
 class _ChunkProcessor:

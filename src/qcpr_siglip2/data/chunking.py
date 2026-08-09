@@ -110,7 +110,12 @@ def build_synchronized_chunk_plan(
 def apply_synchronized_chunk_plan(
     frames: list[Image.Image], plan: SynchronizedChunkPlan
 ) -> list[list[Image.Image]]:
-    """Crop and identically pad every frame for each planned chunk."""
+    """Crop every frame identically and leave batch padding to NaFlex.
+
+    Artificial pixel padding before the processor is forbidden because the
+    vision transformer could attend to it as image content. The NaFlex
+    processor owns padding and emits the authoritative patch-valid mask.
+    """
 
     if len(frames) < 2:
         raise ValueError("large-scene temporal items require at least two frames")
@@ -122,10 +127,6 @@ def apply_synchronized_chunk_plan(
         temporal_chunk: list[Image.Image] = []
         for frame in frames:
             crop = frame.crop((chunk.left, chunk.top, chunk.right, chunk.bottom))
-            if crop.size != (chunk.padded_width, chunk.padded_height):
-                padded = Image.new(frame.mode, (chunk.padded_width, chunk.padded_height))
-                padded.paste(crop, (0, 0))
-                crop = padded
             temporal_chunk.append(crop)
         result.append(temporal_chunk)
     return result
@@ -148,9 +149,9 @@ def chunk_patch_coordinates(
     ys = (torch.arange(grid_height, device=device, dtype=dtype) + 0.5) / grid_height
     xs = (torch.arange(grid_width, device=device, dtype=dtype) + 0.5) / grid_width
     yy, xx = torch.meshgrid(ys, xs, indexing="ij")
-    local_y = yy * chunk.padded_height
-    local_x = xx * chunk.padded_width
-    valid = (local_y < chunk.valid_height) & (local_x < chunk.valid_width)
+    local_y = yy * chunk.valid_height
+    local_x = xx * chunk.valid_width
+    valid = torch.ones_like(local_y, dtype=torch.bool)
     global_y = (chunk.top + local_y).clamp(max=float(native_height)) / native_height
     global_x = (chunk.left + local_x).clamp(max=float(native_width)) / native_width
     coordinates = torch.stack((global_x, global_y), dim=-1).reshape(-1, 2)
