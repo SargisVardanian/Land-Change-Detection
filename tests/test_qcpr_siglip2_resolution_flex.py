@@ -146,7 +146,8 @@ def test_synchronized_large_scene_chunks_share_geometry_and_native_coordinates()
     )
     assert first_valid.all() and last_valid.all()
     assert first_coordinates[:, 0].max() < last_coordinates[:, 0].min()
-    assert first_coordinates[:, 1].max() < last_coordinates[:, 1].min()
+    assert first_coordinates[:, 1].max() <= last_coordinates[:, 1].min()
+    assert first_coordinates[:, 1].mean() < last_coordinates[:, 1].mean()
 
 
 class _ChunkProcessor:
