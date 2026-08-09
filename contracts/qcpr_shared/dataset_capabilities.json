@@ -43,14 +43,17 @@
     "stable_train_queries": 0,
     "stable_verified_queries": 0
   },
-  "dataset_code_sha": "6953bb7c0924954945fcfc9f58a109f232aaeca4",
-  "dataset_remote_sha": "a0d43ccc0239ffca5c96e9b2bf231fa880b2c21e",
+  "dataset_cluster_branch_sha": "6bce613cb7e57728c31d5833ecb90a6e8f7a7aa8",
+  "dataset_code_sha": "6bce613cb7e57728c31d5833ecb90a6e8f7a7aa8",
+  "dataset_remote_sha": null,
+  "dataset_remote_verification": "NOT_AVAILABLE_GITHUB_SSH_AUTH_REQUIRED",
   "evaluation_mask_sidecar_schema": "evaluation_sidecars/mask_sidecar_contract.json",
   "handoff_path": "contracts/qcpr_shared/handoff/dataset_final_to_model.json",
   "handoff_schema_complete": true,
-  "handoff_sha256": "1aa36af3f8403f03f86672755eba35b26f5a8fde30596e7d9e288d9e313443af",
+  "handoff_sha256": "254499627c4b1b282456776a49625befcf6b68c87f7b8cda39d7760d8faf19bd",
+  "immutable_release_mutated": false,
   "main_training_allowed": false,
-  "model_requirements_sha256": "261785bce8ee1d88de05f9d24ab27b16bee940d95487ce257ddce741442b2e8e",
+  "model_requirements_sha256": "ea9e9d977ba7d8c809712bfd94a5c07a092e326da74869e4c9c32ab9387de869",
   "model_training_policy": "core exact only; expanded main training not authorized",
   "native_resolution": {
     "by_source": {
