@@ -272,6 +272,15 @@ def test_deterministic_sampler_rotates_captions_without_pair_weight_drift():
     assert first.query_ids != rotated.query_ids
 
 
+def test_deterministic_sampler_reuses_a_single_verified_caption_without_dropping_pair():
+    rows = [{"canonical_pair_id": "p0", "caption_id": "p0q0"}]
+    batch = make_exact_batches(
+        rows, physical_batch_size=1, captions_per_pair=2, epoch=0, seed=3
+    )[0]
+    assert batch.pair_ids == ("p0",)
+    assert batch.query_ids == ("p0q0", "p0q0")
+
+
 def test_exposure_ledger_records_total_and_per_step_schedule_hashes():
     ledger = ExposureLedger()
     ledger.record_step(["p0", "p1"], ["q0", "q1"], "DIRECT_NAFLEX")

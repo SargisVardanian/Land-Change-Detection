@@ -16,6 +16,7 @@ import resource
 import subprocess
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -479,6 +480,10 @@ def main() -> int:
         model = Siglip2TemporalRetrievalModel(
             backbone, model_config
         ).to(device)
+        caption_counts = Counter(str(row["canonical_pair_id"]) for row in train_rows)
+        caption_reuse_pairs = sum(
+            count < args.captions_per_pair for count in caption_counts.values()
+        )
         initial_payload = None
         if args.phase == "B":
             assert model.backbone is not None
@@ -550,6 +555,12 @@ def main() -> int:
                 "logical_query_count": args.logical_physical_batch_size
                 * args.captions_per_pair,
                 "captions_per_pair": args.captions_per_pair,
+                "caption_sampling": {
+                    "policy": "deterministic_cycle_with_replacement_for_verified_rows",
+                    "requested_captions_per_pair": args.captions_per_pair,
+                    "pairs_with_fewer_than_requested": caption_reuse_pairs,
+                    "caption_reuse_is_not_a_generated_caption": True,
+                },
                 "seed": args.seed,
                 "config_path": str(config_path),
                 "config_sha256": sha256(config_path),

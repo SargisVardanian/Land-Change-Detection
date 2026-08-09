@@ -36,10 +36,14 @@ def select_epoch_rows(
         raise ValueError("captions_per_pair must be positive")
     selected: list[dict[str, Any]] = []
     for pair_id, group in group_rows_by_pair(rows).items():
-        if len(group) < captions_per_pair:
+        if not group:
             raise ValueError(
-                f"pair {pair_id} has fewer than {captions_per_pair} captions"
+                f"pair {pair_id} has no captions"
             )
+        # The exact r19g core contains trusted physical pairs with only one
+        # human caption.  Reuse that verified row deterministically rather
+        # than dropping the physical item or fabricating a paraphrase.  The
+        # runtime contract records this reuse explicitly.
         offset = (epoch + _stable_int(pair_id) + seed) % len(group)
         for index in range(captions_per_pair):
             selected.append(group[(offset + index) % len(group)])
