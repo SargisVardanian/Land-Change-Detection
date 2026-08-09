@@ -11,7 +11,7 @@ concentrations are `scripts/` 219 files/40,176 lines, `src/` 180/22,788,
 
 | Class | Scope | Disposition |
 |---|---|---|
-| ACTIVE_CANONICAL | `src/qcpr_data/contracts`, `identities`, `manifests`, `queries`, `sources`, `splits`, `verification` | maintained reusable Dataset-v2 library |
+| ACTIVE_CANONICAL | `src/qcpr_data/contracts`, `identities`, `manifests`, `queries`, `reports`, `sources`, `splits`, `verification` | maintained reusable Dataset-v2 library |
 | ACTIVE_TOOL | `scripts/validate_qcpr_release_contract.py` and source acquisition/audit tools that import canonical modules | supported operational entrypoints |
 | ACTIVE_TEST | `tests/test_qcpr_data_contracts.py`, Dataset-v2/retrieval/source tests and validator safety test | retained verification |
 | LEGACY_REQUIRED | immutable release builders/finalizers and historical audit scripts | retained for lineage; not a production entrypoint |
@@ -39,4 +39,3 @@ release-specific orchestration and must not be imported as the general library.
 No r18/r19 or workstation-specific paths were found in `src/qcpr_data`. Exact release
 paths remain intentionally present in immutable contract snapshots and historical
 reports. Model-stage scripts are outside this dataset cleanup scope.
-
