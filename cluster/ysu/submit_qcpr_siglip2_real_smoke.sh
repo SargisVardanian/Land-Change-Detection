@@ -19,10 +19,13 @@ RUN_ROOT=${RUN_ROOT:?set RUN_ROOT}
 DATA_RELEASE=${DATA_RELEASE:?set DATA_RELEASE}
 SIGLIP2_MODEL=${SIGLIP2_MODEL:?set SIGLIP2_MODEL}
 TRAIN_MANIFEST=${TRAIN_MANIFEST:?set TRAIN_MANIFEST}
+DEVELOPMENT_MANIFEST=${DEVELOPMENT_MANIFEST:?set DEVELOPMENT_MANIFEST}
 STEPS=${STEPS:-8}
 PHYSICAL_BATCH_SIZE=${PHYSICAL_BATCH_SIZE:-8}
 CAPTIONS_PER_PAIR=${CAPTIONS_PER_PAIR:-2}
 CONFIG_PATH=${CONFIG_PATH:-$WT/configs/qcpr_siglip2_phase_a.json}
+MAX_NUM_PATCHES=${MAX_NUM_PATCHES:-256}
+SEED=${SEED:-20260805}
 CHECKPOINT_PATH=${CHECKPOINT_PATH:-none}
 
 mkdir -p "$RUN_ROOT"
@@ -35,6 +38,8 @@ test -z "$(git -C "$WT" status --porcelain)"
 test -s "$CONFIG_PATH"
 test -d "$DATA_RELEASE"
 test -s "$TRAIN_MANIFEST"
+test -s "$DEVELOPMENT_MANIFEST"
+test -s "$CONFIG_PATH"
 test -d "$SIGLIP2_MODEL"
 test -f "$SIGLIP2_MODEL/model.safetensors"
 test -f "$SIGLIP2_MODEL/config.json"
@@ -43,4 +48,16 @@ if test "$CHECKPOINT_PATH" != "none"; then test -s "$CHECKPOINT_PATH"; fi
 export HF_HUB_OFFLINE=1
 export PYTHONPATH="$WT/src:$WT/scripts"
 export PYTHONWARNINGS=default
-exec "$PY" "$WT/scripts/run_qcpr_siglip2_real_smoke.py"   --siglip2-model "$SIGLIP2_MODEL"   --train-manifest "$TRAIN_MANIFEST"   --output-dir "$RUN_ROOT"   --expected-code-sha "$EXPECTED_SHA"   --steps "$STEPS"   --physical-batch-size "$PHYSICAL_BATCH_SIZE"   --captions-per-pair "$CAPTIONS_PER_PAIR"
+exec "$PY" "$WT/scripts/run_qcpr_siglip2_real_integration_smoke.py" \
+  --siglip2-model "$SIGLIP2_MODEL" \
+  --data-release "$DATA_RELEASE" \
+  --train-manifest "$TRAIN_MANIFEST" \
+  --development-manifest "$DEVELOPMENT_MANIFEST" \
+  --config-path "$CONFIG_PATH" \
+  --output-dir "$RUN_ROOT" \
+  --expected-code-sha "$EXPECTED_SHA" \
+  --steps "$STEPS" \
+  --physical-batch-size "$PHYSICAL_BATCH_SIZE" \
+  --captions-per-pair "$CAPTIONS_PER_PAIR" \
+  --max-num-patches "$MAX_NUM_PATCHES" \
+  --seed "$SEED"
