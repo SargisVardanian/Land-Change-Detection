@@ -1,5 +1,12 @@
 runs_remote/
 reports/
+!reports/
+reports/*
+!reports/code_inventory.md
+!reports/code_cleanup_report.md
+!reports/source_provenance_matrix.md
+!reports/dataset_difficulty_final.md
+!reports/dataset_limitations.md
 .DS_Store
 .agent/
 .agent-capability-report.md

@@ -54,7 +54,16 @@ def main() -> int:
     parser.add_argument("--decode-sample", type=int, default=256)
     args = parser.parse_args()
     root = args.release
-    output = args.output or root / "audits/validate_qcpr_release_contract.json"
+    output = args.output
+    if output is not None:
+        try:
+            output.resolve().relative_to(root.resolve())
+        except ValueError:
+            pass
+        else:
+            parser.error(
+                "--output must be outside --release; immutable releases are read-only"
+            )
     PhysicalItem, QueryRecord, forbidden_key_hits, read_jsonl, validators = _load_contract_package()
     validate_physical_item, validate_query_record, verify_sha256sums = validators
 
@@ -152,8 +161,12 @@ def main() -> int:
         "sha256sums": checksums,
         "passed": not physical_errors and not query_errors and not duplicate_ids and not projection_conflicts and not decode_failures and not forbidden and checksums.get("passed", False),
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(
+            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
     print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
     return 0 if result["passed"] else 2
 
