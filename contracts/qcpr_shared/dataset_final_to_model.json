@@ -7,7 +7,8 @@
   "DUBAI_EXTERNAL_READY": false,
   "EXACT_PAPER_CALIBRATION_READY": false,
   "EXACT_TRAINING_READY": true,
-  "FOREST_HUMAN_CAPTION_IDENTIFIED": false,
+  "FOREST_HUMAN_CAPTION_IDENTIFIED": true,
+  "FOREST_HUMAN_TRAIN_READY": true,
   "FOREST_TRAIN_READY": false,
   "GSD_metadata_coverage": {
     "fraction": 0.0,
@@ -15,12 +16,14 @@
     "total_frame_count": 66742
   },
   "HIGHRES_EVAL_READY": false,
+  "HIGHRES_RUNTIME_STRESS_READY": true,
   "HIGHRES_TRAIN_READY": false,
   "LOCALIZED_EVAL_READY": false,
   "LOCALIZED_TRAIN_READY": false,
   "LONG_SERIES_EVAL_READY": false,
   "LONG_SERIES_READY": false,
   "LONG_SERIES_TRAIN_READY": false,
+  "MULTIPOSITIVE_SMOKE_READY": true,
   "N_TRAIN_CORE_QUERIES": 23124,
   "N_TRAIN_CORE_UNIQUE_PHYSICAL_PAIRS": 7291,
   "N_TRAIN_EXACT_QUERIES": 23124,
@@ -34,6 +37,8 @@
   "SEMANTIC_EVAL_READY": false,
   "SEMANTIC_TRAIN_READY": false,
   "STABLE_EVAL_READY": false,
+  "UNRESOLVED_HIGH_RISK_DUPLICATES": 0,
+  "VERIFIED_CROSS_SPLIT_LEAKAGE_COUNT": 0,
   "artifact_hashes": {
     "caption_rotation_contract.json": "94c143d5ef04fab39280c8da5a3d3ac3892b950baac87d8b1760fd53f2e99718",
     "collision_groups.jsonl": "c8472be5adec81745913cdd133d4d14a7aeb5d9a38b4fcb113e3309be2d93aee",
@@ -91,6 +96,7 @@
     "residual_false_negative_rate_95_ci": null,
     "same_pair_captions_never_negative": true
   },
+  "compatibility_authority": "model_requirements_sha256",
   "contract_hashes": {
     "benchmark_contract": "e972f4e3a823c874d2b74a284da454b336fcc9c409d5bc37fef4cd061748ea83",
     "capability_status": "55b1994575b1d70ead39a86242e897d49420173964c2663b580fc81bdf9b77d7",
@@ -99,6 +105,10 @@
     "preprocessing_interface": "9fecd8d39b194b4849a53644ca969dd844b78bba1ae76fab5a1021697e243c01",
     "relevance_contract": "1c5effa383b6c30fdb6db5df723ee660c0c5dcd5f575348c824e106971c02bbe",
     "sampler_core": "e643d3830bacf794d5cdc57a29532c4f5d6d6f1415e83f70b92ea8b9746eca1d"
+  },
+  "coordination_followup_status": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/coordination_followup_status.json",
+    "sha256": "ce3ba9ab074e6d3bd320af4c1f794ba7253f7ad495ca0d2f89836bce8da6463b"
   },
   "core_benchmark": {
     "immutable_reference": true,
@@ -164,18 +174,23 @@
   "data_only_same_frozen_model": true,
   "data_only_training_run": false,
   "dataset_branch": "codex/qcpr-dataset-v2-final",
-  "dataset_cluster_branch_sha": "50589a99083aee05ab9fbb1c5b63e7f234dcd1cf",
-  "dataset_code_sha": "50589a99083aee05ab9fbb1c5b63e7f234dcd1cf",
+  "dataset_cluster_branch_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
+  "dataset_code_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
   "dataset_difficulty_report_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g/dataset_difficulty_report.json",
   "dataset_difficulty_report_sha": "4a9bfae9c09d4bab0a7c8e09c1cef505569363e48eaf5e2147669d31257e266d",
-  "dataset_remote_sha": "50589a99083aee05ab9fbb1c5b63e7f234dcd1cf",
+  "dataset_remote_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
   "dataset_remote_verification": "VERIFIED",
-  "dataset_source_head_sha": "50589a99083aee05ab9fbb1c5b63e7f234dcd1cf",
+  "dataset_source_head_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
   "dev_manifest_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g/exact_core_development.jsonl",
   "dev_manifest_sha": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
   "development_manifest_sha256": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
   "direction_query_count": 26036,
   "disabled_generic_no_change_row_count": 48870,
+  "dubai_external_blocker": "Archive and 500 physical pairs/2500 captions are local, but no dataset license or explicit evaluation-use terms are present in the archive/README.",
+  "dubai_external_status": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/dubai_external_status.json",
+    "sha256": "e01744568fae609a9c94e23792ef59d6d68762536c681d0743c7c8563c90f87e"
+  },
   "evaluation_mask_sidecar_contract_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g/evaluation_sidecars/mask_sidecar_contract.json",
   "evaluation_mask_sidecar_contract_sha": "e4dc00f4893a76c33cf3def6e10ca2cc8af18c6efe68e5f831aee7c3698ee197",
   "evaluation_mask_sidecar_count": 3473,
@@ -190,11 +205,19 @@
     "known_frame_count": 0,
     "total_frame_count": 66742
   },
+  "forest_human_only_candidate": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/forest_human_only_domain_expansion_candidate.jsonl",
+    "sha256": "8173d37e5d655a2a7c770dba3cdaa3c41e1c779aa8bcb618c8208b4523567aed"
+  },
   "frame_registry_sha": "415f9d2353763e65749c940dc3d5cdb09fdb351716878fe33e6c2b228c274615",
   "handoff_id": "D2M-QCPR-BITEMPORAL-V2-R19G",
   "highres_benchmark_path": null,
   "highres_benchmark_sha": null,
   "highres_benchmark_status_sha": "093e45a65eb896f959ab8c463ad00f33fd9206361e113042f5ed81d75c4bdba4",
+  "highres_physical_stress_manifest": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/highres_physical_stress_manifest.json",
+    "sha256": "88261172628757f40cf66b15f21ce6cbb524f984c7fab88843cb3474e50943ad"
+  },
   "immutable_release_mutated": false,
   "loader_128x256_artifact_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g/loader/temporal_siglip_batch_128x256.json",
   "loader_128x256_artifact_sha": "acf7484b3b1f2e680f21b77646ad60be4fff0e85b25a655ac33909904b56f436",
@@ -207,9 +230,13 @@
     "training_enabled": false
   },
   "model_agent_branch": "codex/qcpr-model-v3-temporal-retrieval",
-  "model_agent_sha": "d59cb90f0e55d5e2ebc6f6b01d8c818e12c78a17",
+  "model_agent_sha": "32fb01fde50af6e82f8af7af5279c06d9c078ccf",
   "model_requirements_sha256": "ea9e9d977ba7d8c809712bfd94a5c07a092e326da74869e4c9c32ab9387de869",
   "model_training_policy": "authorize only exact core; do not authorize expanded/domain/semantic/localized/long-series training",
+  "multipositive_compatibility_artifact": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/multipositive_compatibility_contract.json",
+    "sha256": "da7f94479e522d68473b7fb20bf15bb2e5d1341d744db691262ccf6687686552"
+  },
   "native_resolution": {
     "by_source": {
       "forest_change": {
@@ -288,6 +315,10 @@
   "ordered_test_gallery_ids_sha256": "a8a22c2b0c64140de1412f5edfba7eb9ee7f072d0957a196db36f7d25c86c9f2",
   "ordered_test_query_ids_sha256": "057593cf231e727d62ee957d98e7e8fc632d22c5cb3aac0b21eb2ac4e729390b",
   "ordered_train_pair_ids_sha256": "6048f573d65abc1d957e66ddfd704fbed77a43497fbc1463fcb47fe785be8536",
+  "perceptual_cross_split_confirmation": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/perceptual_cross_split_second_stage.json",
+    "sha256": "efa5cd0a022f4a243fe024c4f830e2ded13682b82ad4589c13ec27ca846f20f5"
+  },
   "physical_registry_sha": "7b9a6e6a569179fb7eb3c977cbd57a60635a7383c966cdb80036e9db2d32fda9",
   "preprocessing_interface": "preprocessing_interface.json",
   "preprocessing_interface_sha": "9fecd8d39b194b4849a53644ca969dd844b78bba1ae76fab5a1021697e243c01",
@@ -324,6 +355,7 @@
     "normalized_duplicate_rate": 0.209925
   },
   "query_registry_sha": "f2c36db7cd9ffd84d8a87ebf2a83b622db389f3213fb42e181df94e07ece7ef6",
+  "r19g_remains_valid": true,
   "readiness": {
     "AUTHORIZE_TEMPORALSIGLIP_CORE_TRAINING": true,
     "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": false,
