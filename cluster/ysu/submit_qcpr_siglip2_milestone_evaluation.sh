@@ -29,6 +29,7 @@ QUERY_BATCH_SIZE=${QUERY_BATCH_SIZE:-64}
 # multiplies the native 256-patch temporal attention working set and can exceed
 # H100 memory even though feature extraction itself is safe.
 RERANK_QUERY_BATCH_SIZE=${RERANK_QUERY_BATCH_SIZE:-1}
+MAX_NUM_PATCHES=${MAX_NUM_PATCHES:?MAX_NUM_PATCHES is required}
 
 test -d "$WORKTREE"
 test "$(git -C "$WORKTREE" rev-parse HEAD)" = "$EXPECTED_SHA"
@@ -44,6 +45,7 @@ mkdir -p "$RUN_ROOT"
 export EXPECTED_SHA PHASE_JOB_ID PHASE PHASE_RUN_ROOT RUN_ROOT DATA_RELEASE
 export DEVELOPMENT_MANIFEST SIGLIP2_MODEL WORKTREE PYTHON
 export GALLERY_BATCH_SIZE QUERY_BATCH_SIZE RERANK_QUERY_BATCH_SIZE
+export MAX_NUM_PATCHES
 
 sbatch \
   --dependency="afterok:${PHASE_JOB_ID}" \
@@ -74,4 +76,5 @@ exec \"\$PYTHON\" \"\$WORKTREE/scripts/evaluate_qcpr_siglip2_milestones.py\" \\
   --expected-code-sha \"\$EXPECTED_SHA\" \\
   --gallery-batch-size \"\$GALLERY_BATCH_SIZE\" \\
   --query-batch-size \"\$QUERY_BATCH_SIZE\" \\
-  --rerank-query-batch-size \"\$RERANK_QUERY_BATCH_SIZE\""
+  --rerank-query-batch-size \"\$RERANK_QUERY_BATCH_SIZE\" \
+  --max-num-patches \"\$MAX_NUM_PATCHES\""
