@@ -28,8 +28,9 @@ Release-specific paths in historical snapshots were not rewritten.
 
 ## Counts
 
-Before cleanup: 681 non-cache files, about 89,983 lines. The cleanup adds documentation
-and one focused safety test; it does not pretend to reduce historical lineage size.
+Before cleanup: 681 non-cache files, about 89,983 lines. After cleanup: 701 files and
+91,825 lines. The cleanup adds documentation, focused safety/audit tests and canonical
+helpers; it does not pretend to reduce historical lineage size.
 Active canonical production code remains the `src/qcpr_data` package plus the final
 validator. Generated untracked `__pycache__` directories in the cluster worktree are
 safe to remove after validation and are not scientific changes.

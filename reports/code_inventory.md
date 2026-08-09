@@ -1,11 +1,20 @@
 # Dataset code inventory
 
-## Baseline
+## Before/after inventory
 
-The repository contains 681 non-cache files and approximately 89,983 lines: 523 Python
-files (77,771 lines), 61 Slurm files, 44 Markdown files and 30 shell files. Top-level
-concentrations are `scripts/` 219 files/40,176 lines, `src/` 180/22,788,
-`tests/` 125/13,614, `cluster/` 87/3,118 and `docs/` 43/6,659.
+Before cleanup the repository contained 681 non-cache files and approximately 89,983
+lines: 523 Python files (77,771 lines), 61 Slurm files, 44 Markdown files and 30 shell
+files. After cleanup/documentation it contains 701 files and 91,825 lines: 531 Python
+files (78,341 lines), 61 Slurm files, 52 Markdown files and 30 shell files. The increase
+is deliberate audit tooling, tests and authoritative documentation, not dataset rows.
+
+| Area | Before files/LOC | After files/LOC |
+|---|---:|---:|
+| scripts | 219 / 40,176 | 221 / 40,544 |
+| src | 180 / 22,788 | 182 / 22,857 |
+| tests | 125 / 13,614 | 129 / 13,747 |
+| cluster | 87 / 3,118 | 87 / 3,118 |
+| docs | 43 / 6,659 | 43 / 6,659 |
 
 ## Classification
 
