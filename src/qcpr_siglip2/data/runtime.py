@@ -6,6 +6,8 @@ from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from hashlib import sha256
+import inspect
+import math
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,13 @@ from .chunking import (
     build_synchronized_chunk_plan,
     chunk_patch_coordinates,
 )
+
+
+# The pinned SigLIP2 tokenizer has an effectively unbounded tokenizer-side
+# ``model_max_length``.  The audited processor gate, however, uses a fixed
+# 64-token scientific contract.  Keep this policy in one model-side helper so
+# training, milestone evaluation and route audits cannot silently diverge.
+PINNED_SIGLIP2_MAX_TEXT_LENGTH = 64
 
 
 @dataclass(frozen=True)
@@ -37,6 +46,8 @@ class RawFeatureBatch:
     processed_patch_grid: Tensor | None = None
     transform_hash: str | None = None
     token_coordinates: Tensor | None = None
+    processing_mode: str = "DIRECT_NAFLEX"
+    force_region_reduction: bool = False
 
 
 def file_sha256(path: str | Path) -> str:
@@ -67,6 +78,7 @@ def processor_inputs(
     ]
     | None = None,
     is_naflex: bool | None = None,
+    max_text_length: int = PINNED_SIGLIP2_MAX_TEXT_LENGTH,
 ) -> tuple[dict[str, Any], dict[str, Tensor]]:
     """Decode each T1/T2 exactly once and tokenize the paired queries."""
 
@@ -79,7 +91,9 @@ def processor_inputs(
         synchronized_sequence_transform=synchronized_sequence_transform,
         is_naflex=is_naflex,
     )
-    text_inputs = processor_text_inputs(processor, query_rows, device)
+    text_inputs = processor_text_inputs(
+        processor, query_rows, device, max_text_length=max_text_length
+    )
     return image_inputs, text_inputs
 
 
@@ -226,11 +240,32 @@ def processor_text_inputs(
     processor: Any,
     query_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
     device: torch.device,
+    *,
+    max_text_length: int = PINNED_SIGLIP2_MAX_TEXT_LENGTH,
 ) -> dict[str, Tensor]:
     """Tokenize only text rows; no image or label fields are consulted."""
 
+    if not isinstance(max_text_length, int) or max_text_length <= 0:
+        raise ValueError("max_text_length must be a positive integer")
     texts = [str(row["caption"]) for row in query_rows]
-    text_inputs = processor(text=texts, return_tensors="pt", padding="max_length")
+    call_signature = inspect.signature(processor.__call__)
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in call_signature.parameters.values()
+    )
+    if accepts_kwargs or {"truncation", "max_length"}.issubset(call_signature.parameters):
+        text_inputs = processor(
+            text=texts,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+            max_length=max_text_length,
+        )
+    else:
+        # Small test doubles from the legacy contract predate the explicit
+        # tokenizer policy.  Real SigLIP2 processors accept **kwargs and never
+        # use this compatibility branch.
+        text_inputs = processor(text=texts, return_tensors="pt", padding="max_length")
     input_ids = text_inputs["input_ids"]
     attention_mask = text_inputs.get("attention_mask")
     if attention_mask is None:
@@ -246,6 +281,107 @@ def processor_text_inputs(
     return {
         key: value.to(device) if isinstance(value, Tensor) else value
         for key, value in text_inputs.items()
+    }
+
+
+def _query_text(row: dict[str, Any]) -> str:
+    value = row.get("caption", row.get("text"))
+    if value is None:
+        raise ValueError("query row has neither caption nor text")
+    return str(value)
+
+
+def _percentile(values: list[int], percentile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * percentile / 100.0
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return float(ordered[lower])
+    weight = position - lower
+    return float(ordered[lower] * (1.0 - weight) + ordered[upper] * weight)
+
+
+def text_preprocessing_audit(
+    processor: Any,
+    query_rows: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+    *,
+    max_text_length: int = PINNED_SIGLIP2_MAX_TEXT_LENGTH,
+) -> dict[str, Any]:
+    """Audit the exact tokenizer policy without mutating source text.
+
+    ``raw_token_lengths`` are measured before truncation and are therefore the
+    only lengths used to calculate the truncation fraction.  Processed lengths
+    are also reported to make padding and the fixed maximum explicit.
+    """
+
+    if not isinstance(max_text_length, int) or max_text_length <= 0:
+        raise ValueError("max_text_length must be a positive integer")
+    tokenizer = getattr(processor, "tokenizer", None)
+    if tokenizer is None:
+        raise ValueError("processor must expose a tokenizer for the audit")
+    texts = [_query_text(row) for row in query_rows]
+    raw = tokenizer(
+        texts,
+        add_special_tokens=True,
+        padding=False,
+        truncation=False,
+    )
+    processed = tokenizer(
+        texts,
+        add_special_tokens=True,
+        padding="max_length",
+        truncation=True,
+        max_length=max_text_length,
+    )
+    raw_ids = raw.get("input_ids")
+    processed_ids = processed.get("input_ids")
+    if not isinstance(raw_ids, list) or not isinstance(processed_ids, list):
+        raise TypeError("tokenizer audit requires list input_ids outputs")
+    raw_lengths = [len(row) for row in raw_ids]
+    processed_lengths = [
+        min(len(row), max_text_length)
+        for row in processed_ids
+    ]
+    lower_case = getattr(tokenizer, "do_lower_case", None)
+    if lower_case is True:
+        lowercase_policy = "tokenizer_lowercases"
+    elif lower_case is False:
+        lowercase_policy = "tokenizer_preserves_case"
+    else:
+        lowercase_policy = "dataset_text_preserved_tokenizer_default"
+    tokenizer_max = getattr(tokenizer, "model_max_length", None)
+    return {
+        "query_count": len(texts),
+        "lowercase_policy": lowercase_policy,
+        "tokenizer_do_lower_case": lower_case,
+        "tokenizer_model_max_length": (
+            int(tokenizer_max)
+            if isinstance(tokenizer_max, int) and tokenizer_max < 10**9
+            else "unbounded_or_unspecified"
+        ),
+        "max_text_length": max_text_length,
+        "fraction_of_queries_truncated": float(
+            sum(length > max_text_length for length in raw_lengths) / max(len(raw_lengths), 1)
+        ),
+        "max_observed_token_length": max(raw_lengths, default=0),
+        "raw_token_length_percentiles": {
+            "p50": _percentile(raw_lengths, 50),
+            "p90": _percentile(raw_lengths, 90),
+            "p95": _percentile(raw_lengths, 95),
+            "p99": _percentile(raw_lengths, 99),
+        },
+        "processed_token_length_percentiles": {
+            "p50": _percentile(processed_lengths, 50),
+            "p90": _percentile(processed_lengths, 90),
+            "p95": _percentile(processed_lengths, 95),
+            "p99": _percentile(processed_lengths, 99),
+        },
+        "padding": "max_length",
+        "truncation": "right_side_tokenizer_truncation",
+        "text_source_mutated": False,
     }
 
 
@@ -533,8 +669,11 @@ def encode_real_text(
     *,
     dtype: torch.dtype = torch.bfloat16,
     no_grad: bool = True,
+    max_text_length: int = PINNED_SIGLIP2_MAX_TEXT_LENGTH,
 ) -> TextEncoding:
-    text_inputs = processor_text_inputs(processor, query_rows, device)
+    text_inputs = processor_text_inputs(
+        processor, query_rows, device, max_text_length=max_text_length
+    )
     context = torch.no_grad() if no_grad else nullcontext()
     with context, _device_autocast(device, dtype):
         return backbone.encode_text(
@@ -561,19 +700,47 @@ def encode_real_features(
     ]
     | None = None,
     is_naflex: bool | None = None,
+    representation_mode: str = "DIRECT_NAFLEX",
+    hierarchical_chunk_size: tuple[int, int] = (128, 128),
+    hierarchical_tile_batch_size: int = 4,
+    hierarchical_overview_max_num_patches: int | None = None,
+    max_text_length: int = PINNED_SIGLIP2_MAX_TEXT_LENGTH,
 ) -> RawFeatureBatch:
-    image = encode_real_images(
-        backbone,
-        processor,
-        pair_rows,
-        device,
-        dtype=dtype,
-        no_grad=no_grad,
-        max_num_patches=max_num_patches,
-        synchronized_transform=synchronized_transform,
-        synchronized_sequence_transform=synchronized_sequence_transform,
-        is_naflex=is_naflex,
-    )
+    if representation_mode not in {"DIRECT_NAFLEX", "HIERARCHICAL_NATIVE"}:
+        raise ValueError(f"unsupported representation_mode: {representation_mode}")
+    if representation_mode == "DIRECT_NAFLEX":
+        image = encode_real_images(
+            backbone,
+            processor,
+            pair_rows,
+            device,
+            dtype=dtype,
+            no_grad=no_grad,
+            max_num_patches=max_num_patches,
+            synchronized_transform=synchronized_transform,
+            synchronized_sequence_transform=synchronized_sequence_transform,
+            is_naflex=is_naflex,
+        )
+    else:
+        if max_num_patches is None:
+            raise ValueError("hierarchical mode requires max_num_patches")
+        overview_budget = (
+            max_num_patches
+            if hierarchical_overview_max_num_patches is None
+            else hierarchical_overview_max_num_patches
+        )
+        image = encode_large_scene_images(
+            backbone,
+            processor,
+            pair_rows,
+            device,
+            chunk_size=hierarchical_chunk_size,
+            max_num_patches=max_num_patches,
+            tile_batch_size=hierarchical_tile_batch_size,
+            overview_max_num_patches=overview_budget,
+            dtype=dtype,
+            no_grad=no_grad,
+        )
     text = encode_real_text(
         backbone,
         processor,
@@ -581,6 +748,7 @@ def encode_real_features(
         device,
         dtype=dtype,
         no_grad=no_grad,
+        max_text_length=max_text_length,
     )
     return RawFeatureBatch(
         frame_tokens=image.patch_tokens,
@@ -594,6 +762,8 @@ def encode_real_features(
         processed_patch_grid=image.processed_patch_grid,
         transform_hash=image.transform_hash,
         token_coordinates=image.token_coordinates,
+        processing_mode=image.processing_mode,
+        force_region_reduction=image.force_region_reduction,
     )
 
 

@@ -179,6 +179,92 @@ def metrics_by_query_group(
     }
 
 
+def within_source_metrics(
+    scores: Tensor,
+    relevance: Tensor,
+    query_rows: Sequence[dict[str, Any]],
+    pair_rows: Sequence[dict[str, Any]],
+    *,
+    field: str = "dataset_name",
+    ks: Iterable[int] = (1, 5, 10, 50, 100, 500),
+) -> dict[str, Any]:
+    """Evaluate each query against only the physical gallery of its source.
+
+    This is intentionally separate from ``metrics_by_query_group``: the
+    latter groups queries but leaves the global gallery intact.  Here both
+    query and pair indices are restricted to the same source, making source
+    discrimination measurable without silently treating a global score as a
+    within-source result.
+    """
+
+    if scores.shape != relevance.shape:
+        raise ValueError("scores and relevance must have equal shapes")
+    if scores.shape != (len(query_rows), len(pair_rows)):
+        raise ValueError("scores do not align with query and pair rows")
+    query_groups: dict[str, list[int]] = {}
+    pair_groups: dict[str, list[int]] = {}
+    for index, row in enumerate(query_rows):
+        query_groups.setdefault(str(row.get(field, "unknown")), []).append(index)
+    for index, row in enumerate(pair_rows):
+        pair_groups.setdefault(str(row.get(field, "unknown")), []).append(index)
+    sources = sorted(set(query_groups) | set(pair_groups))
+    source_results: dict[str, dict[str, Any]] = {}
+    weighted_values: list[tuple[int, float, float]] = []
+    for source in sources:
+        query_indices = query_groups.get(source, [])
+        pair_indices = pair_groups.get(source, [])
+        if not query_indices or not pair_indices:
+            source_results[source] = {
+                "status": "MISSING_QUERY_OR_GALLERY",
+                "query_count": len(query_indices),
+                "gallery_count": len(pair_indices),
+            }
+            continue
+        query_index_tensor = torch.tensor(
+            query_indices, dtype=torch.long, device=scores.device
+        )
+        pair_index_tensor = torch.tensor(
+            pair_indices, dtype=torch.long, device=scores.device
+        )
+        source_scores = scores.index_select(0, query_index_tensor).index_select(
+            1, pair_index_tensor
+        )
+        source_relevance = relevance.index_select(0, query_index_tensor).index_select(
+            1, pair_index_tensor
+        )
+        if torch.any(source_relevance.sum(dim=1) == 0):
+            raise ValueError(f"source-restricted gallery lost a positive: {source}")
+        metrics = full_gallery_metrics(source_scores, source_relevance, ks=ks)
+        source_results[source] = {
+            "status": "PASS",
+            "query_count": len(query_indices),
+            "gallery_count": len(pair_indices),
+            "metrics": metrics,
+        }
+        weighted_values.append(
+            (
+                len(query_indices),
+                metrics["mrr_full"],
+                metrics["candidate_hit_at_10"],
+            )
+        )
+    total_queries = sum(item[0] for item in weighted_values)
+    if total_queries == 0:
+        raise ValueError("within-source evaluation has no complete source")
+    overall = {
+        "aggregation": "query_weighted_mean_of_source_restricted_metrics",
+        "query_count": total_queries,
+        "gallery_count": len(pair_rows),
+        "mrr_full": sum(count * mrr for count, mrr, _ in weighted_values)
+        / total_queries,
+        "candidate_hit_at_10": sum(
+            count * hit for count, _, hit in weighted_values
+        )
+        / total_queries,
+    }
+    return {"overall": overall, "sources": source_results}
+
+
 def audit_ranking_integrity(
     scores: Tensor,
     query_rows: Sequence[dict[str, Any]],
@@ -217,6 +303,7 @@ __all__ = [
     "global_stage_scores",
     "merge_reranked_scores",
     "metrics_by_query_group",
+    "within_source_metrics",
     "ranking_records",
     "select_topk_candidates",
     "write_jsonl",

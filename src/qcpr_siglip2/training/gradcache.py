@@ -27,6 +27,8 @@ class CachedLogicalFeatures:
     processed_patch_grid: Tensor | None = None
     transform_hash: str | None = None
     token_coordinates: Tensor | None = None
+    processing_mode: str = "DIRECT_NAFLEX"
+    force_region_reduction: bool = False
 
 
 def module_gradient_report(
@@ -140,6 +142,8 @@ def cache_features(features: RawFeatureBatch) -> CachedLogicalFeatures:
             if features.token_coordinates is not None
             else None
         ),
+        processing_mode=features.processing_mode,
+        force_region_reduction=features.force_region_reduction,
     )
 
 
@@ -199,6 +203,11 @@ def _encode_logical_features_in_chunks(
     no_grad: bool,
     max_num_patches: int | None = None,
     is_naflex: bool | None = None,
+    representation_mode: str = "DIRECT_NAFLEX",
+    hierarchical_chunk_size: tuple[int, int] = (128, 128),
+    hierarchical_tile_batch_size: int = 4,
+    hierarchical_overview_max_num_patches: int | None = None,
+    max_text_length: int = 64,
 ) -> RawFeatureBatch:
     """Encode one logical batch through bounded physical microbatches.
 
@@ -225,10 +234,19 @@ def _encode_logical_features_in_chunks(
                 no_grad=no_grad,
                 max_num_patches=max_num_patches,
                 is_naflex=is_naflex,
+                representation_mode=representation_mode,
+                hierarchical_chunk_size=hierarchical_chunk_size,
+                hierarchical_tile_batch_size=hierarchical_tile_batch_size,
+                hierarchical_overview_max_num_patches=hierarchical_overview_max_num_patches,
+                max_text_length=max_text_length,
             )
         )
     if not chunks:
         raise ValueError("logical batch must contain at least one pair")
+    modes = {chunk.processing_mode for chunk in chunks}
+    reductions = {chunk.force_region_reduction for chunk in chunks}
+    if len(modes) != 1 or len(reductions) != 1:
+        raise ValueError("logical batch mixes representation modes")
     transform_hashes = [chunk.transform_hash for chunk in chunks]
     if all(value is None for value in transform_hashes):
         transform_hash = None
@@ -254,6 +272,8 @@ def _encode_logical_features_in_chunks(
         processed_patch_grid=_cat_optional_tensor(chunks, "processed_patch_grid"),
         transform_hash=transform_hash,
         token_coordinates=_cat_optional_tensor(chunks, "token_coordinates"),
+        processing_mode=chunks[0].processing_mode,
+        force_region_reduction=chunks[0].force_region_reduction,
     )
 
 
@@ -276,6 +296,11 @@ def logical_listwise_step(
     recompute_backbone: bool = False,
     max_num_patches: int | None = None,
     is_naflex: bool | None = None,
+    representation_mode: str = "DIRECT_NAFLEX",
+    hierarchical_chunk_size: tuple[int, int] = (128, 128),
+    hierarchical_tile_batch_size: int = 4,
+    hierarchical_overview_max_num_patches: int | None = None,
+    max_text_length: int = 64,
 ) -> dict[str, Any]:
     """Run one common logical score matrix and exact feature-gradient replay.
 
@@ -303,6 +328,11 @@ def logical_listwise_step(
         no_grad=True,
         max_num_patches=max_num_patches,
         is_naflex=is_naflex,
+        representation_mode=representation_mode,
+        hierarchical_chunk_size=hierarchical_chunk_size,
+        hierarchical_tile_batch_size=hierarchical_tile_batch_size,
+        hierarchical_overview_max_num_patches=hierarchical_overview_max_num_patches,
+        max_text_length=max_text_length,
     )
     cached = cache_features(frozen_features)
     model.train()
@@ -319,6 +349,7 @@ def logical_listwise_step(
             processed_patch_grid=cached.processed_patch_grid,
             transform_hash=cached.transform_hash,
             token_coordinates=cached.token_coordinates,
+            force_region_reduction=cached.force_region_reduction,
         )
         loss = symmetric_multi_positive_listwise_loss(
             output.score_matrix.float(), positive_mask, ignored_mask
@@ -351,6 +382,8 @@ def logical_listwise_step(
         processed_patch_grid=cached.processed_patch_grid,
         transform_hash=cached.transform_hash,
         token_coordinates=cached.token_coordinates,
+        processing_mode=cached.processing_mode,
+        force_region_reduction=cached.force_region_reduction,
     )
     if recompute_backbone:
         for start in range(0, len(pair_rows), physical_batch_size):
@@ -366,6 +399,11 @@ def logical_listwise_step(
                 no_grad=False,
                 max_num_patches=max_num_patches,
                 is_naflex=is_naflex,
+                representation_mode=representation_mode,
+                hierarchical_chunk_size=hierarchical_chunk_size,
+                hierarchical_tile_batch_size=hierarchical_tile_batch_size,
+                hierarchical_overview_max_num_patches=hierarchical_overview_max_num_patches,
+                max_text_length=max_text_length,
             )
             _feature_surrogate(
                 features,
@@ -403,6 +441,7 @@ def logical_listwise_step(
         "score_shape": list(output.score_matrix.shape),
         "gradient_norm_preclip": gradient_norm,
         "recomputed_backbone": recompute_backbone,
+        "representation_mode": representation_mode,
         "physical_microbatches": len(pair_rows) // physical_batch_size,
         "multi_positive_queries": int((positive_mask.sum(dim=1) > 1).sum()),
         "gradient_report": gradient_report,

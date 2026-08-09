@@ -7,12 +7,17 @@ from run_qcpr_siglip2_real_smoke import build_relevance
 
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.loader import make_exact_batches
-from qcpr_siglip2.data.runtime import RawFeatureBatch, build_relevance_masks
+from qcpr_siglip2.data.runtime import (
+    RawFeatureBatch,
+    build_relevance_masks,
+    text_preprocessing_audit,
+)
 from qcpr_siglip2.evaluation.common_gallery import (
     audit_ranking_integrity,
     global_stage_scores,
     merge_reranked_scores,
     ranking_records,
+    within_source_metrics,
 )
 from qcpr_siglip2.evaluation.evidence import (
     effective_token_count,
@@ -269,8 +274,10 @@ def test_deterministic_sampler_rotates_captions_without_pair_weight_drift():
 
 def test_exposure_ledger_records_total_and_per_step_schedule_hashes():
     ledger = ExposureLedger()
-    ledger.record_step(["p0", "p1"], ["q0", "q1"])
-    ledger.record_step(["p1", "p0"], ["q1", "q0"])
+    ledger.record_step(["p0", "p1"], ["q0", "q1"], "DIRECT_NAFLEX")
+    ledger.record_step(
+        ["p1", "p0"], ["q1", "q0"], "HIERARCHICAL_NATIVE"
+    )
     report = ledger.to_dict()
     assert report["steps"] == 2
     assert report["physical_pair_presentations"] == 4
@@ -283,6 +290,13 @@ def test_exposure_ledger_records_total_and_per_step_schedule_hashes():
         sequence_sha256(["q0", "q1"]),
         sequence_sha256(["q1", "q0"]),
     ]
+    assert report["representation_mode_sequence"] == [
+        "DIRECT_NAFLEX",
+        "HIERARCHICAL_NATIVE",
+    ]
+    assert report["hierarchical_step_count"] == 1
+    with pytest.raises(ValueError, match="unsupported representation mode"):
+        ledger.record_step(["p0"], ["q0"], "INVALID")
 
 
 def test_reranking_rejects_row_duplicate_candidates():
@@ -491,6 +505,64 @@ def test_text_evidence_mask_excludes_padding_and_special_tokens():
     )
     assert result["attention_mask"].tolist() == [[True, True, True, True, False]]
     assert result["content_mask"].tolist() == [[False, True, True, False, False]]
+
+
+def test_text_preprocessing_audit_is_fixed_and_does_not_mutate_source_text():
+    class Tokenizer:
+        pad_token_id = 0
+        all_special_ids: ClassVar[list[int]] = [0, 1, 2]
+        do_lower_case = False
+        model_max_length = 10**30
+
+        def __call__(self, texts, **kwargs):
+            del kwargs
+            if isinstance(texts, str):
+                texts = [texts]
+            # The first query exceeds the scientific 4-token audit limit.
+            return {"input_ids": [[1] * (6 if index == 0 else 3) for index, _ in enumerate(texts)]}
+
+    class Processor:
+        tokenizer = Tokenizer()
+
+    rows = [
+        {"caption_id": "q0", "caption": "A long unchanged source sentence"},
+        {"caption_id": "q1", "caption": "A short query"},
+    ]
+    original = [row["caption"] for row in rows]
+    audit = text_preprocessing_audit(
+        Processor(), rows, max_text_length=4
+    )
+    assert audit["lowercase_policy"] == "tokenizer_preserves_case"
+    assert audit["max_text_length"] == 4
+    assert audit["fraction_of_queries_truncated"] == 0.5
+    assert audit["max_observed_token_length"] == 6
+    assert audit["raw_token_length_percentiles"]["p50"] == 4.5
+    assert audit["text_source_mutated"] is False
+    assert [row["caption"] for row in rows] == original
+
+
+def test_within_source_metrics_restricts_each_query_to_its_own_gallery():
+    scores = torch.tensor(
+        [[0.9, 0.8, 0.1, 0.0], [0.0, 0.1, 0.8, 0.9]], dtype=torch.float32
+    )
+    relevance = torch.tensor(
+        [[False, True, False, False], [False, False, False, True]]
+    )
+    queries = [
+        {"caption_id": "q0", "dataset_name": "levir_mci"},
+        {"caption_id": "q1", "dataset_name": "second_cc"},
+    ]
+    pairs = [
+        {"canonical_pair_id": "p0", "dataset_name": "levir_mci"},
+        {"canonical_pair_id": "p1", "dataset_name": "levir_mci"},
+        {"canonical_pair_id": "p2", "dataset_name": "second_cc"},
+        {"canonical_pair_id": "p3", "dataset_name": "second_cc"},
+    ]
+    result = within_source_metrics(scores, relevance, queries, pairs)
+    assert result["overall"]["mrr_full"] == pytest.approx(0.75)
+    assert result["overall"]["candidate_hit_at_10"] == 1.0
+    assert result["sources"]["levir_mci"]["gallery_count"] == 2
+    assert result["sources"]["second_cc"]["gallery_count"] == 2
 
 
 def test_temporal_gradient_checkpointing_preserves_backward_contract():

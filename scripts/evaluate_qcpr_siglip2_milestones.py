@@ -57,6 +57,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rerank-query-batch-size", type=int, default=1)
     parser.add_argument("--max-num-patches", type=int, required=True)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument("--max-text-length", type=int, default=64)
+    parser.add_argument("--route-audit-pairs", type=int, default=64)
+    parser.add_argument("--route-audit-chunk-size", type=int, default=128)
     return parser.parse_args()
 
 
@@ -129,6 +132,12 @@ def run() -> int:
                 str(args.max_num_patches),
                 "--device",
                 args.device,
+                "--max-text-length",
+                str(args.max_text_length),
+                "--route-audit-pairs",
+                str(args.route_audit_pairs),
+                "--route-audit-chunk-size",
+                str(args.route_audit_chunk_size),
             ]
             subprocess.run(command, cwd=evaluator.parents[1], env=environment, check=True)
             required = [

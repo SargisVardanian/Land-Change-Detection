@@ -27,10 +27,13 @@ from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.loader import ExactBatch, make_exact_batches
 from qcpr_siglip2.data.manifest import load_exact_pair_rows, ordered_id_sha256
 from qcpr_siglip2.data.runtime import (
+    PINNED_SIGLIP2_MAX_TEXT_LENGTH,
     _device_autocast,
     build_relevance_masks,
     encode_real_features,
+    text_preprocessing_audit,
 )
+from qcpr_siglip2.data.resolution import use_partition_mode
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.exposure import ExposureLedger
 from qcpr_siglip2.training.gradcache import logical_listwise_step
@@ -131,6 +134,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-handoff", required=True)
     parser.add_argument("--tokenizer-gate", required=True)
     parser.add_argument("--multipositive-contract", required=True)
+    parser.add_argument(
+        "--max-text-length",
+        type=int,
+        default=PINNED_SIGLIP2_MAX_TEXT_LENGTH,
+    )
+    parser.add_argument("--hierarchical-fraction", type=float, default=0.25)
     parser.add_argument("--authorize-long-run", action="store_true")
     return parser.parse_args()
 
@@ -406,6 +415,12 @@ def main() -> int:
         raise RuntimeError("MULTIPOSITIVE_CONTRACT_NOT_READY")
     if args.max_num_patches not in (256, 576, 1024):
         raise ValueError("max_num_patches must be an audited NaFlex budget")
+    if args.max_text_length != PINNED_SIGLIP2_MAX_TEXT_LENGTH:
+        raise ValueError(
+            "the pinned SigLIP2 calibration policy requires max_text_length=64"
+        )
+    if not 0.0 <= args.hierarchical_fraction <= 1.0:
+        raise ValueError("hierarchical_fraction must be in [0, 1]")
     config_path = Path(args.config_path)
     if not config_path.is_file():
         raise FileNotFoundError(config_path)
@@ -430,6 +445,22 @@ def main() -> int:
         )
         processor = AutoProcessor.from_pretrained(
             args.siglip2_model, local_files_only=True
+        )
+        write_json(
+            run / "text_preprocessing_audit.json",
+            {
+                "policy": "pinned_siglip2_processor_v1",
+                "train": text_preprocessing_audit(
+                    processor,
+                    train_rows,
+                    max_text_length=args.max_text_length,
+                ),
+                "development": text_preprocessing_audit(
+                    processor,
+                    development_rows,
+                    max_text_length=args.max_text_length,
+                ),
+            },
         )
         config_payload = json.loads(config_path.read_text(encoding="utf-8"))
         if not isinstance(config_payload, dict):
@@ -533,6 +564,13 @@ def main() -> int:
                 "training_depth_unit": "presentations_per_unique_physical_pair",
                 "max_num_patches": args.max_num_patches,
                 "patch_budget_name": f"NAFLEX_{args.max_num_patches}_PATCH_BUDGET",
+                "max_text_length": args.max_text_length,
+                "hierarchical_fraction": args.hierarchical_fraction,
+                "representation_modes": [
+                    "DIRECT_NAFLEX",
+                    "HIERARCHICAL_NATIVE",
+                ],
+                "same_retrieval_objective_for_representation_modes": True,
                 "tokenizer_gate": str(tokenizer_gate_path),
                 "tokenizer_gate_sha256": sha256(tokenizer_gate_path),
                 "multipositive_contract": str(multipositive_path),
@@ -608,16 +646,27 @@ def main() -> int:
         if global_step in milestone_steps:
             save_current_milestone(global_step)
         for local_step in range(steps):
+            global_schedule_step = steps_start + local_step
             batch, epoch, batch_index = select_logical_batch(
                 train_rows,
                 logical_size=args.logical_physical_batch_size,
                 captions_per_pair=args.captions_per_pair,
-                step=local_step,
+                step=global_schedule_step,
                 seed=args.seed,
             )
             last_batch = batch
             positive, ignored, relevance = build_relevance_masks(
                 batch.query_rows, batch.pair_rows, device
+            )
+            representation_mode = (
+                "HIERARCHICAL_NATIVE"
+                if use_partition_mode(
+                    "logical_step",
+                    epoch=global_schedule_step,
+                    fraction=args.hierarchical_fraction,
+                    seed=args.seed,
+                )
+                else "DIRECT_NAFLEX"
             )
             step_metrics = logical_listwise_step(
                 model,
@@ -635,8 +684,14 @@ def main() -> int:
                 recompute_backbone=args.phase == "B",
                 max_num_patches=args.max_num_patches,
                 is_naflex=backbone.is_naflex,
+                representation_mode=representation_mode,
+                max_text_length=args.max_text_length,
             )
-            ledger.record_step(batch.pair_ids, batch.query_ids)
+            ledger.record_step(
+                batch.pair_ids,
+                batch.query_ids,
+                representation_mode=representation_mode,
+            )
             global_step += 1
             metric_rows.append(
                 {
@@ -644,6 +699,7 @@ def main() -> int:
                     "local_step": local_step + 1,
                     "epoch": epoch,
                     "batch_index": batch_index,
+                    "representation_mode": representation_mode,
                     **step_metrics,
                     **relevance,
                     "finite": True,

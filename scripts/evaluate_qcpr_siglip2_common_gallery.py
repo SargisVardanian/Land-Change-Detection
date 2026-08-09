@@ -27,7 +27,12 @@ from transformers import AutoProcessor
 from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
 from qcpr_siglip2.data.manifest import load_exact_core_rows, ordered_id_sha256
-from qcpr_siglip2.data.runtime import encode_real_images, encode_real_text
+from qcpr_siglip2.data.runtime import (
+    PINNED_SIGLIP2_MAX_TEXT_LENGTH,
+    encode_real_images,
+    encode_real_text,
+    text_preprocessing_audit,
+)
 from qcpr_siglip2.evaluation.common_gallery import (
     audit_ranking_integrity,
     canonical_pair_rows,
@@ -36,10 +41,12 @@ from qcpr_siglip2.evaluation.common_gallery import (
     merge_reranked_scores,
     metrics_by_query_group,
     ranking_records,
+    within_source_metrics,
     write_jsonl,
 )
 from qcpr_siglip2.evaluation.reranking import select_topk_candidates
 from qcpr_siglip2.evaluation.retrieval import full_gallery_metrics
+from qcpr_siglip2.evaluation.routes import route_audit
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 
 FORBIDDEN_MASK_KEYS = frozenset(
@@ -336,6 +343,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-num-patches", type=int, required=True)
     parser.add_argument("--rerank-k", type=int, action="append", default=None)
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument(
+        "--max-text-length",
+        type=int,
+        default=PINNED_SIGLIP2_MAX_TEXT_LENGTH,
+    )
+    parser.add_argument("--route-audit-pairs", type=int, default=64)
+    parser.add_argument("--route-audit-chunk-size", type=int, default=128)
     args = parser.parse_args()
     if args.rerank_k is None:
         args.rerank_k = [20, 50, 100]
@@ -384,6 +398,8 @@ def main() -> int:
         processor = AutoProcessor.from_pretrained(
             args.siglip2_model, local_files_only=True
         )
+        if args.max_text_length != PINNED_SIGLIP2_MAX_TEXT_LENGTH:
+            raise ValueError("pinned SigLIP2 evaluation requires max_text_length=64")
         backbone = Siglip2Backbone(
             args.siglip2_model, local_files_only=True, torch_dtype=torch.bfloat16
         )
@@ -396,6 +412,20 @@ def main() -> int:
         model.load_state_dict(checkpoint["model_state"], strict=True)
         model.eval()
         backbone.freeze_all()
+
+        preprocessing_audit = {
+            "policy": "pinned_siglip2_processor_v1",
+            "development_all_queries": text_preprocessing_audit(
+                processor,
+                core_rows,
+                max_text_length=args.max_text_length,
+            ),
+            "development_exact_queries": text_preprocessing_audit(
+                processor,
+                rows,
+                max_text_length=args.max_text_length,
+            ),
+        }
 
         started = time.perf_counter()
         gallery = encode_gallery_features(
@@ -426,6 +456,28 @@ def main() -> int:
         # meaningful and serialized tensors are portable across loaders.
         global_scores = raw_global_scores.masked_fill(ignored, -1.0e4)
         global_metrics = full_gallery_metrics(global_scores, positive)
+        within_source = within_source_metrics(
+            global_scores,
+            positive,
+            rows,
+            pair_rows,
+        )
+        route = route_audit(
+            model,
+            backbone,
+            processor,
+            rows,
+            pair_rows,
+            device,
+            pair_count=args.route_audit_pairs,
+            pair_batch_size=min(args.gallery_batch_size, 4),
+            query_batch_size=args.query_batch_size,
+            max_num_patches=args.max_num_patches,
+            hierarchical_chunk_size=(
+                args.route_audit_chunk_size,
+                args.route_audit_chunk_size,
+            ),
+        )
         rerank_outputs: dict[str, dict[str, Any]] = {}
         max_k = min(max(args.rerank_k), len(pair_rows))
         max_reranked_scores, evidence_maps = rerank_top_k(
@@ -485,6 +537,17 @@ def main() -> int:
                 "query_count": len(rows),
                 "gallery_count": len(pair_rows),
                 "global": global_metrics,
+                "global_mrr": global_metrics["mrr_full"],
+                "global_hit_at_10": global_metrics["candidate_hit_at_10"],
+                "within_source": within_source,
+                "within_source_mrr": within_source["overall"]["mrr_full"],
+                "within_source_hit_at_10": within_source["overall"][
+                    "candidate_hit_at_10"
+                ],
+                "levir_within_source": within_source["sources"].get("levir_mci"),
+                "second_within_source": within_source["sources"].get("second_cc"),
+                "route_audit": route,
+                "text_preprocessing_audit": preprocessing_audit,
                 "reranked": {
                     key: value["metrics"] for key, value in rerank_outputs.items()
                 },
@@ -498,6 +561,8 @@ def main() -> int:
                 },
             },
         )
+        write_json(run / "route_audit.json", route)
+        write_json(run / "text_preprocessing_audit.json", preprocessing_audit)
         write_json(run / "ranking_integrity.json", integrity)
         write_json(
             run / "model_contract.json",

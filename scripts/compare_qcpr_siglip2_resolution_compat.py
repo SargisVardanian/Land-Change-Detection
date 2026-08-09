@@ -622,32 +622,46 @@ def main() -> int:
                 "formula": "predicted_query_source_match + fixed_pair_hash_tiebreak",
                 "uses_pair_semantics": False,
                 "metrics": source_only,
+                "source_only_MRR": source_only["mrr_full"],
+                "full_model_MRR": full["mrr_full"],
+                "ratio_definition": "source_only_MRR / full_model_MRR",
+                "source_only_MRR_ratio": float(
+                    source_only["mrr_full"] / max(full["mrr_full"], 1e-12)
+                ),
             },
             "per_source_rank_distributions": source_rank_distributions,
             "source_restriction_mrr_gain": float(
                 within["mrr_full"] - full["mrr_full"]
             ),
-            "source_only_mrr_fraction_of_full": float(
+            "source_only_MRR": float(source_only["mrr_full"]),
+            "full_model_MRR": float(full["mrr_full"]),
+            "source_only_MRR_ratio": float(
                 source_only["mrr_full"] / max(full["mrr_full"], 1e-12)
             ),
+            "source_only_MRR_ratio_definition": "source_only_MRR / full_model_MRR",
         }
     naflex_source = source_audit["models"]["naflex_256"]
     relative_gain = float(
         naflex_source["source_restriction_mrr_gain"]
         / max(naflex_source["full_gallery"]["mrr_full"], 1e-12)
     )
-    source_only_fraction = float(naflex_source["source_only_mrr_fraction_of_full"])
+    source_only_ratio = float(naflex_source["source_only_MRR_ratio"])
     source_audit["source_separable"] = bool(
         naflex_source["pair_embedding_source_probe_accuracy"] >= 0.75
         or naflex_source["text_embedding_source_probe_accuracy"] >= 0.75
     )
     source_audit["source_restriction_relative_mrr_gain"] = relative_gain
-    source_audit["source_only_mrr_fraction_of_full"] = source_only_fraction
+    source_audit["source_only_MRR"] = naflex_source["source_only_MRR"]
+    source_audit["full_model_MRR"] = naflex_source["full_model_MRR"]
+    source_audit["source_only_MRR_ratio"] = source_only_ratio
+    source_audit["source_only_MRR_ratio_definition"] = (
+        "source_only_MRR / full_model_MRR"
+    )
     source_audit["retrieval_evidence"] = (
         "HIGH"
-        if relative_gain >= 1.0 or source_only_fraction >= 0.75
+        if relative_gain >= 1.0 or source_only_ratio >= 0.75
         else "MEDIUM"
-        if relative_gain >= 0.25 or source_only_fraction >= 0.25
+        if relative_gain >= 0.25 or source_only_ratio >= 0.25
         else "LOW"
     )
     source_audit["classification_rule"] = {
