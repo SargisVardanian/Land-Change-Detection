@@ -310,6 +310,7 @@ def encode_real_features(
         [list[Image.Image]], list[Image.Image]
     ]
     | None = None,
+    is_naflex: bool | None = None,
 ) -> RawFeatureBatch:
     image = encode_real_images(
         backbone,
@@ -321,6 +322,7 @@ def encode_real_features(
         max_num_patches=max_num_patches,
         synchronized_transform=synchronized_transform,
         synchronized_sequence_transform=synchronized_sequence_transform,
+        is_naflex=is_naflex,
     )
     text = encode_real_text(
         backbone,

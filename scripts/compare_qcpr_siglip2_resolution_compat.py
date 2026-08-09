@@ -175,6 +175,7 @@ def main() -> int:
                 dtype=torch.bfloat16,
                 no_grad=True,
                 max_num_patches=budget,
+                is_naflex=backbone.is_naflex,
             )
             forward = model.forward_from_features(
                 features.frame_tokens,
