@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import subprocess
@@ -31,6 +32,16 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
                     raise TypeError("registry rows must be JSON objects")
                 rows.append(value)
     return rows
+
+
+def _read_highres_manifest(path: Path) -> list[dict[str, Any]]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("HIGHRES_RUNTIME_STRESS_READY") is not True:
+        raise ValueError("high-resolution runtime manifest is not authorized")
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise ValueError("high-resolution runtime manifest has no items")
+    return items
 
 
 def _git_state() -> dict[str, Any]:
@@ -69,11 +80,26 @@ def _effective_rank(embeddings: torch.Tensor) -> float:
     return float((-(mass * mass.clamp_min(1e-12).log()).sum()).exp())
 
 
+def _tensor_sha256(tensor: torch.Tensor) -> str:
+    value = tensor.detach().contiguous().cpu()
+    return hashlib.sha256(value.numpy().tobytes()).hexdigest()
+
+
+def _adapter_state(model: Siglip2TemporalRetrievalModel) -> dict[str, torch.Tensor]:
+    return {
+        key: value.detach().cpu()
+        for key, value in model.state_dict().items()
+        if not key.startswith("backbone.")
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--siglip2-model", required=True)
     parser.add_argument("--data-release", required=True)
-    parser.add_argument("--physical-registry", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--physical-registry")
+    source.add_argument("--highres-stress-manifest")
     parser.add_argument("--config-path", required=True)
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--output-dir", required=True)
@@ -92,14 +118,23 @@ def main() -> int:
     if state != {"head": args.expected_code_sha, "worktree_clean": True}:
         raise RuntimeError("runtime code state does not match expected clean SHA")
     release = Path(args.data_release)
-    registry = Path(args.physical_registry)
+    registry = Path(args.physical_registry) if args.physical_registry else None
+    stress_manifest = (
+        Path(args.highres_stress_manifest) if args.highres_stress_manifest else None
+    )
     checkpoint = Path(args.checkpoint)
     config = _load_config(Path(args.config_path))
+    if registry is not None:
+        source_rows = _read_jsonl(registry)
+    else:
+        if stress_manifest is None:
+            raise RuntimeError("high-resolution source was not resolved")
+        source_rows = _read_highres_manifest(stress_manifest)
     candidates = [
         row
-        for row in _read_jsonl(registry)
+        for row in source_rows
         if row.get("source") == args.source
-        and row.get("item_type") == "pair"
+        and row.get("item_type", "pair") == "pair"
         and len(row.get("frames", [])) == 2
     ]
     selected = sorted(candidates, key=lambda row: str(row["item_id"]))[
@@ -114,11 +149,12 @@ def main() -> int:
         paths: list[str] = []
         dimensions: list[list[int]] = []
         for frame in row["frames"]:
-            path = Path(str(frame["native_path"]))
-            if file_sha256(path) != str(frame["native_sha256"]):
+            path = Path(str(frame.get("native_path", frame.get("path"))))
+            expected_sha = str(frame.get("native_sha256", frame.get("sha256")))
+            if file_sha256(path) != expected_sha:
                 raise RuntimeError("native frame hash mismatch")
-            height = int(frame["native_height_px"])
-            width = int(frame["native_width_px"])
+            height = int(frame.get("native_height_px", frame.get("height")))
+            width = int(frame.get("native_width_px", frame.get("width")))
             if min(height, width) < largest_side_required:
                 raise RuntimeError("native image would require upsampling for target budget")
             paths.append(str(path))
@@ -175,6 +211,51 @@ def main() -> int:
     if budget_results[str(largest)]["valid_patch_count_min"] < largest:
         raise RuntimeError("largest native budget did not produce the requested valid tokens")
     baseline = min(args.budgets)
+    with torch.no_grad():
+        repeat_image = encode_real_images(
+            backbone, processor, pair_rows, device, max_num_patches=largest
+        )
+        repeat_temporal = model.temporal_adapter(
+            repeat_image.patch_tokens,
+            repeat_image.pooled_embedding,
+            patch_valid_mask=repeat_image.patch_valid_mask,
+            spatial_shapes=repeat_image.spatial_shapes,
+            native_image_size=repeat_image.native_image_size,
+            processed_patch_grid=repeat_image.processed_patch_grid,
+            transform_hash=repeat_image.transform_hash,
+        )
+        repeated = repeat_temporal.pair_cls.float().cpu()
+    largest_repeat_difference = float(
+        (embeddings_by_budget[largest] - repeated).abs().max()
+    )
+    if largest_repeat_difference > 1e-6:
+        raise RuntimeError("query-independent pair vector is not deterministic")
+    del repeat_image, repeat_temporal, repeated
+
+    roundtrip_path = output / "highres_adapter_roundtrip.pt"
+    torch.save({"model_state": _adapter_state(model)}, roundtrip_path)
+    fresh_model = Siglip2TemporalRetrievalModel(backbone, config).to(device).eval()
+    roundtrip_sha = _restore_adapter(fresh_model, roundtrip_path)
+    with torch.no_grad():
+        reload_image = encode_real_images(
+            backbone, processor, pair_rows, device, max_num_patches=largest
+        )
+        reload_temporal = fresh_model.temporal_adapter(
+            reload_image.patch_tokens,
+            reload_image.pooled_embedding,
+            patch_valid_mask=reload_image.patch_valid_mask,
+            spatial_shapes=reload_image.spatial_shapes,
+            native_image_size=reload_image.native_image_size,
+            processed_patch_grid=reload_image.processed_patch_grid,
+            transform_hash=reload_image.transform_hash,
+        )
+        reloaded = reload_temporal.pair_cls.float().cpu()
+    checkpoint_max_difference = float(
+        (embeddings_by_budget[largest] - reloaded).abs().max()
+    )
+    if checkpoint_max_difference > 1e-6:
+        raise RuntimeError("high-resolution adapter checkpoint roundtrip mismatch")
+    del reload_image, reload_temporal, reloaded, fresh_model
     cross_budget_cosine = {
         str(budget): float(
             torch.nn.functional.cosine_similarity(
@@ -192,8 +273,14 @@ def main() -> int:
         "code": state,
         "release": str(release),
         "release_sha256sums_sha256": file_sha256(release / "SHA256SUMS"),
-        "physical_registry": str(registry),
-        "physical_registry_sha256": file_sha256(registry),
+        "physical_registry": str(registry) if registry is not None else None,
+        "physical_registry_sha256": file_sha256(registry) if registry else None,
+        "highres_stress_manifest": (
+            str(stress_manifest) if stress_manifest is not None else None
+        ),
+        "highres_stress_manifest_sha256": (
+            file_sha256(stress_manifest) if stress_manifest is not None else None
+        ),
         "checkpoint_sha256": checkpoint_sha,
         "source": args.source,
         "pair_count": len(selected),
@@ -205,6 +292,18 @@ def main() -> int:
         "mask_access": False,
         "budgets": budget_results,
         "cross_budget_cosine_vs_smallest": cross_budget_cosine,
+        "one_vector_determinism": {
+            "status": "PASS",
+            "largest_budget": largest,
+            "embedding_sha256": _tensor_sha256(embeddings_by_budget[largest]),
+            "max_absolute_difference": largest_repeat_difference,
+        },
+        "checkpoint_roundtrip": {
+            "status": "PASS",
+            "checkpoint": str(roundtrip_path),
+            "checkpoint_sha256": roundtrip_sha,
+            "max_absolute_difference": checkpoint_max_difference,
+        },
     }
     report = output / "native_highres_stress.json"
     report.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")

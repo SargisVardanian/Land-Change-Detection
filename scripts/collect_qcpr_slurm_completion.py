@@ -20,10 +20,10 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _job_record(job_id: str) -> dict[str, str]:
+def _job_record(job_id: str, sacct_bin: str = "/opt/slurm/bin/sacct") -> dict[str, str]:
     output = subprocess.check_output(
         [
-            "sacct",
+            sacct_bin,
             "-X",
             "-j",
             job_id,
@@ -67,6 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--job-id", required=True)
     parser.add_argument("--run-root", required=True)
     parser.add_argument("--expected-code-sha", required=True)
+    parser.add_argument("--sacct-bin", default="/opt/slurm/bin/sacct")
     return parser.parse_args()
 
 
@@ -75,7 +76,10 @@ def main() -> int:
     run_root = Path(args.run_root)
     if not run_root.is_dir():
         raise FileNotFoundError(run_root)
-    record = _job_record(args.job_id)
+    sacct_bin = Path(args.sacct_bin)
+    if not sacct_bin.is_file():
+        raise FileNotFoundError(sacct_bin)
+    record = _job_record(args.job_id, str(sacct_bin))
     payload = {
         "schema_version": "qcpr-slurm-completion-v1",
         "collected_at": datetime.now(UTC).isoformat(),
