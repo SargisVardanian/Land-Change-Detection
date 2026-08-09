@@ -1,21 +1,45 @@
 {
   "AUTHORIZE_TEMPORALSIGLIP_CORE_TRAINING": true,
-  "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": false,
+  "AUTHORIZE_TEMPORALSIGLIP_DOMAIN_EXPANDED_ABLATION": true,
   "BITEMPORAL_EXACT_READY": true,
+  "CORE_PLUS_FOREST_HUMAN_TRAIN": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/core_plus_forest_human_train.jsonl",
+    "sha256": "8366014e8748c439492ba3aa40c0d1820a6db977d525dc467e0a9d048ee5a33b"
+  },
   "DIRECTION_EVAL_READY": false,
   "DIRECTION_TRAIN_READY": false,
   "DUBAI_EXTERNAL_READY": false,
+  "DUBAI_TRAIN_READY": false,
   "EXACT_PAPER_CALIBRATION_READY": false,
   "EXACT_TRAINING_READY": true,
+  "FOREST_FROZEN_DOMAIN_SHIFT_EVAL": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/forest_human_domain_shift_eval.jsonl",
+    "sha256": "02d579ae9543452735f50554e45d1677f399ddf9ca267a41ecd37000a10654d3"
+  },
   "FOREST_HUMAN_CAPTION_IDENTIFIED": true,
+  "FOREST_HUMAN_TRAIN": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/forest_human_train.jsonl",
+    "sha256": "537e32d174c94c7eaa57b59bec72ba9a08a2c2e77de485f4e6c0b2dd2d0b7d1a"
+  },
   "FOREST_HUMAN_TRAIN_READY": true,
+  "FOREST_LICENSE_STATUS": "PARTIAL",
+  "FOREST_PROVENANCE_LICENSE_AUDIT": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/forest_human_provenance_license_audit.json",
+    "sha256": "510d41f714960f95e3c508940f5a89086c367d276053f88ab2c4dc22ab85c5c5"
+  },
+  "FOREST_SAMPLER_PROPOSAL": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/core_plus_forest_human_sampler_proposal.json",
+    "sha256": "8edea006922ee09037c0f12e19fe30b4a9c76f1f5e608f139bf1afe55523cd65"
+  },
   "FOREST_TRAIN_READY": false,
+  "FOREST_USE_SCOPE": "RESEARCH_ONLY_UNTIL_CLARIFIED",
   "GSD_metadata_coverage": {
     "fraction": 0.0,
     "known_frame_count": 0,
     "total_frame_count": 66742
   },
   "HIGHRES_EVAL_READY": false,
+  "HIGHRES_PHYSICAL_READY": true,
   "HIGHRES_RUNTIME_STRESS_READY": true,
   "HIGHRES_TRAIN_READY": false,
   "LOCALIZED_EVAL_READY": false,
@@ -36,6 +60,10 @@
   "RSCC_VERIFIED_SUBSET_READY": false,
   "SEMANTIC_EVAL_READY": false,
   "SEMANTIC_TRAIN_READY": false,
+  "SOURCE_SHORTCUT_CONTROL_METADATA": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/core_plus_forest_source_control_metadata.json",
+    "sha256": "362027f4b31f570b51114576ce20e0f57df83e9c1bf5c627e19d58d7bdb3dff2"
+  },
   "STABLE_EVAL_READY": false,
   "UNRESOLVED_HIGH_RISK_DUPLICATES": 0,
   "VERIFIED_CROSS_SPLIT_LEAKAGE_COUNT": 0,
@@ -174,18 +202,19 @@
   "data_only_same_frozen_model": true,
   "data_only_training_run": false,
   "dataset_branch": "codex/qcpr-dataset-v2-final",
-  "dataset_cluster_branch_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
-  "dataset_code_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
+  "dataset_cluster_branch_sha": "4aa3528c74854d021e07f1bfafd065524f60c6fe",
+  "dataset_code_sha": "4aa3528c74854d021e07f1bfafd065524f60c6fe",
   "dataset_difficulty_report_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g/dataset_difficulty_report.json",
   "dataset_difficulty_report_sha": "4a9bfae9c09d4bab0a7c8e09c1cef505569363e48eaf5e2147669d31257e266d",
-  "dataset_remote_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
+  "dataset_remote_sha": "4aa3528c74854d021e07f1bfafd065524f60c6fe",
   "dataset_remote_verification": "VERIFIED",
-  "dataset_source_head_sha": "efe706849b078de31bb9acb45a8e50a33eeaecde",
+  "dataset_source_head_sha": "4aa3528c74854d021e07f1bfafd065524f60c6fe",
   "dev_manifest_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g/exact_core_development.jsonl",
   "dev_manifest_sha": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
   "development_manifest_sha256": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
   "direction_query_count": 26036,
   "disabled_generic_no_change_row_count": 48870,
+  "domain_expanded_ablation_authorization_scope": "later matched research-only data ablation; never primary core replacement",
   "dubai_external_blocker": "Archive and 500 physical pairs/2500 captions are local, but no dataset license or explicit evaluation-use terms are present in the archive/README.",
   "dubai_external_status": {
     "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/dubai_external_status.json",
@@ -204,6 +233,10 @@
     "fraction": 0.0,
     "known_frame_count": 0,
     "total_frame_count": 66742
+  },
+  "forest_extension_status": {
+    "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_forest_extension_20260809_v1/forest_human_extension_status.json",
+    "sha256": "82398194be5ce9f91210350e25b6cd7dcc3ebb6edc657bf0afb0d6e3035ca48d"
   },
   "forest_human_only_candidate": {
     "path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_dataset_coordination_followup_20260809_v2/forest_human_only_domain_expansion_candidate.jsonl",
@@ -389,6 +422,7 @@
     "query_attributes": "f3fdb9a66a4ba25664cf07a12be1afcb1ee9605ddd7db7b3f08c47e0fd947867",
     "relevance_graph": "c91aa18d1607de13476b36aa6aae1917da55b83cbf2b93fa4bd7e61afaee5bd0"
   },
+  "release_content_sha256": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
   "release_name": "qcpr_bitemporal_v2_train_20260808_final_r19g",
   "release_path": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g",
   "release_sha": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
