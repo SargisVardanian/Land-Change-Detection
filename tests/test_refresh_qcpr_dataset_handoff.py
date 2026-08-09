@@ -79,6 +79,7 @@ def test_refresh_merges_bounded_coordination_status(tmp_path: Path) -> None:
         json.dumps(
             {
                 "release": "qcpr_bitemporal_v2_train_20260808_final_r19g",
+                "release_content_sha256": "c" * 64,
                 "immutable_release_mutated": False,
                 "MULTIPOSITIVE_SMOKE_READY": True,
                 "multipositive_artifact": artifact,
@@ -120,6 +121,7 @@ def test_refresh_merges_bounded_coordination_status(tmp_path: Path) -> None:
     )
     handoff = json.loads((shared / "dataset_final_to_model.json").read_text())
     assert handoff["MULTIPOSITIVE_SMOKE_READY"] is True
+    assert handoff["release_content_sha256"] == "c" * 64
     assert handoff["HIGHRES_RUNTIME_STRESS_READY"] is True
     assert handoff["dubai_external_blocker"] == "license absent"
     assert handoff["compatibility_authority"] == "model_requirements_sha256"

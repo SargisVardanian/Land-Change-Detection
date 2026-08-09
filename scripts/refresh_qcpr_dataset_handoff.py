@@ -62,6 +62,7 @@ def main() -> int:
     coordination_fields: dict[str, Any] = {}
     if coordination:
         coordination_fields = {
+            "release_content_sha256": coordination["release_content_sha256"],
             "MULTIPOSITIVE_SMOKE_READY": coordination["MULTIPOSITIVE_SMOKE_READY"],
             "multipositive_compatibility_artifact": coordination["multipositive_artifact"],
             "HIGHRES_RUNTIME_STRESS_READY": coordination["HIGHRES_RUNTIME_STRESS_READY"],
