@@ -152,10 +152,10 @@ def test_symmetric_loss_treats_all_same_pair_captions_as_pair_to_text_positives(
     positives = torch.tensor([[True, False], [True, False], [False, True]])
     loss = symmetric_multi_positive_listwise_loss(scores, positives)
     assert loss.ndim == 0 and torch.isfinite(loss)
-    invalid = positives.clone()
-    invalid[:, 1] = False
+    invalid_scores = torch.cat([scores, torch.zeros(3, 1)], dim=1)
+    invalid = torch.cat([positives, torch.zeros(3, 1, dtype=torch.bool)], dim=1)
     with pytest.raises(ValueError, match="at least one positive text"):
-        symmetric_multi_positive_listwise_loss(scores, invalid)
+        symmetric_multi_positive_listwise_loss(invalid_scores, invalid)
 
 
 def test_rank_diagnostics_are_explicit():
