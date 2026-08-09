@@ -76,7 +76,15 @@ def _restore_adapter(model: Siglip2TemporalRetrievalModel, checkpoint: Path) -> 
         raise TypeError("checkpoint does not contain model_state")
     adapter = {key: value for key, value in state.items() if not key.startswith("backbone.")}
     missing, unexpected = model.load_state_dict(adapter, strict=False)
-    if unexpected or any(not key.startswith("backbone.") for key in missing):
+    safe_zero_initialized_migrations = {
+        "temporal_adapter.region_geometry_projection.weight"
+    }
+    invalid_missing = {
+        key
+        for key in missing
+        if not key.startswith("backbone.") and key not in safe_zero_initialized_migrations
+    }
+    if unexpected or invalid_missing:
         raise RuntimeError("adapter checkpoint mismatch")
     return file_sha256(checkpoint)
 
