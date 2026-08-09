@@ -8,6 +8,8 @@
 - The validator now rejects `--output` paths inside the release directory, preventing
   accidental mutation of immutable releases.
 - Added a regression test for immutable-output rejection.
+- Consolidated duplicate canonical SHA256 implementations; contracts and manifests now
+  reuse `identities.hashing.sha256_file`.
 - Added canonical Dataset Card, Data Dictionary, source-provenance, difficulty and
   limitations reports.
 - Classified historical builders as LEGACY_REQUIRED rather than deleting lineage.
@@ -39,4 +41,3 @@ safe to remove after validation and are not scientific changes.
   but that is not justified in a no-scientific-change final pass.
 
 Decision: cleanup is PARTIAL but safe. No new immutable release is required.
-
