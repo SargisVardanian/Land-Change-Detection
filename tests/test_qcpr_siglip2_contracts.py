@@ -352,6 +352,8 @@ def test_gradient_report_captures_nested_siglip2_top_blocks():
         parameter.requires_grad = False
     for parameter in model.evidence_bottleneck.parameters():
         parameter.requires_grad = False
+    for parameter in model.relevance_model.parameters():
+        parameter.requires_grad = False
     model.log_temperature.requires_grad = False
     for parameter in model.backbone.parameters():
         parameter.requires_grad = True
