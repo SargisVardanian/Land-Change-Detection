@@ -590,6 +590,7 @@ def test_logical_gradcache_step_uses_one_common_score_matrix(monkeypatch):
     assert result["gradient_norm_preclip"] > 0.0
     assert result["gradient_report"]["temporal_adapter"]["parameters_with_grad"] > 0
     assert result["gradient_report"]["evidence_bottleneck"]["parameters_with_grad"] > 0
+    assert result["gradient_report"]["relevance_model"]["parameters_with_grad"] > 0
     assert result["gradient_report"]["siglip2_vision_backbone"]["trainable_count"] == 0
     assert calls == [(1, 2), (1, 2)]
 

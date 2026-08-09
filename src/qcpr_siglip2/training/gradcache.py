@@ -30,6 +30,7 @@ def module_gradient_report(
     buckets: dict[str, list[tuple[str, torch.nn.Parameter]]] = {
         "temporal_adapter": [],
         "evidence_bottleneck": [],
+        "relevance_model": [],
         "retrieval_temperature": [],
         "siglip2_vision_backbone": [],
         "siglip2_text_backbone": [],
@@ -39,6 +40,8 @@ def module_gradient_report(
             bucket = "temporal_adapter"
         elif name.startswith("evidence_bottleneck."):
             bucket = "evidence_bottleneck"
+        elif name.startswith("relevance_model."):
+            bucket = "relevance_model"
         elif name == "log_temperature":
             bucket = "retrieval_temperature"
         elif name.startswith(("backbone.vision_model.", "backbone.model.vision_model.")):
