@@ -11,6 +11,11 @@ set -eu
 : "${SIGLIP2_MODEL:?SIGLIP2_MODEL is required}"
 
 PYTHON_BIN="${QCPR_PYTHON:-/mnt/weka/svardanyan/rs_change_project/envs/rschange/bin/python}"
+ACCOUNT="${ACCOUNT:-research}"
+QOS="${QOS:-researcher}"
+PARTITION="${PARTITION:-research}"
+CPUS_PER_TASK="${CPUS_PER_TASK:-8}"
+MEMORY="${MEMORY:-96G}"
 MAX_PAIRS_PER_SOURCE="${MAX_PAIRS_PER_SOURCE:-32}"
 BUDGETS="${BUDGETS:-256 576 1024}"
 SEED="${SEED:-20260809}"
@@ -22,8 +27,12 @@ export MAX_PAIRS_PER_SOURCE BUDGETS SEED
 
 JOB_ID="$(sbatch --parsable \
   --job-name=qcpr-src-audit \
-  --partition="${PARTITION:-gpu}" \
+  --account="$ACCOUNT" \
+  --partition="$PARTITION" \
+  --qos="$QOS" \
   --gres="${GRES:-gpu:h100:1}" \
+  --cpus-per-task="$CPUS_PER_TASK" \
+  --mem="$MEMORY" \
   --time="${TIME_LIMIT:-00:20:00}" \
   --output="$RUN_ROOT/slurm-%j.out" \
   --error="$RUN_ROOT/slurm-%j.err" \

@@ -172,6 +172,7 @@ def main() -> int:
     result: dict[str, Any] = {
         "status": "PASS",
         "evaluation_only": True,
+        "source_shortcut_threshold": 0.75,
         "code": state,
         "expected_code_sha": args.expected_code_sha,
         "release": str(release),
@@ -234,6 +235,13 @@ def main() -> int:
         }
         del image, temporal, embeddings
         torch.cuda.empty_cache()
+    result["source_shortcut_detected"] = any(
+        float(value["source_probe"]["mean_accuracy"])
+        >= float(result["source_shortcut_threshold"])
+        for value in result["budgets"].values()
+    )
+    if result["source_shortcut_detected"]:
+        result["status"] = "SOURCE_SHORTCUT_DETECTED"
     (output / "source_shortcut_audit.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
