@@ -54,6 +54,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
         change_tokens: Tensor,
         evidence_gate: Tensor,
         evidence_vector: Tensor,
+        token_evidence_score: Tensor | None = None,
     ) -> Tensor:
         """Compute the canonical scalar score for an arbitrary evidence vector."""
 
@@ -69,7 +70,17 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             pair_cls.unsqueeze(0) + evidence_gate * evidence_vector, dim=-1
         )
         pair_score = torch.einsum("qd,qpd->qp", text_embedding, query_pair)
-        evidence_score = pair_score - global_score
+        vector_evidence_score = pair_score - global_score
+        if token_evidence_score is None:
+            evidence_score = vector_evidence_score
+        else:
+            if token_evidence_score.shape != global_score.shape:
+                raise ValueError("token evidence score must match [queries, pairs]")
+            # Keep both causal routes in the one scalar relevance score.  The
+            # token score is normalized log-mean-exp similarity from the same
+            # evidence weights; the vector score preserves gradients through
+            # the weighted visual representation.
+            evidence_score = 0.5 * vector_evidence_score + 0.5 * token_evidence_score
         change_normalized = F.normalize(change_tokens, dim=-1)
         slot_score = torch.logsumexp(
             torch.einsum("qd,pkd->qpk", text_embedding, change_normalized),
@@ -151,6 +162,7 @@ class Siglip2TemporalRetrievalModel(nn.Module):
             temporal.change_tokens,
             evidence.evidence_gate,
             evidence.evidence_vector,
+            evidence.evidence_score,
         )
         return RetrievalForwardOutput(
             score,

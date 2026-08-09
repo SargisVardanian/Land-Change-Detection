@@ -117,12 +117,17 @@ def _score_from_weights(
     query_vector = vector.view(1, 1, -1).expand(
         output.text_embedding.shape[0], 1, -1
     )
+    token_evidence_score = output.evidence.evidence_score.clone()
+    token_evidence_score[query_index, pair_index] = (
+        weights * output.evidence.evidence_logits[query_index, pair_index]
+    ).sum()
     score = model.unified_score_from_evidence(
         output.text_embedding,
         output.pair_cls,
         output.temporal.change_tokens,
         output.evidence.evidence_gate,
         query_vector,
+        token_evidence_score=token_evidence_score,
     )
     return score[query_index, pair_index]
 

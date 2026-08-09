@@ -16,6 +16,7 @@ class EvidenceOutput:
     evidence_weights: Tensor
     evidence_map: Tensor
     evidence_vector: Tensor
+    evidence_score: Tensor
     evidence_gate: Tensor
     evidence_map_valid_mask: Tensor
     processed_evidence_map: Tensor | None = None
@@ -97,7 +98,8 @@ class EvidenceBottleneck(nn.Module):
                 similarity = similarity.masked_fill(
                     ~query_mask[:, None, :, None], floor
                 )
-                block_logits = torch.logsumexp(similarity, dim=2)
+                valid_token_count = query_mask.sum(dim=1).to(similarity.dtype)
+                block_logits = torch.logsumexp(similarity, dim=2) - valid_token_count.log()[:, None, None]
                 block_logits = block_logits.masked_fill(
                     ~flat_visual_valid[pair_start:pair_end][None, :, :], floor
                 )
@@ -118,6 +120,7 @@ class EvidenceBottleneck(nn.Module):
         logits = torch.cat(logits_rows, dim=0)
         weights = torch.cat(weight_rows, dim=0)
         vector = torch.cat(vector_rows, dim=0)
+        evidence_score = (weights * logits).sum(dim=-1)
 
         processed_max_height = int(visual_shapes[..., 0].max().item())
         processed_max_width = int(visual_shapes[..., 1].max().item())
@@ -232,6 +235,7 @@ class EvidenceBottleneck(nn.Module):
             evidence_weights=weights,
             evidence_map=mapped,
             evidence_vector=vector,
+            evidence_score=evidence_score,
             evidence_gate=self.evidence_gate,
             evidence_map_valid_mask=map_valid,
             processed_evidence_map=processed_mapped,
