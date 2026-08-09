@@ -422,6 +422,7 @@ def main() -> int:
                 batch.pair_rows,
                 device,
                 max_num_patches=args.max_num_patches,
+                is_naflex=backbone.is_naflex,
             )
             timing["image_decode_seconds"] += time.perf_counter() - image_start
             text_start = time.perf_counter()

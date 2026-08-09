@@ -242,6 +242,22 @@ def test_fixed_resolution_processor_does_not_use_naflex_metadata(tmp_path):
     assert "spatial_shapes" not in result
 
 
+def test_explicit_fixed_backbone_mode_overrides_ambiguous_processor_metadata(tmp_path):
+    for name in ("t1.png", "t2.png"):
+        Image.new("RGB", (64, 64), color=(10, 20, 30)).save(tmp_path / name)
+    rows = [{"t1_path": str(tmp_path / "t1.png"), "t2_path": str(tmp_path / "t2.png")}]
+
+    class AmbiguousProcessor(_FakeNaflexProcessor):
+        pass
+
+    result = processor_image_inputs(
+        AmbiguousProcessor(), rows, torch.device("cpu"), is_naflex=False
+    )
+    assert result["pixel_values"].shape == (1, 2, 256, 3)
+    assert "pixel_attention_mask" not in result
+    assert "spatial_shapes" not in result
+
+
 def test_processor_rejects_mismatched_t1_t2_grid(tmp_path):
     for name in ("t1.png", "t2.png"):
         Image.new("RGB", (64, 64), color=(10, 20, 30)).save(tmp_path / name)

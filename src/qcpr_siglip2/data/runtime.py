@@ -59,6 +59,7 @@ def processor_inputs(
         [list[Image.Image]], list[Image.Image]
     ]
     | None = None,
+    is_naflex: bool | None = None,
 ) -> tuple[dict[str, Any], dict[str, Tensor]]:
     """Decode each T1/T2 exactly once and tokenize the paired queries."""
 
@@ -69,6 +70,7 @@ def processor_inputs(
         max_num_patches=max_num_patches,
         synchronized_transform=synchronized_transform,
         synchronized_sequence_transform=synchronized_sequence_transform,
+        is_naflex=is_naflex,
     )
     text_inputs = processor_text_inputs(processor, query_rows, device)
     return image_inputs, text_inputs
@@ -86,6 +88,7 @@ def processor_image_inputs(
         [list[Image.Image]], list[Image.Image]
     ]
     | None = None,
+    is_naflex: bool | None = None,
 ) -> dict[str, Any]:
     """Decode T1/T2 images and return the processor's tensor inputs."""
 
@@ -135,9 +138,12 @@ def processor_image_inputs(
 
     image_processor = getattr(processor, "image_processor", processor)
     processor_name = type(image_processor).__name__.lower()
-    is_naflex = "siglip2" in processor_name or hasattr(
-        image_processor, "max_num_patches"
-    )
+    if is_naflex is None:
+        is_naflex = "siglip2" in processor_name or hasattr(
+            image_processor, "max_num_patches"
+        )
+    elif not isinstance(is_naflex, bool):
+        raise TypeError("is_naflex must be a boolean when supplied")
     if is_naflex and max_num_patches is None:
         raise ValueError(
             "explicit max_num_patches is required for NaFlex; refusing the processor default"
@@ -251,7 +257,10 @@ def encode_real_images(
         [list[Image.Image]], list[Image.Image]
     ]
     | None = None,
+    is_naflex: bool | None = None,
 ) -> ImageEncoding:
+    if is_naflex is None:
+        is_naflex = getattr(backbone, "is_naflex", None)
     image_inputs = processor_image_inputs(
         processor,
         pair_rows,
@@ -259,6 +268,7 @@ def encode_real_images(
         max_num_patches=max_num_patches,
         synchronized_transform=synchronized_transform,
         synchronized_sequence_transform=synchronized_sequence_transform,
+        is_naflex=is_naflex,
     )
     context = torch.no_grad() if no_grad else nullcontext()
     with context, _device_autocast(device, dtype):
