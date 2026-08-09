@@ -8,9 +8,9 @@ import torch
 from PIL import Image
 
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
+from qcpr_siglip2.data.manifest import load_exact_pair_rows
 from qcpr_siglip2.data.naflex import validate_patch_budget_sequence
 from qcpr_siglip2.data.runtime import processor_image_inputs
-from qcpr_siglip2.data.manifest import load_exact_pair_rows
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.models.temporal import TemporalTransformerAdapter
 
@@ -203,6 +203,21 @@ class _MismatchedGridProcessor(_FakeNaflexProcessor):
         }
 
 
+class _FakeFixResProcessor:
+    class _ImageProcessor:
+        pass
+
+    image_processor = _ImageProcessor()
+
+    def __call__(self, *, images, return_tensors):
+        return {
+            "pixel_values": torch.zeros(len(images), 3, 256, 256),
+            # These fields are intentionally not native NaFlex metadata.
+            "pixel_attention_mask": torch.ones(len(images), 256, dtype=torch.bool),
+            "spatial_shapes": torch.tensor([[16, 16]] * len(images)),
+        }
+
+
 def test_naflex_processor_refuses_implicit_256_and_accepts_explicit_budget(tmp_path):
     for name in ("t1.png", "t2.png"):
         Image.new("RGB", (64, 64), color=(10, 20, 30)).save(tmp_path / name)
@@ -215,6 +230,16 @@ def test_naflex_processor_refuses_implicit_256_and_accepts_explicit_budget(tmp_p
     )
     assert processor.seen_budget == 256
     assert result["pixel_values"].shape == (1, 2, 256, 3)
+
+
+def test_fixed_resolution_processor_does_not_use_naflex_metadata(tmp_path):
+    for name in ("t1.png", "t2.png"):
+        Image.new("RGB", (64, 64), color=(10, 20, 30)).save(tmp_path / name)
+    rows = [{"t1_path": str(tmp_path / "t1.png"), "t2_path": str(tmp_path / "t2.png")}]
+    result = processor_image_inputs(_FakeFixResProcessor(), rows, torch.device("cpu"))
+    assert result["pixel_values"].shape == (1, 2, 3, 256, 256)
+    assert "pixel_attention_mask" not in result
+    assert "spatial_shapes" not in result
 
 
 def test_processor_rejects_mismatched_t1_t2_grid(tmp_path):

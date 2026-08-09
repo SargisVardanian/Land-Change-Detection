@@ -150,6 +150,14 @@ def processor_image_inputs(
         )
     else:
         image_inputs = processor(images=images, return_tensors="pt")
+    if not is_naflex:
+        # Fixed-resolution SigLIP processors may expose fields with names used
+        # by NaFlex, but their masks are pixel/image metadata rather than
+        # native patch-valid masks.  Passing them into the variable-token
+        # contract produces a false grid-count mismatch.  Fixed models use
+        # their native square grid derived by the backbone instead.
+        image_inputs.pop("pixel_attention_mask", None)
+        image_inputs.pop("spatial_shapes", None)
     pixel_values = image_inputs["pixel_values"]
     if frame_count is None:
         raise ValueError("at least one temporal item is required")
