@@ -361,20 +361,30 @@ def logical_listwise_step(
         "text_tokens": cached.text_tokens.grad,
         "text_embeddings": cached.text_embeddings.grad,
     }
-    missing = [name for name, value in cached_grads.items() if value is None]
-    if missing:
+    active_endpoint_names = [name for name, value in cached_grads.items() if value is not None]
+    if not active_endpoint_names:
         raise RuntimeError(
-            "FEATURE_ENDPOINT_NO_GRADIENT:" + ",".join(sorted(missing))
+            "FEATURE_ENDPOINT_NO_GRADIENT:all_feature_endpoints"
         )
+    # The frozen model may intentionally select only the global PAIR path
+    # (``final_v1_primary``), in which case text_tokens and/or auxiliary
+    # visual endpoints are not part of the active objective.  Preserve the
+    # exact active-path gradients and replay zero for inactive endpoints;
+    # requiring every endpoint to receive a gradient would reject the
+    # configured one-vector retrieval objective.
+    replay_gradients = {
+        name: (
+            value.detach().clone()
+            if value is not None
+            else torch.zeros_like(getattr(cached, name))
+        )
+        for name, value in cached_grads.items()
+    }
     feature_grads = CachedLogicalFeatures(
-        frame_tokens=cast(Tensor, cached_grads["frame_tokens"]).detach().clone(),
-        frame_embeddings=cast(
-            Tensor, cached_grads["frame_embeddings"]
-        ).detach().clone(),
-        text_tokens=cast(Tensor, cached_grads["text_tokens"]).detach().clone(),
-        text_embeddings=cast(
-            Tensor, cached_grads["text_embeddings"]
-        ).detach().clone(),
+        frame_tokens=replay_gradients["frame_tokens"],
+        frame_embeddings=replay_gradients["frame_embeddings"],
+        text_tokens=replay_gradients["text_tokens"],
+        text_embeddings=replay_gradients["text_embeddings"],
         text_mask=cached.text_mask,
         patch_valid_mask=cached.patch_valid_mask,
         spatial_shapes=cached.spatial_shapes,
@@ -442,6 +452,7 @@ def logical_listwise_step(
         "gradient_norm_preclip": gradient_norm,
         "recomputed_backbone": recompute_backbone,
         "representation_mode": representation_mode,
+        "active_feature_gradient_endpoints": active_endpoint_names,
         "physical_microbatches": len(pair_rows) // physical_batch_size,
         "multi_positive_queries": int((positive_mask.sum(dim=1) > 1).sum()),
         "gradient_report": gradient_report,
