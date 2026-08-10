@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "backbone_provenance_gate": "PASS",
+  "model_class": "Siglip2Model",
+  "repository": "google/siglip2-base-patch16-naflex",
+  "revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+  "vision_class": "Siglip2VisionModel",
+  "text_class": "Siglip2TextModel",
+  "processor_class": "Siglip2Processor",
+  "image_processor_class": "Siglip2ImageProcessor",
+  "tokenizer_class": "GemmaTokenizer",
+  "weights_sha256": "ac5f28bbdf92c0c1696ccbd3ce716426049cd67ad8045b66d0d938b0f9c8bbec",
+  "final_v1_primary": "normalized_text_embedding_dot_normalized_pair_embedding_scaled_by_log_temperature",
+  "legacy_encoder_contribution": false,
+  "forbidden_legacy_names_in_active_training_path": ["UniSat", "Jina", "UniverSat"],
+  "verification_basis": [
+    "actual local checkpoint load on the canonical cluster Python",
+    "active Phase-A driver records the same runtime classes",
+    "active FINAL_V1_PRIMARY path contains no legacy encoder"
+  ],
+  "note": "Historical references may remain only in explicitly labelled legacy code or reports."
+}

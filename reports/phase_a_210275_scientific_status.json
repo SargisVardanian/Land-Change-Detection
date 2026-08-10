@@ -1,0 +1,18 @@
+{
+  "job_id": 210275,
+  "steps_completed": 456,
+  "steps_requested": 456,
+  "runtime_integrity": "PASS",
+  "checkpoint_roundtrip": "PASS",
+  "nan_or_oom": false,
+  "checkpoint_sha256": "8268d5d82ba576527952e459e3a2e394731b088b8f969ef535a2b471c16a9a28",
+  "scientific_status": "ENGINEERING_VALID_SCIENTIFICALLY_INVALID_FOR_BUDGET_SELECTION",
+  "singleton_caption_weighting_gate": "FAIL",
+  "old_logical_query_count": 256,
+  "old_sampling_contract": "fixed_two_slots_with_singleton_reuse",
+  "checkpoint_may_initialize_corrected_phase_a": false,
+  "checkpoint_may_initialize_phase_b": false,
+  "replacement_required": "fresh_pinned_siglip2_pretrained_initialization",
+  "historical_failed_jobs": [210272, 210274],
+  "historical_failed_jobs_interpretation": "engineering_failures_only"
+}
