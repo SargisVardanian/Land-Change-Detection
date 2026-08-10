@@ -11,7 +11,7 @@ from torch import Tensor
 
 from ..data.runtime import RawFeatureBatch, _device_autocast, encode_real_features
 from ..models.model import Siglip2TemporalRetrievalModel
-from .objective import symmetric_multi_positive_listwise_loss
+from .objective import pair_balanced_symmetric_multi_positive_listwise_loss
 
 
 @dataclass(frozen=True)
@@ -158,15 +158,61 @@ def _cat_optional_tensor(
     return torch.cat(cast(list[Tensor], values), dim=0)
 
 
+def _query_offsets(
+    query_pair_indices: Tensor | list[int] | tuple[int, ...] | None,
+    *,
+    pair_count: int,
+    captions_per_pair: int | None = None,
+    device: torch.device | None = None,
+) -> tuple[Tensor, Tensor]:
+    """Validate local query ownership and return indices plus chunk offsets."""
+
+    if query_pair_indices is None:
+        if captions_per_pair is None or captions_per_pair <= 0:
+            raise ValueError(
+                "variable-Q batches require query_pair_indices; legacy batches "
+                "must provide a positive captions_per_pair"
+            )
+        indices = torch.arange(pair_count, device=device, dtype=torch.long).repeat_interleave(
+            captions_per_pair
+        )
+    else:
+        indices = torch.as_tensor(query_pair_indices, device=device, dtype=torch.long)
+    if indices.ndim != 1 or indices.numel() == 0:
+        raise ValueError("query_pair_indices must be a non-empty one-dimensional sequence")
+    if torch.any(indices < 0) or torch.any(indices >= pair_count):
+        raise ValueError("query_pair_indices contains an invalid pair index")
+    expected = torch.arange(pair_count, device=indices.device, dtype=torch.long)
+    counts = torch.bincount(indices, minlength=pair_count)
+    if not torch.equal(torch.nonzero(counts, as_tuple=False).flatten(), expected):
+        raise ValueError("every physical pair must own at least one query")
+    offsets = torch.cat(
+        [
+            torch.zeros(1, device=indices.device, dtype=torch.long),
+            counts.cumsum(0),
+        ]
+    )
+    if int(offsets[-1]) != int(indices.numel()):
+        raise ValueError("query offsets do not cover all query rows")
+    if indices.tolist() != sorted(indices.tolist()):
+        raise ValueError("query rows must be grouped by physical pair for GradCache")
+    return indices, offsets
+
+
 def _feature_surrogate(
     features: RawFeatureBatch,
     feature_grads: CachedLogicalFeatures,
     pair_start: int,
     pair_end: int,
-    captions_per_pair: int,
+    query_start: int,
+    query_end: int | None = None,
 ) -> Tensor:
-    query_start = pair_start * captions_per_pair
-    query_end = pair_end * captions_per_pair
+    # Backward-compatible helper form used by the legacy unit tests.  The
+    # active variable-Q path always passes explicit query_start/query_end.
+    if query_end is None:
+        captions_per_pair = query_start
+        query_start = pair_start * captions_per_pair
+        query_end = pair_end * captions_per_pair
     expected_pairs = pair_end - pair_start
     expected_queries = query_end - query_start
     if features.frame_tokens.shape[0] != expected_pairs:
@@ -198,7 +244,8 @@ def _encode_logical_features_in_chunks(
     *,
     device: torch.device,
     physical_batch_size: int,
-    captions_per_pair: int,
+    query_offsets: Tensor | list[int] | tuple[int, ...] | None = None,
+    captions_per_pair: int | None = None,
     dtype: torch.dtype,
     no_grad: bool,
     max_num_patches: int | None = None,
@@ -218,11 +265,25 @@ def _encode_logical_features_in_chunks(
 
     if len(pair_rows) % physical_batch_size:
         raise ValueError("logical pair count must divide physical microbatch size")
+    if query_offsets is None:
+        _, offsets = _query_offsets(
+            None,
+            pair_count=len(pair_rows),
+            captions_per_pair=captions_per_pair,
+        )
+    else:
+        offsets = torch.as_tensor(query_offsets, dtype=torch.long)
+    if offsets.ndim != 1 or offsets.numel() != len(pair_rows) + 1:
+        raise ValueError("query_offsets must have pair_count + 1 entries")
+    if int(offsets[0]) != 0 or int(offsets[-1]) != len(query_rows):
+        raise ValueError("query_offsets do not cover query rows")
+    if torch.any(offsets[1:] <= offsets[:-1]):
+        raise ValueError("every pair must have at least one unique query")
     chunks: list[RawFeatureBatch] = []
     for start in range(0, len(pair_rows), physical_batch_size):
         end = start + physical_batch_size
-        query_start = start * captions_per_pair
-        query_end = end * captions_per_pair
+        query_start = int(offsets[start])
+        query_end = int(offsets[end])
         chunks.append(
             encode_real_features(
                 backbone,
@@ -289,7 +350,8 @@ def logical_listwise_step(
     *,
     device: torch.device,
     physical_batch_size: int,
-    captions_per_pair: int,
+    query_pair_indices: Tensor | list[int] | tuple[int, ...] | None = None,
+    captions_per_pair: int | None = None,
     scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
     dtype: torch.dtype = torch.bfloat16,
     gradient_clip_norm: float = 1.0,
@@ -312,8 +374,14 @@ def logical_listwise_step(
 
     if len(pair_rows) % physical_batch_size:
         raise ValueError("logical pair count must divide physical microbatch size")
-    if len(query_rows) != len(pair_rows) * captions_per_pair:
-        raise ValueError("query rows do not match pair/caption contract")
+    query_indices, query_offsets = _query_offsets(
+        query_pair_indices,
+        pair_count=len(pair_rows),
+        captions_per_pair=captions_per_pair,
+        device=device,
+    )
+    if len(query_rows) != int(query_indices.numel()):
+        raise ValueError("query rows do not match variable-Q query ownership")
     optimizer.zero_grad(set_to_none=True)
     model.eval()
     frozen_features = _encode_logical_features_in_chunks(
@@ -323,7 +391,7 @@ def logical_listwise_step(
         query_rows,
         device=device,
         physical_batch_size=physical_batch_size,
-        captions_per_pair=captions_per_pair,
+        query_offsets=query_offsets,
         dtype=dtype,
         no_grad=True,
         max_num_patches=max_num_patches,
@@ -351,8 +419,13 @@ def logical_listwise_step(
             token_coordinates=cached.token_coordinates,
             force_region_reduction=cached.force_region_reduction,
         )
-        loss = symmetric_multi_positive_listwise_loss(
-            output.score_matrix.float(), positive_mask, ignored_mask
+        loss, text_to_pair_loss, pair_to_text_loss = (
+            pair_balanced_symmetric_multi_positive_listwise_loss(
+                output.score_matrix.float(),
+                positive_mask,
+                ignored_mask,
+                query_indices,
+            )
         )
     loss.backward()
     cached_grads = {
@@ -398,12 +471,14 @@ def logical_listwise_step(
     if recompute_backbone:
         for start in range(0, len(pair_rows), physical_batch_size):
             end = start + physical_batch_size
+            query_start = int(query_offsets[start])
+            query_end = int(query_offsets[end])
             model.eval()
             features = encode_real_features(
                 backbone,
                 processor,
                 pair_rows[start:end],
-                query_rows[start * captions_per_pair : end * captions_per_pair],
+                query_rows[query_start:query_end],
                 device,
                 dtype=dtype,
                 no_grad=False,
@@ -420,7 +495,8 @@ def logical_listwise_step(
                 feature_grads,
                 start,
                 end,
-                captions_per_pair,
+                query_start,
+                query_end,
             ).backward()
         model.train()
     gradient_report = module_gradient_report(model)
@@ -448,12 +524,15 @@ def logical_listwise_step(
         scheduler.step()
     return {
         "loss": float(loss.detach().cpu()),
+        "text_to_pair_loss": float(text_to_pair_loss.detach().cpu()),
+        "pair_to_text_loss": float(pair_to_text_loss.detach().cpu()),
         "score_shape": list(output.score_matrix.shape),
         "gradient_norm_preclip": gradient_norm,
         "recomputed_backbone": recompute_backbone,
         "representation_mode": representation_mode,
         "active_feature_gradient_endpoints": active_endpoint_names,
         "physical_microbatches": len(pair_rows) // physical_batch_size,
+        "query_count": len(query_rows),
         "multi_positive_queries": int((positive_mask.sum(dim=1) > 1).sum()),
         "gradient_report": gradient_report,
         "embedding_diagnostics": {

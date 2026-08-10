@@ -46,6 +46,8 @@ class ExposureLedger:
             "query_presentations": len(self.query_sequence),
             "physical_pairs_unique": len(set(self.pair_sequence)),
             "query_unique": len(set(self.query_sequence)),
+            "sampled_unique_pair_ids": sorted(set(self.pair_sequence)),
+            "sampled_unique_query_ids": sorted(set(self.query_sequence)),
             "pair_sequence_sha256": sequence_sha256(self.pair_sequence),
             "query_sequence_sha256": sequence_sha256(self.query_sequence),
             "per_step_pair_sequence_sha256": self.per_step_pair_sequence_sha256,

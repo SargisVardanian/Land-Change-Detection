@@ -16,7 +16,6 @@ import resource
 import subprocess
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +24,7 @@ from transformers import AutoProcessor
 
 from qcpr_siglip2.backbones.siglip2 import Siglip2Backbone
 from qcpr_siglip2.config.schema import Siglip2TemporalConfig
-from qcpr_siglip2.data.loader import ExactBatch, make_exact_batches
+from qcpr_siglip2.data.loader import ExactBatch, make_unique_exact_batches
 from qcpr_siglip2.data.manifest import load_exact_pair_rows, ordered_id_sha256
 from qcpr_siglip2.data.runtime import (
     PINNED_SIGLIP2_MAX_TEXT_LENGTH,
@@ -36,7 +35,7 @@ from qcpr_siglip2.data.runtime import (
 )
 from qcpr_siglip2.data.resolution import use_partition_mode
 from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
-from qcpr_siglip2.training.exposure import ExposureLedger
+from qcpr_siglip2.training.exposure import ExposureLedger, sequence_sha256
 from qcpr_siglip2.training.gradcache import logical_listwise_step
 from qcpr_siglip2.training.milestones import (
     milestone_checkpoint_path,
@@ -128,7 +127,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--physical-batch-size", type=int, default=32)
     parser.add_argument("--logical-physical-batch-size", type=int, default=128)
-    parser.add_argument("--captions-per-pair", type=int, default=2)
+    parser.add_argument(
+        "--max-unique-captions-per-pair", type=int, default=2
+    )
     parser.add_argument("--seed", type=int, default=20260805)
     parser.add_argument("--initial-checkpoint")
     parser.add_argument("--max-num-patches", type=int, required=True)
@@ -174,16 +175,16 @@ def select_logical_batch(
     rows: list[dict[str, Any]],
     *,
     logical_size: int,
-    captions_per_pair: int,
+    max_unique_captions_per_pair: int,
     step: int,
     seed: int,
 ) -> tuple[ExactBatch, int, int]:
     """Rotate captions by epoch while keeping pair exposure deterministic."""
 
-    probe = make_exact_batches(
+    probe = make_unique_exact_batches(
         rows,
         physical_batch_size=logical_size,
-        captions_per_pair=captions_per_pair,
+        max_unique_captions_per_pair=max_unique_captions_per_pair,
         epoch=0,
         seed=seed,
     )
@@ -192,10 +193,10 @@ def select_logical_batch(
     batches_per_epoch = len(probe)
     epoch = step // batches_per_epoch
     batch_index = step % batches_per_epoch
-    batches = make_exact_batches(
+    batches = make_unique_exact_batches(
         rows,
         physical_batch_size=logical_size,
-        captions_per_pair=captions_per_pair,
+        max_unique_captions_per_pair=max_unique_captions_per_pair,
         epoch=epoch,
         seed=seed,
     )
@@ -372,8 +373,8 @@ def main() -> int:
         raise ValueError("Phase B requires --initial-checkpoint from valid Phase A")
     if args.logical_physical_batch_size % args.physical_batch_size:
         raise ValueError("logical batch must divide into physical microbatches")
-    if args.captions_per_pair <= 0:
-        raise ValueError("captions_per_pair must be positive")
+    if args.max_unique_captions_per_pair <= 0:
+        raise ValueError("max_unique_captions_per_pair must be positive")
     worktree = Path(__file__).resolve().parents[1]
     state = git_state(worktree)
     if state["head"] != args.expected_code_sha or not state["worktree_clean"]:
@@ -440,6 +441,15 @@ def main() -> int:
         unique_pair_count = len(
             {str(row["canonical_pair_id"]) for row in train_rows}
         )
+        manifest_query_ids = [str(row["caption_id"]) for row in train_rows]
+        manifest_query_counts: dict[str, int] = {}
+        for query_id in manifest_query_ids:
+            manifest_query_counts[query_id] = manifest_query_counts.get(query_id, 0) + 1
+        duplicate_manifest_query_ids = sorted(
+            query_id for query_id, count in manifest_query_counts.items() if count > 1
+        )
+        if duplicate_manifest_query_ids:
+            raise RuntimeError("QUERY_ID_MANIFEST_DUPLICATE")
         steps = resolve_steps(args, unique_pairs=unique_pair_count)
         development_rows = load_exact_pair_rows(
             args.development_manifest, split="development"
@@ -480,10 +490,11 @@ def main() -> int:
         model = Siglip2TemporalRetrievalModel(
             backbone, model_config
         ).to(device)
-        caption_counts = Counter(str(row["canonical_pair_id"]) for row in train_rows)
-        caption_reuse_pairs = sum(
-            count < args.captions_per_pair for count in caption_counts.values()
-        )
+        caption_counts: dict[str, int] = {}
+        for row in train_rows:
+            pair_id = str(row["canonical_pair_id"])
+            caption_counts[pair_id] = caption_counts.get(pair_id, 0) + 1
+        singleton_pairs = sum(count == 1 for count in caption_counts.values())
         initial_payload = None
         if args.phase == "B":
             assert model.backbone is not None
@@ -530,6 +541,20 @@ def main() -> int:
                 "local_path": args.siglip2_model,
                 "weights_sha256": sha256(Path(args.siglip2_model) / "model.safetensors"),
                 "runtime_class": backbone.runtime_class,
+                "vision_class": type(backbone.vision_model).__name__,
+                "vision_config_class": type(backbone.vision_model.config).__name__,
+                "text_class": type(backbone.text_model).__name__,
+                "text_config_class": type(backbone.text_model.config).__name__,
+                "processor_class": type(processor).__name__,
+                "image_processor_class": type(processor.image_processor).__name__,
+                "tokenizer_class": type(processor.tokenizer).__name__,
+                "parameter_name_prefixes": [
+                    "backbone.vision_model.",
+                    "backbone.text_model.",
+                    "temporal_adapter.",
+                    "log_temperature",
+                ],
+                "legacy_encoder_contribution": False,
                 "local_files_only": True,
             },
         )
@@ -552,14 +577,14 @@ def main() -> int:
                 "global_step_end": steps_start + steps,
                 "physical_batch_size": args.physical_batch_size,
                 "logical_physical_batch_size": args.logical_physical_batch_size,
-                "logical_query_count": args.logical_physical_batch_size
-                * args.captions_per_pair,
-                "captions_per_pair": args.captions_per_pair,
+                "logical_query_count": "variable",
+                "max_unique_captions_per_pair": args.max_unique_captions_per_pair,
+                "variable_query_sampling": True,
                 "caption_sampling": {
-                    "policy": "deterministic_cycle_with_replacement_for_verified_rows",
-                    "requested_captions_per_pair": args.captions_per_pair,
-                    "pairs_with_fewer_than_requested": caption_reuse_pairs,
-                    "caption_reuse_is_not_a_generated_caption": True,
+                    "policy": "deterministic_unique_rotation_without_replacement",
+                    "max_unique_captions_per_pair": args.max_unique_captions_per_pair,
+                    "singleton_pairs": singleton_pairs,
+                    "singleton_caption_reuse": False,
                 },
                 "seed": args.seed,
                 "config_path": str(config_path),
@@ -618,13 +643,12 @@ def main() -> int:
             {
                 "physical_microbatch": args.physical_batch_size,
                 "logical_physical_batch": args.logical_physical_batch_size,
-                "captions_per_pair": args.captions_per_pair,
-                "logical_query_count": args.logical_physical_batch_size
-                * args.captions_per_pair,
-                "logical_score_matrix": [
-                    args.logical_physical_batch_size * args.captions_per_pair,
-                    args.logical_physical_batch_size,
-                ],
+                "logical_query_count": "variable",
+                "max_unique_captions_per_pair": args.max_unique_captions_per_pair,
+                "logical_score_matrix": ["Q", args.logical_physical_batch_size],
+                "query_ids_unique_within_logical_batch": True,
+                "text_to_pair_reduction": "mean_query_loss_within_pair_then_mean_pairs",
+                "pair_to_text_reduction": "multi_positive_unique_queries_then_mean_pairs",
                 "feature_recompute_microbatches": args.logical_physical_batch_size
                 // args.physical_batch_size,
                 "gradient_accumulation": 1,
@@ -633,6 +657,7 @@ def main() -> int:
         )
         ledger = ExposureLedger()
         metric_rows: list[dict[str, Any]] = []
+        sampling_schedule_rows: list[dict[str, Any]] = []
         milestone_records: dict[str, dict[str, Any]] = {}
 
         def save_current_milestone(step: int) -> None:
@@ -661,7 +686,7 @@ def main() -> int:
             batch, epoch, batch_index = select_logical_batch(
                 train_rows,
                 logical_size=args.logical_physical_batch_size,
-                captions_per_pair=args.captions_per_pair,
+                max_unique_captions_per_pair=args.max_unique_captions_per_pair,
                 step=global_schedule_step,
                 seed=args.seed,
             )
@@ -690,7 +715,7 @@ def main() -> int:
                 optimizer,
                 device=device,
                 physical_batch_size=args.physical_batch_size,
-                captions_per_pair=args.captions_per_pair,
+                query_pair_indices=batch.query_pair_indices,
                 scheduler=scheduler,
                 recompute_backbone=args.phase == "B",
                 max_num_patches=args.max_num_patches,
@@ -702,6 +727,20 @@ def main() -> int:
                 batch.pair_ids,
                 batch.query_ids,
                 representation_mode=representation_mode,
+            )
+            sampling_schedule_rows.append(
+                {
+                    "global_step": global_step + 1,
+                    "pair_ids": list(batch.pair_ids),
+                    "query_ids": list(batch.query_ids),
+                    "query_pair_indices": list(batch.query_pair_indices),
+                    "captions_sampled_per_pair": [
+                        batch.query_pair_indices.count(pair_index)
+                        for pair_index in range(len(batch.pair_ids))
+                    ],
+                    "pair_sequence_sha256": sequence_sha256(batch.pair_ids),
+                    "query_sequence_sha256": sequence_sha256(batch.query_ids),
+                }
             )
             global_step += 1
             metric_rows.append(
@@ -725,6 +764,28 @@ def main() -> int:
         final_step = global_step
         if final_step != steps_start + steps:
             raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
+        if last_batch is None or len(last_batch.query_ids) != len(
+            set(last_batch.query_ids)
+        ):
+            raise RuntimeError("QUERY_ID_DUPLICATE_IN_LOGICAL_BATCH")
+        batch_contract = json.loads((run / "batch_contract.json").read_text())
+        batch_contract.update(
+            {
+                "last_batch_pair_count": len(last_batch.pair_rows),
+                "last_batch_query_count": len(last_batch.query_rows),
+                "last_batch_score_matrix": [
+                    len(last_batch.query_rows),
+                    len(last_batch.pair_rows),
+                ],
+                "last_batch_pair_sequence_sha256": sequence_sha256(
+                    last_batch.pair_ids
+                ),
+                "last_batch_query_sequence_sha256": sequence_sha256(
+                    last_batch.query_ids
+                ),
+            }
+        )
+        write_json(run / "batch_contract.json", batch_contract)
         checkpoint_state = checkpoint_payload(
             model,
             optimizer,
@@ -753,7 +814,40 @@ def main() -> int:
                 "full_rankings_required": True,
             },
         )
-        write_json(run / "exposure_accounting.json", ledger.to_dict())
+        schedule_path = run / "sampling_schedule.jsonl"
+        schedule_path.write_text(
+            "".join(
+                json.dumps(row, sort_keys=True) + "\n"
+                for row in sampling_schedule_rows
+            ),
+            encoding="utf-8",
+        )
+        exposure = ledger.to_dict()
+        exposure["sampling_schedule_sha256"] = sha256(schedule_path)
+        exposure["variable_query_count"] = True
+        write_json(run / "exposure_accounting.json", exposure)
+        sampled_query_ids = set(str(value) for value in ledger.query_sequence)
+        write_json(
+            run / "query_coverage_audit.json",
+            {
+                "manifest_row_count": len(manifest_query_ids),
+                "manifest_unique_query_id_count": len(manifest_query_counts),
+                "manifest_duplicate_query_ids": duplicate_manifest_query_ids,
+                "manifest_query_id_gate": "PASS"
+                if not duplicate_manifest_query_ids
+                else "DATASET_INTEGRITY_FAILURE",
+                "sampled_unique_query_ids": sorted(sampled_query_ids),
+                "sampled_unique_query_id_count": len(sampled_query_ids),
+                "never_sampled_query_ids": sorted(
+                    set(manifest_query_counts) - sampled_query_ids
+                ),
+                "interpretation": (
+                    "sampler coverage; manifest query IDs are unique"
+                    if not duplicate_manifest_query_ids
+                    else "dataset integrity failure"
+                ),
+            },
+        )
         if last_batch is None:
             raise RuntimeError("FIXED_STEP_CONTRACT_NOT_SATISFIED")
         roundtrip = checkpoint_roundtrip(

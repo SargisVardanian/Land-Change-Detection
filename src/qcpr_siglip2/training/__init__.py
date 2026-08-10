@@ -5,7 +5,12 @@ from .gradcache import (
     logical_listwise_step,
     module_gradient_report,
 )
-from .objective import listwise_loss_diagnostics, multi_positive_listwise_loss
+from .objective import (
+    listwise_loss_diagnostics,
+    multi_positive_listwise_loss,
+    pair_balanced_symmetric_multi_positive_listwise_loss,
+    pair_balanced_text_to_pair_loss,
+)
 from .optimizer import build_adamw
 from .trainer import FeatureBatch, StepResult, checkpoint_state, train_feature_step
 
@@ -21,6 +26,8 @@ __all__ = [
     "logical_listwise_step",
     "module_gradient_report",
     "multi_positive_listwise_loss",
+    "pair_balanced_symmetric_multi_positive_listwise_loss",
+    "pair_balanced_text_to_pair_loss",
     "sequence_sha256",
     "train_feature_step",
 ]

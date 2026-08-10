@@ -7,7 +7,13 @@ from .chunking import (
     build_synchronized_chunk_plan,
     chunk_patch_coordinates,
 )
-from .loader import ExactBatch, make_exact_batches, select_epoch_rows
+from .loader import (
+    ExactBatch,
+    make_exact_batches,
+    make_unique_exact_batches,
+    select_epoch_rows,
+    select_unique_epoch_rows,
+)
 from .manifest import (
     ALLOWED_DATASETS,
     group_rows_by_pair,
@@ -62,6 +68,7 @@ __all__ = [
     "load_exact_core_rows",
     "load_exact_pair_rows",
     "make_exact_batches",
+    "make_unique_exact_batches",
     "ordered_id_sha256",
     "paired_caption_rows",
     "patch_mask_from_spatial_shapes",
@@ -69,6 +76,7 @@ __all__ = [
     "processor_text_inputs",
     "read_jsonl",
     "select_epoch_rows",
+    "select_unique_epoch_rows",
     "synchronized_transform_hash",
     "validate_patch_budget_sequence",
 ]
