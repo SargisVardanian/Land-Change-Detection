@@ -38,6 +38,30 @@ def required_milestones(
     )
 
 
+def covered_milestones(
+    milestones: tuple[int, ...], *, start_step: int, end_step: int
+) -> tuple[int, ...]:
+    """Return milestones covered by a bounded phase.
+
+    A shorter controlled budget is valid only when it ends exactly on a
+    declared exposure milestone. This permits the canonical B20 stop at
+    step 1140 while still rejecting arbitrary partial phases.
+    """
+
+    if start_step < 0 or end_step < start_step:
+        raise ValueError("phase step bounds are invalid")
+    covered = tuple(
+        milestone
+        for milestone in milestones
+        if start_step <= milestone <= end_step
+    )
+    if not covered or covered[-1] != end_step:
+        raise ValueError(
+            "phase end must coincide with a declared exposure milestone"
+        )
+    return covered
+
+
 def milestone_checkpoint_path(run_root: Path, step: int) -> Path:
     """Return the canonical path for a milestone checkpoint."""
 

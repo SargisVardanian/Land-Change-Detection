@@ -38,6 +38,7 @@ from qcpr_siglip2.models.model import Siglip2TemporalRetrievalModel
 from qcpr_siglip2.training.exposure import ExposureLedger, sequence_sha256
 from qcpr_siglip2.training.gradcache import logical_listwise_step
 from qcpr_siglip2.training.milestones import (
+    covered_milestones,
     milestone_checkpoint_path,
     milestone_evaluation_path,
     required_milestones,
@@ -525,14 +526,20 @@ def main() -> int:
         optimizer, optimizer_report, scheduler = build_adamw(
             model, phase=args.phase, total_steps=steps
         )
-        milestone_steps = required_milestones(
+        all_milestone_steps = required_milestones(
             args.phase,
             unique_pairs=unique_pair_count,
             logical_batch_size=args.logical_physical_batch_size,
         )
         phase_end = steps_start + steps
-        if not all(steps_start <= milestone <= phase_end for milestone in milestone_steps):
-            raise RuntimeError("MILESTONE_CONTRACT_NOT_COVERED")
+        try:
+            milestone_steps = covered_milestones(
+                all_milestone_steps,
+                start_step=steps_start,
+                end_step=phase_end,
+            )
+        except ValueError as exc:
+            raise RuntimeError("MILESTONE_CONTRACT_NOT_COVERED") from exc
         write_json(run / "parameter_groups.json", optimizer_report)
         write_json(
             run / "code_state.json",

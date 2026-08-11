@@ -841,6 +841,7 @@ def test_phase_driver_requires_exact_core_and_runtime_gates() -> None:
 
 def test_phase_milestones_are_complete_and_phase_specific():
     from qcpr_siglip2.training.milestones import (
+        covered_milestones,
         required_milestones,
         steps_for_exposure,
     )
@@ -852,6 +853,13 @@ def test_phase_milestones_are_complete_and_phase_specific():
     assert required_milestones(
         "B", unique_pairs=7291, logical_batch_size=128
     ) == (684, 912, 1140, 1368)
+    assert covered_milestones(
+        (684, 912, 1140, 1368), start_step=456, end_step=1140
+    ) == (684, 912, 1140)
+    with pytest.raises(ValueError, match="phase end"):
+        covered_milestones(
+            (684, 912, 1140, 1368), start_step=456, end_step=1000
+        )
     with pytest.raises(ValueError, match="unsupported"):
         required_milestones("C", unique_pairs=7291, logical_batch_size=128)
 
