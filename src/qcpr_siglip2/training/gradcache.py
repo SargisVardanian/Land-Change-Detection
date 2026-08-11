@@ -12,6 +12,10 @@ from torch import Tensor
 from ..data.runtime import RawFeatureBatch, _device_autocast, encode_real_features
 from ..models.model import Siglip2TemporalRetrievalModel
 from .objective import pair_balanced_symmetric_multi_positive_listwise_loss
+from .update_diagnostics import (
+    optimizer_update_diagnostics,
+    snapshot_trainable_parameters,
+)
 
 
 @dataclass(frozen=True)
@@ -363,6 +367,7 @@ def logical_listwise_step(
     hierarchical_tile_batch_size: int = 4,
     hierarchical_overview_max_num_patches: int | None = None,
     max_text_length: int = 64,
+    instrument_optimizer_updates: bool = False,
 ) -> dict[str, Any]:
     """Run one common logical score matrix and exact feature-gradient replay.
 
@@ -518,16 +523,57 @@ def logical_listwise_step(
     weights = output.evidence.evidence_weights.detach().float()
     entropy = -(weights.clamp_min(1e-12) * weights.clamp_min(1e-12).log()).sum(-1)
     effective_tokens = entropy.exp()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_norm)
+    before_parameters = (
+        snapshot_trainable_parameters(model) if instrument_optimizer_updates else {}
+    )
+    preclip_gradients = (
+        {
+            name: parameter.grad.detach().clone()
+            if parameter.grad is not None
+            else None
+            for name, parameter in model.named_parameters()
+            if parameter.requires_grad
+        }
+        if instrument_optimizer_updates
+        else {}
+    )
+    total_gradient_norm = float(
+        torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip_norm)
+    )
+    postclip_gradients = (
+        {
+            name: parameter.grad.detach().clone()
+            if parameter.grad is not None
+            else None
+            for name, parameter in model.named_parameters()
+            if parameter.requires_grad
+        }
+        if instrument_optimizer_updates
+        else {}
+    )
     optimizer.step()
     if scheduler is not None:
         scheduler.step()
+    update_diagnostics = (
+        optimizer_update_diagnostics(
+            model,
+            optimizer,
+            before_parameters,
+            preclip_gradients,
+            postclip_gradients,
+            total_gradient_norm_preclip=total_gradient_norm,
+            clip_norm=gradient_clip_norm,
+        )
+        if instrument_optimizer_updates
+        else None
+    )
     return {
         "loss": float(loss.detach().cpu()),
         "text_to_pair_loss": float(text_to_pair_loss.detach().cpu()),
         "pair_to_text_loss": float(pair_to_text_loss.detach().cpu()),
         "score_shape": list(output.score_matrix.shape),
         "gradient_norm_preclip": gradient_norm,
+        "optimizer_update_diagnostics": update_diagnostics,
         "recomputed_backbone": recompute_backbone,
         "representation_mode": representation_mode,
         "active_feature_gradient_endpoints": active_endpoint_names,

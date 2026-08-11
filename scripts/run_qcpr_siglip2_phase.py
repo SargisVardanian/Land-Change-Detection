@@ -142,6 +142,11 @@ def parse_args() -> argparse.Namespace:
         default=PINNED_SIGLIP2_MAX_TEXT_LENGTH,
     )
     parser.add_argument("--hierarchical-fraction", type=float, default=0.25)
+    parser.add_argument(
+        "--instrument-optimizer-updates",
+        action="store_true",
+        help="Record optional per-group clip/update diagnostics without changing optimization.",
+    )
     parser.add_argument("--authorize-long-run", action="store_true")
     return parser.parse_args()
 
@@ -602,6 +607,7 @@ def main() -> int:
                 "patch_budget_name": f"NAFLEX_{args.max_num_patches}_PATCH_BUDGET",
                 "max_text_length": args.max_text_length,
                 "hierarchical_fraction": args.hierarchical_fraction,
+                "instrument_optimizer_updates": args.instrument_optimizer_updates,
                 "representation_modes": [
                     "DIRECT_NAFLEX",
                     "HIERARCHICAL_NATIVE",
@@ -722,6 +728,7 @@ def main() -> int:
                 is_naflex=backbone.is_naflex,
                 representation_mode=representation_mode,
                 max_text_length=args.max_text_length,
+                instrument_optimizer_updates=args.instrument_optimizer_updates,
             )
             ledger.record_step(
                 batch.pair_ids,
