@@ -575,7 +575,7 @@ def build(args: argparse.Namespace) -> None:
             "The pilot does not authorize direction training, semantic training, or any change to frozen manifests.",
         ],
     }
-    results["artifact_hash_definition"] = "SHA256 of canonical JSON excluding artifact_sha256"
+    results["artifact_hash_definition"] = "SHA256 of UTF-8 bytes of json.dumps(value excluding artifact_sha256, ensure_ascii=False, sort_keys=True, separators=(',', ':')) followed by one newline"
     results["artifact_sha256"] = canonical_sha(results)
     results_path = out_dir / "qcpr_model_data_pilot_results.json"
     results_path.write_bytes(canonical_bytes(results))
@@ -662,7 +662,7 @@ def build(args: argparse.Namespace) -> None:
         "artifact_generation_sha": model_handoff.get("artifact_generation_sha"),
         "dataset_release_sha": model_handoff.get("dataset_release_sha"),
     }
-    updated["artifact_hash_definition"] = "SHA256 of canonical JSON excluding artifact_sha256"
+    updated["artifact_hash_definition"] = "SHA256 of UTF-8 bytes of json.dumps(value excluding artifact_sha256, ensure_ascii=False, sort_keys=True, separators=(',', ':')) followed by one newline"
     updated.pop("artifact_sha256", None)
     updated["artifact_sha256"] = canonical_sha(updated)
     handoff_path = out_dir / "handoff_dataset_to_model.json"

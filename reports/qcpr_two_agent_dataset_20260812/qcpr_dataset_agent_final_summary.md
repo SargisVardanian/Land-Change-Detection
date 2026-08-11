@@ -5,7 +5,7 @@
 - Producer git SHA: `99bf9d32583fa4de4764662c3e040f950bfb5698`
 - Dataset release: `qcpr_bitemporal_v2_train_20260808_final_r19g`
 - Dataset release SHA: `6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871`
-- Updated at: `2026-08-11T23:16:40Z`
+- Updated at: `2026-08-11T23:23:10Z`
 - Model: `B20_step_1140`, canonical budget `20`
 
 ## Dataset-side verdict
@@ -38,7 +38,7 @@ Failure counts, excluding the 60 controls:
 ## Published artifacts
 
 - Sample: `qcpr_model_data_pilot_sample.jsonl`, SHA256 `a4c097c994d7692bd9862ceb817d6e10cbdc217f447787d1a477ffaa9663ed0c`
-- Results: `qcpr_model_data_pilot_results.json`, canonical artifact SHA256 `fc15a9e04af7a20f34ecba71c9788073c4ebbafc3ae9366892d8d188b122ce5a`
-- Dataset→Model handoff: `handoff_dataset_to_model.json`, canonical artifact SHA256 `1982514aed12fc6d19c9a7c2eff2b6990634f8b4e542e2350bddd1cbff740a40`
+- Results: `qcpr_model_data_pilot_results.json`, canonical artifact SHA256 `1f0cd136cc910a2e9c6be162e962d3da1dc731bac80b8eb265447caef02cf317`
+- Dataset→Model handoff: `handoff_dataset_to_model.json`, canonical artifact SHA256 `0be4c692f3ab2cb83cda27743e3f738b5056fba01a16ecf0f7b002e5f245f0f1`
 
 All artifacts are tied to the same r19g release SHA and the model handoff was validated against the same 3,181-query / 995-gallery development contract.
