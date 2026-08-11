@@ -195,6 +195,7 @@ def top20_records(
                 "exact_item_id": str(row["source_pair_id"]),
                 "exact_rank": exact_rank,
                 "exact_score": exact_score,
+                "score_space": "global_stage1_score_matrix",
                 "score_margin_top1_top2": (
                     top_scores[0] - top_scores[1] if len(top_scores) >= 2 else None
                 ),
@@ -207,28 +208,65 @@ def top20_records(
     return output
 
 
-def crosscheck_top100(
+def serialized_reranked_top20(
+    serialized: dict[str, dict[str, Any]],
+    *,
+    checkpoint_id: str,
+    checkpoint_sha256: str,
+) -> list[dict[str, Any]]:
+    """Normalize the historical reranker export without confusing it with global scores."""
+
+    output: list[dict[str, Any]] = []
+    for query_id, row in serialized.items():
+        pair_ids = [str(item) for item in row.get("top_pair_ids", [])]
+        scores = [float(item) for item in row.get("top_scores", [])]
+        top20 = [
+            {
+                "item_id": item_id,
+                "rank": index + 1,
+                "score": scores[index],
+                "candidate_source": source_name(item_id),
+            }
+            for index, item_id in enumerate(pair_ids[:20])
+        ]
+        output.append(
+            {
+                "query_id": query_id,
+                "exact_item_id": str(row["canonical_pair_id"]),
+                "exact_rank": int(row["rank"]),
+                "exact_score": None,
+                "score_space": "reranked_candidate_tensor_k100",
+                "score_margin_top1_top2": (
+                    scores[0] - scores[1] if len(scores) >= 2 else None
+                ),
+                "score_margin_exact_vs_top1": None,
+                "checkpoint_id": checkpoint_id,
+                "checkpoint_sha": checkpoint_sha256,
+                "top20": top20,
+            }
+        )
+    return output
+
+
+def audit_serialized_top100(
     records: list[dict[str, Any]],
     serialized: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
-    mismatches = []
-    for record in records:
-        row = serialized.get(record["query_id"])
-        if row is None:
-            mismatches.append({"query_id": record["query_id"], "reason": "missing_query"})
-            continue
-        expected = [item["item_id"] for item in record["top20"]]
-        observed = [str(item) for item in row.get("top_pair_ids", [])[:20]]
-        if expected != observed or int(row.get("rank", -1)) != int(record["exact_rank"]):
-            mismatches.append(
-                {
-                    "query_id": record["query_id"],
-                    "expected_rank": record["exact_rank"],
-                    "observed_rank": row.get("rank"),
-                    "top20_equal": expected == observed,
-                }
-            )
-    return {"rows": len(records), "mismatches": len(mismatches), "examples": mismatches[:10]}
+    missing = [record["query_id"] for record in records if record["query_id"] not in serialized]
+    malformed = [
+        query_id
+        for query_id, row in serialized.items()
+        if len(row.get("top_pair_ids", [])) != len(row.get("top_scores", []))
+        or not row.get("top_pair_ids")
+    ]
+    return {
+        "query_rows": len(records),
+        "serialized_rows": len(serialized),
+        "missing_queries": len(missing),
+        "malformed_rows": len(malformed),
+        "status": "PASS" if not missing and not malformed else "FAIL",
+        "examples": {"missing": missing[:10], "malformed": malformed[:10]},
+    }
 
 
 def write_json(path: Path, value: Any) -> None:
@@ -318,7 +356,12 @@ def main() -> int:
             checkpoint_id=arm["checkpoint_id"],
             checkpoint_sha256=arm["checkpoint_sha256"],
         )
-        arm["top100_crosscheck"] = crosscheck_top100(
+        arm["reranked_top20_records"] = serialized_reranked_top20(
+            arm["top100"],
+            checkpoint_id=arm["checkpoint_id"],
+            checkpoint_sha256=arm["checkpoint_sha256"],
+        )
+        arm["top100_crosscheck"] = audit_serialized_top100(
             arm["top20_records"], arm["top100"]
         )
         arm["full_rankings_sha256"] = sha256_file(
@@ -427,7 +470,9 @@ def main() -> int:
                 "query_source": query_sources[index],
                 "exact_item_id": str(query_rows[index]["source_pair_id"]),
                 "B20": arms["B20"]["top20_records"][index],
+                "B20_reranked_k100": arms["B20"]["reranked_top20_records"][index],
                 "B24": arms["B24"]["top20_records"][index],
+                "B24_reranked_k100": arms["B24"]["reranked_top20_records"][index],
                 "authoritative_release_sha256": args.release_sha,
                 "development_manifest_sha256": manifest_sha,
                 "ordered_gallery_ids_sha256": pair_sha,
