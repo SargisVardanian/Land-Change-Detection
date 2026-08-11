@@ -1,7 +1,7 @@
 {
   "handoff_version": "MODEL_TO_DATASET_B20_B24_V1",
   "created_at": "2026-08-11T22:23:06Z",
-  "model_head_sha": "13900fe43da8ed0a7bd4d237a69f965f4a2b4d3a",
+  "model_head_sha": "dbb73f49578bd99b3d7e4f99c16051f1f0f21b64",
   "artifact_generation_sha": "13900fe43da8ed0a7bd4d237a69f965f4a2b4d3a",
   "dataset_release_sha": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
   "dataset_handoff_artifact_sha": "68e52867b8a11a58958136e7ac2ce173be46c7f5159dd3434ee7db1ab1d5b599",
