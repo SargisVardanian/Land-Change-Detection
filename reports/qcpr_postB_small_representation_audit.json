@@ -1,0 +1,122 @@
+{
+  "status": "PARTIAL_MISSING_POSTB_EMBEDDING_ARRAYS",
+  "protocol": "SMALL_POST_B_REPRESENTATION_AUDIT",
+  "producer_sha": "13900fe43da8ed0a7bd4d237a69f965f4a2b4d3a",
+  "dataset_release_sha256": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
+  "evaluation_contract": {
+    "query_count": 3181,
+    "gallery_count": 995,
+    "development_manifest_sha256": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
+    "ordered_gallery_ids_sha256": "1627b745bed8d2e78cc9b99ff1be9f4f792025d8e8a3f275ad0cda199ba554ef",
+    "ordered_query_ids_sha256": "ed25e0f52a93d4e8fa785da3f504a669d79a99962a657550bae1019445d075ff"
+  },
+  "phase_a_reference": {
+    "status": "REFERENCE_AVAILABLE_NOT_POST_B_MATRIX",
+    "artifact": "/Users/sargisvardanyan/Land-Change-Detection/reports/qcpr_phase_metrics/raw/phase_a_representation_health.json",
+    "artifact_sha256": "374df20aa687a3ec8d6fcf49076a3412cee09ffe2a521ed14f2e161ace3b6f48",
+    "pair": {
+      "step_0_effective_rank": 36.902610778808594,
+      "step_0_participation_ratio": 10.155991554260254,
+      "step_0_top5_explained_variance": 0.5116083025932312,
+      "step_0_source_probe_accuracy": 0.9809045195579529,
+      "step_456_effective_rank": 8.603437423706055,
+      "step_456_participation_ratio": 4.489006042480469,
+      "step_456_top5_explained_variance": 0.8508409261703491,
+      "step_456_source_probe_accuracy": 0.9969848990440369
+    },
+    "text": {
+      "effective_rank": 124.5350112915039,
+      "participation_ratio": 46.06047058105469,
+      "top5_explained_variance": 0.2637004852294922,
+      "source_probe_accuracy": 0.8764600157737732
+    },
+    "interpretation": "Reference Phase-A health only; it is not a fresh B20/B24 embedding-matrix audit."
+  },
+  "B20": {
+    "checkpoint_id": "B20_step_1140",
+    "embedding_arrays_present": false,
+    "effective_rank": null,
+    "participation_ratio": null,
+    "top5_explained_variance": null,
+    "source_probe_accuracy": null,
+    "source_probe_auc": null,
+    "reason": "Saved B20 artifacts contain score/ranking tensors but no pair/text embedding arrays; rank and source-probe statistics must not be inferred from a score matrix."
+  },
+  "B24": {
+    "checkpoint_id": "B24_step_1368",
+    "embedding_arrays_present": false,
+    "effective_rank": null,
+    "participation_ratio": null,
+    "top5_explained_variance": null,
+    "source_probe_accuracy": null,
+    "source_probe_auc": null,
+    "reason": "Saved B24 artifacts contain score/ranking tensors but no pair/text embedding arrays; rank and source-probe statistics must not be inferred from a score matrix."
+  },
+  "route_audit": {
+    "status": "PASS",
+    "route_gap_observed": true,
+    "interpretation": "ROUTE_GAP_OBSERVED; this is a diagnostic discontinuity, not an architecture-defect claim.",
+    "subset_pair_count": 64,
+    "subset_query_count": 172,
+    "contract": {
+      "direct": "DIRECT_NAFLEX",
+      "hierarchical": "HIERARCHICAL_NATIVE",
+      "same_query_rows": true,
+      "same_relevance_masks": true,
+      "max_num_patches": 256
+    },
+    "B20": {
+      "direct_mrr_full": 0.2595288157463074,
+      "hierarchical_mrr_full": 0.23314961791038513,
+      "direct_hit_at_10": 0.5930232405662537,
+      "hierarchical_hit_at_10": 0.5813953280448914,
+      "same_pair_embedding_cosine": {
+        "count": 64,
+        "mean": 0.9248211979866028,
+        "min": 0.8150534629821777,
+        "p50": 0.9343404769897461,
+        "p90": 0.9663470387458801,
+        "max": 0.9769694805145264
+      },
+      "rank_delta_direct_minus_hierarchical": {
+        "count": 172,
+        "mean": -0.645348846912384,
+        "p50": 0.0,
+        "p90": 10.0,
+        "min": -29.0,
+        "max": 38.0
+      },
+      "artifact": "/Users/sargisvardanyan/Land-Change-Detection/reports/qcpr_phase_metrics/raw/phase_b_step1140_metrics.json",
+      "artifact_sha256": "d005a5f44490bae84a367e852781041cfdd379a1a24551a15665d5fac6374906"
+    },
+    "B24": {
+      "direct_mrr_full": 0.26033297181129456,
+      "hierarchical_mrr_full": 0.23499780893325806,
+      "direct_hit_at_10": 0.5872092843055725,
+      "hierarchical_hit_at_10": 0.5813953280448914,
+      "same_pair_embedding_cosine": {
+        "count": 64,
+        "mean": 0.9170164465904236,
+        "min": 0.7733781933784485,
+        "p50": 0.927518367767334,
+        "p90": 0.9636004567146301,
+        "max": 0.9739037156105042
+      },
+      "rank_delta_direct_minus_hierarchical": {
+        "count": 172,
+        "mean": -0.8430232405662537,
+        "p50": -1.0,
+        "p90": 9.899999618530273,
+        "min": -30.0,
+        "max": 41.0
+      },
+      "artifact": "/Users/sargisvardanyan/Land-Change-Detection/reports/qcpr_phase_metrics/raw/phase_b_step1368_metrics.json",
+      "artifact_sha256": "b37615a53eddd646099ed9b5cf0b643fb82e96495acffc11967dd2a273d11640"
+    }
+  },
+  "limitations": [
+    "B20/B24 effective rank, participation ratio, top-5 variance, and source-probe metrics are intentionally unavailable without saved embedding arrays.",
+    "The route subset is a diagnostic subset and is not a replacement for the full-gallery B20/B24 bootstrap.",
+    "The historical B20/B24 run metadata records a stale release field; manifest, query-order, gallery-order, and score-shape checks match authoritative r19g."
+  ]
+}
