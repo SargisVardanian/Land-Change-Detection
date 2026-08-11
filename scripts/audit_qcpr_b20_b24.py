@@ -137,7 +137,10 @@ def bootstrap_delta(
     }
     for name, values in deltas.items():
         tensor = torch.tensor(values, dtype=torch.float64)
-        lower, median, upper = torch.quantile(tensor, torch.tensor([0.025, 0.5, 0.975]))
+        lower, median, upper = torch.quantile(
+            tensor,
+            torch.tensor([0.025, 0.5, 0.975], dtype=tensor.dtype),
+        )
         nonpositive = float((tensor <= 0).float().mean())
         nonnegative = float((tensor >= 0).float().mean())
         result["metrics"][name] = {
