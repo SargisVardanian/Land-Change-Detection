@@ -1,0 +1,32 @@
+{
+  "decode_failures": [],
+  "decode_sample_limit": 256,
+  "duplicate_query_ids": [],
+  "frame_count": 66742,
+  "manifest_count": 18,
+  "mask_free_forbidden_key_hits": [],
+  "passed": true,
+  "physical_errors": [],
+  "physical_item_count": 32882,
+  "projection_conflicts": [],
+  "projection_repeat_query_count": 24667,
+  "query_count": 55710,
+  "query_errors": [],
+  "query_scope_counts": {
+    "exact": 53120,
+    "localized": 2458,
+    "long_series": 50,
+    "stable": 82
+  },
+  "release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_bitemporal_v2_train_20260808_final_r19g",
+  "schema_version": "qcpr-release-contract-validation-v2",
+  "sha256sums": {
+    "checked": 110,
+    "extra_entries": [],
+    "mismatches": [],
+    "missing_entries": [],
+    "passed": true,
+    "present": true,
+    "self_reference_excluded": true
+  }
+}
