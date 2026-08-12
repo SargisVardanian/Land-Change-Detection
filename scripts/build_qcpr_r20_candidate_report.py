@@ -81,10 +81,22 @@ def main() -> int:
     }
 
     audit = read_json(args.review_package / "review_package_audit.json")
-    source_lineage = read_json(args.review_package / "source_lineage.json")
+    lineage_path = args.review_package.parent / "source_lineage.json"
+    if not lineage_path.exists():
+        lineage_path = args.review_package / "source_lineage.json"
+    source_lineage = read_json(lineage_path)
     exact_source_selection = (audit.get("source_selection") or {}).get("exact_discriminative") or {}
-    exact_source_counts = audit.get("exact_source_counts") or exact_source_selection.get("source_counts") or {}
-    exact_source_registry_sha256 = audit.get("exact_source_registry_sha256") or exact_source_selection.get("source_registry_sha256")
+    exact_source_counts = (
+        source_lineage.get("exact_source_counts")
+        or audit.get("exact_source_counts")
+        or exact_source_selection.get("source_counts")
+        or {}
+    )
+    exact_source_registry_sha256 = (
+        source_lineage.get("exact_source_registry_sha256")
+        or audit.get("exact_source_registry_sha256")
+        or exact_source_selection.get("source_registry_sha256")
+    )
     decision_templates = []
     for name in ("reviewer_a_decision_template.jsonl", "reviewer_b_decision_template.jsonl", "adjudication_template.jsonl"):
         rows = read_jsonl(args.review_package / name)
@@ -106,14 +118,18 @@ def main() -> int:
         name: file_sha(args.review_package / name)
         for name in (
             "review_package_audit.json",
-            "source_lineage.json",
             "reviewer_a_packet.jsonl",
             "reviewer_b_packet.jsonl",
             "reviewer_a_decision_template.jsonl",
             "reviewer_b_decision_template.jsonl",
             "adjudication_template.jsonl",
+            "blind_assets_manifest.jsonl",
         )
     }
+    package_files["source_lineage.json"] = file_sha(lineage_path)
+    internal_ledger_path = args.review_package.parent / "internal_review_join_ledger.jsonl"
+    if internal_ledger_path.exists():
+        package_files["internal_review_join_ledger.jsonl"] = file_sha(internal_ledger_path)
     report = {
         "schema_version": "qcpr-r20-exact-supervision-report-v1",
         "status": "HOLD_HUMAN_REVIEW_REQUIRED",

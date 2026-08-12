@@ -14,9 +14,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import random
 import re
-from collections import defaultdict
+import shutil
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -123,6 +125,54 @@ def frame_paths(physical: dict[str, Any]) -> list[str]:
 def source_dataset(row: dict[str, Any]) -> str | None:
     provenance = row.get("provenance") or {}
     return provenance.get("source_dataset") or row.get("source_dataset")
+
+
+def safe_asset_token(review_sample_id: str) -> str:
+    """Return a stable, source-free directory token for a review sample."""
+    return hashlib.sha256(review_sample_id.encode("utf-8")).hexdigest()[:24]
+
+
+def materialize_blind_asset(source_path: str, destination: Path) -> str:
+    """Materialize an image under an anonymous reviewer-facing path.
+
+    Hard links avoid duplicating the large native images on the cluster while
+    still producing ordinary files that remain usable if the review package
+    is copied elsewhere.  Cross-device filesystems fall back to a byte copy.
+    The native source path never enters the visible packet.
+    """
+    source = Path(source_path)
+    if not source.is_file():
+        raise RuntimeError(f"review image is missing: {source}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+        raise RuntimeError(f"blind asset destination already exists: {destination}")
+    try:
+        os.link(source, destination)
+        return "hardlink"
+    except OSError:
+        shutil.copy2(source, destination)
+        return "copy"
+
+
+def write_blind_asset_manifest(asset_root: Path, output_path: Path) -> tuple[int, str]:
+    """Write a source-free integrity manifest for reviewer-facing assets."""
+    rows: list[dict[str, Any]] = []
+    for path in sorted(path for path in asset_root.rglob("*") if path.is_file()):
+        rows.append(
+            {
+                "relative_path": str(path.relative_to(asset_root.parent)),
+                "bytes": path.stat().st_size,
+                "sha256": file_sha(path),
+            }
+        )
+    output_path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            for row in rows
+        ),
+        encoding="utf-8",
+    )
+    return len(rows), file_sha(output_path)
 
 
 def select_source_balanced_exact_rows(
@@ -284,7 +334,15 @@ def review_row(
     collision_groups: dict[str, dict[str, Any]],
     seed: int,
     reviewer_id: str,
-) -> dict[str, Any]:
+    args_output_dir: Path,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Build a blind visible row plus an internal lineage row.
+
+    The visible row intentionally contains no canonical query/pair IDs,
+    source labels, source-derived path components, selection scores, or raw
+    native paths.  Promotion receives the sibling internal join-ledger later;
+    human reviewers receive only the visible row and blind image assets.
+    """
     candidate = row.get("candidate") or {}
     pair_id = str(row.get("source_pair_id") or candidate.get("source_item_id") or "")
     if pair_id not in physical:
@@ -311,25 +369,63 @@ def review_row(
     # underlying candidate set identical for agreement analysis.
     randomizer = random.Random(f"{seed}:{reviewer_id}:{row['review_sample_id']}")
     randomizer.shuffle(neighbors)
-    return {
-        "schema_version": "qcpr-r20-exact-human-review-row-v1",
+    sample_token = safe_asset_token(row["review_sample_id"])
+    asset_root = Path("blind_assets") / sample_token / reviewer_id
+    true_aliases = {
+        "t1_path": str(asset_root / "intended_t1.png"),
+        "t2_path": str(asset_root / "intended_t2.png"),
+    }
+    asset_modes: list[str] = []
+    asset_modes.append(materialize_blind_asset(true_paths[0], args_output_dir / true_aliases["t1_path"]))
+    asset_modes.append(materialize_blind_asset(true_paths[1], args_output_dir / true_aliases["t2_path"]))
+    visible_neighbors = []
+    internal_neighbors = []
+    for index, neighbor in enumerate(neighbors, start=1):
+        candidate_aliases = {
+            "t1_path": str(asset_root / f"candidate_{index:02d}_t1.png"),
+            "t2_path": str(asset_root / f"candidate_{index:02d}_t2.png"),
+        }
+        asset_modes.append(
+            materialize_blind_asset(neighbor["t1_path"], args_output_dir / candidate_aliases["t1_path"])
+        )
+        asset_modes.append(
+            materialize_blind_asset(neighbor["t2_path"], args_output_dir / candidate_aliases["t2_path"])
+        )
+        visible_neighbors.append(
+            {
+                "candidate_slot": f"candidate_{index:02d}",
+                **candidate_aliases,
+                "reviewer_must_not_treat_as_positive": True,
+            }
+        )
+        internal_neighbors.append(
+            {
+                "candidate_slot": f"candidate_{index:02d}",
+                "candidate_id": neighbor["candidate_id"],
+                "selection_reason": neighbor["selection_reason"],
+                "attribute_overlap_score": neighbor["attribute_overlap_score"],
+                "t1_path": neighbor["t1_path"],
+                "t2_path": neighbor["t2_path"],
+                "blind_t1_path": candidate_aliases["t1_path"],
+                "blind_t2_path": candidate_aliases["t2_path"],
+            }
+        )
+    visible = {
+        "schema_version": "qcpr-r20-exact-human-review-row-v2-blind",
         "review_sample_id": row["review_sample_id"],
         "stratum": next((name for name in STRATA if row["review_sample_id"].startswith(name)), None),
-        "query_id": row.get("query_id"),
         "caption": text,
-        "caption_normalized": normalized_text,
         "true_pair": {
-            "pair_id": pair_id,
-            "split": pair_split.get(pair_id, candidate.get("split")),
-            "t1_path": true_paths[0],
-            "t2_path": true_paths[1],
+            **true_aliases,
             "role": "intended_pair",
         },
-        "candidate_neighbours": neighbors,
+        "candidate_neighbours": visible_neighbors,
         "model_scores_included": False,
         "rankings_included": False,
         "masks_included": False,
         "event_or_source_metadata_included": False,
+        "visible_internal_ids": False,
+        "paths_are_blind_aliases": True,
         "candidate_neighbours_are_not_labels": True,
         "review_questions": {
             "caption_accurately_describes_true_pair": "yes_no_uncertain",
@@ -351,6 +447,24 @@ def review_row(
             "notes": None,
         },
     }
+    internal = {
+        "schema_version": "qcpr-r20-exact-human-review-join-v2",
+        "review_sample_id": row["review_sample_id"],
+        "query_id": row.get("query_id"),
+        "source_pair_id": pair_id,
+        "source_dataset": source_dataset(candidate),
+        "split": pair_split.get(pair_id, candidate.get("split")),
+        "stratum": visible["stratum"],
+        "caption": text,
+        "caption_normalized": normalized_text,
+        "true_native_t1_path": true_paths[0],
+        "true_native_t2_path": true_paths[1],
+        "true_blind_t1_path": true_aliases["t1_path"],
+        "true_blind_t2_path": true_aliases["t2_path"],
+        "candidate_neighbours": internal_neighbors,
+        "asset_modes": dict(sorted({mode: asset_modes.count(mode) for mode in set(asset_modes)}.items())),
+    }
+    return visible, internal
 
 
 def main() -> int:
@@ -404,9 +518,39 @@ def main() -> int:
         raise RuntimeError("calibration sample IDs are not unique at 1500-row grain")
 
     created_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    reviewer_a = [review_row(row, physical, pair_attrs, pair_split, collision_groups, args.seed, "reviewer_a") for row in rows]
-    reviewer_b = [review_row(row, physical, pair_attrs, pair_split, collision_groups, args.seed, "reviewer_b") for row in rows]
-    for output_rows, name in ((reviewer_a, "reviewer_a"), (reviewer_b, "reviewer_b")):
+    reviewer_rows: dict[str, list[dict[str, Any]]] = {}
+    internal_ledger: dict[str, dict[str, Any]] = {}
+    for reviewer_id in ("reviewer_a", "reviewer_b"):
+        visible_rows: list[dict[str, Any]] = []
+        for row in rows:
+            visible, internal = review_row(
+                row,
+                physical,
+                pair_attrs,
+                pair_split,
+                collision_groups,
+                args.seed,
+                reviewer_id,
+                args.output_dir,
+            )
+            visible_rows.append(visible)
+            sample_id = str(internal["review_sample_id"])
+            if sample_id not in internal_ledger:
+                internal_ledger[sample_id] = {
+                    key: value
+                    for key, value in internal.items()
+                    if key not in {"candidate_neighbours", "asset_modes"}
+                }
+                internal_ledger[sample_id]["reviewer_aliases"] = {}
+                internal_ledger[sample_id]["candidate_neighbours_by_reviewer"] = {}
+            internal_ledger[sample_id]["reviewer_aliases"][reviewer_id] = {
+                "true_blind_t1_path": internal["true_blind_t1_path"],
+                "true_blind_t2_path": internal["true_blind_t2_path"],
+                "asset_modes": internal["asset_modes"],
+            }
+            internal_ledger[sample_id]["candidate_neighbours_by_reviewer"][reviewer_id] = internal["candidate_neighbours"]
+        reviewer_rows[reviewer_id] = visible_rows
+    for output_rows, name in ((reviewer_rows["reviewer_a"], "reviewer_a"), (reviewer_rows["reviewer_b"], "reviewer_b")):
         path = args.output_dir / f"{name}_packet.jsonl"
         path.write_text("".join(json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n" for row in output_rows), encoding="utf-8")
         decision_path = args.output_dir / f"{name}_decision_template.jsonl"
@@ -415,7 +559,6 @@ def main() -> int:
             decision_rows.append({
                 "schema_version": "qcpr-r20-exact-human-decision-v1",
                 "review_sample_id": row["review_sample_id"],
-                "query_id": row["query_id"],
                 "reviewer_id": name,
                 "reviewer_identity": None,
                 "reviewer_type": "human_required",
@@ -438,7 +581,6 @@ def main() -> int:
         adjudication_rows.append({
             "schema_version": "qcpr-r20-exact-adjudication-v1",
             "review_sample_id": row["review_sample_id"],
-            "query_id": row.get("query_id"),
             "reviewer_a_decision": None,
             "reviewer_b_decision": None,
             "final_decision": None,
@@ -451,19 +593,32 @@ def main() -> int:
         "".join(json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n" for row in adjudication_rows), encoding="utf-8"
     )
 
+    join_ledger_path = args.output_dir.parent / "internal_review_join_ledger.jsonl"
+    join_ledger_rows = [internal_ledger[sample_id] for sample_id in sorted(internal_ledger)]
+    join_ledger_path.write_text(
+        "".join(
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n"
+            for row in join_ledger_rows
+        ),
+        encoding="utf-8",
+    )
+    join_ledger_sha256 = file_sha(join_ledger_path)
+
     readme = f"""# QCPR r20 exact-supervision human review package
 
 Status: **READY_FOR_TWO_INDEPENDENT_HUMAN_REVIEWERS**
 
 This package is derived from immutable r19g release `{args.dataset_release_sha}`.
-It contains 1,500 rows: 300 exact-discriminative (150 LEVIR + 150 SECOND, with
-unique physical pairs), 300 semantic-multi-positive,
+It contains 1,500 rows: 300 exact-discriminative (source-balanced across the
+two core sources, with unique physical pairs), 300 semantic-multi-positive,
 300 generic-no-change, 300 stable-scene-specific, and 300 localized-direction.
 
 Review T1 and T2 for the intended pair, then inspect the candidate neighbours.
-The sheets contain no model scores, rankings, masks, event IDs, or dataset/source
-names. Candidate neighbours are sampling aids only and are never automatically
-positive or negative. Do not infer facts from paths or IDs.
+The visible sheets contain no model scores, rankings, masks, event IDs,
+canonical IDs, source labels, or native source paths. Image paths are blind
+aliases inside `blind_assets/`; candidate neighbours are sampling aids only
+and are never automatically positive or negative. The internal join ledger is
+kept outside the reviewer package and is not part of the human review sheet.
 
 For each row answer independently:
 
@@ -482,12 +637,20 @@ Files:
 - `reviewer_a_packet.jsonl`, `reviewer_b_packet.jsonl`: independent visual sheets
 - `reviewer_a_decision_template.jsonl`, `reviewer_b_decision_template.jsonl`: decision sheets
 - `adjudication_template.jsonl`: final adjudication after both sheets are returned
+- `blind_assets/`: reviewer-facing anonymous image files
 - `review_package_audit.json`: lineage and hash audit
+
+The Dataset Agent retains `../internal_review_join_ledger.jsonl` for promotion
+and source-conditioned analysis; reviewers should not use or receive it.
 
 No r20 training manifest is created by this package. Promotion remains disabled
 until human decisions and adjudication pass the contract.
 """
     (args.output_dir / "README.md").write_text(readme, encoding="utf-8")
+    blind_asset_count, blind_asset_manifest_sha256 = write_blind_asset_manifest(
+        args.output_dir / "blind_assets",
+        args.output_dir / "blind_assets_manifest.jsonl",
+    )
     audit = {
         "schema_version": "qcpr-r20-exact-human-review-package-audit-v1",
         "status": "READY_FOR_TWO_INDEPENDENT_HUMAN_REVIEWERS",
@@ -509,9 +672,9 @@ until human decisions and adjudication pass the contract.
         "automatic_labels_created": False,
         "candidate_neighbours_are_not_relevance_labels": True,
         "source_packet_sha256": source_hashes,
-        "source_selection": source_selection,
-        "exact_source_counts": source_selection["exact_discriminative"]["source_counts"],
-        "exact_source_registry_sha256": source_selection["exact_discriminative"]["source_registry_sha256"],
+        "source_balance_policy": "exact stratum is source-balanced; source identities are withheld from reviewers",
+        "blind_asset_count": blind_asset_count,
+        "blind_asset_manifest_sha256": blind_asset_manifest_sha256,
         "r19_train_manifest_sha256": file_sha(release / "exact_core_train.jsonl"),
         "r19_development_manifest_sha256": file_sha(release / "exact_core_development.jsonl"),
         "r19_test_manifest_sha256": file_sha(release / "exact_core_test.jsonl"),
@@ -533,12 +696,15 @@ until human decisions and adjudication pass the contract.
         "reviewer_a_decision_template_sha256": file_sha(args.output_dir / "reviewer_a_decision_template.jsonl"),
         "reviewer_b_decision_template_sha256": file_sha(args.output_dir / "reviewer_b_decision_template.jsonl"),
         "adjudication_template_sha256": file_sha(args.output_dir / "adjudication_template.jsonl"),
+        "blind_asset_manifest_sha256": blind_asset_manifest_sha256,
+        "blind_asset_count": blind_asset_count,
+        "internal_review_join_ledger_sha256": join_ledger_sha256,
         "exact_source_counts": source_selection["exact_discriminative"]["source_counts"],
         "exact_source_registry_sha256": source_selection["exact_discriminative"]["source_registry_sha256"],
         "status": "PENDING_EXTERNAL_HUMAN_REVIEW",
     }
     source["artifact_sha256"] = canonical_sha(source)
-    (args.output_dir / "source_lineage.json").write_bytes(canonical_bytes(source))
+    (args.output_dir.parent / "source_lineage.json").write_bytes(canonical_bytes(source))
     print(json.dumps({
         "status": audit["status"],
         "rows": audit["row_count"],

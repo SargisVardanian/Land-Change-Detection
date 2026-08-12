@@ -200,14 +200,28 @@ def load_packets(review_package: Path) -> tuple[dict[str, dict[str, Any]], dict[
                 raise ValueError(f"{path.name} is not an independent text/image review packet")
             if row.get("event_or_source_metadata_included") is not False:
                 raise ValueError(f"{path.name} exposes event/source metadata")
+            if row.get("paths_are_blind_aliases") is not True or row.get("visible_internal_ids") is not False:
+                raise ValueError(f"{path.name}:{sample_id} is not a blind review packet")
             stratum = str(row.get("stratum") or "")
             if stratum not in STRATA:
                 raise ValueError(f"{path.name} contains unknown stratum {stratum!r}")
             if not nonempty(row.get("caption")):
                 raise ValueError(f"{path.name}:{sample_id} has no caption")
             true_pair = row.get("true_pair") or {}
-            if not nonempty(true_pair.get("pair_id")):
-                raise ValueError(f"{path.name}:{sample_id} has no intended pair")
+            if not nonempty(true_pair.get("t1_path")) or not nonempty(true_pair.get("t2_path")):
+                raise ValueError(f"{path.name}:{sample_id} has no blind intended pair assets")
+            forbidden_visible_keys = {
+                "query_id",
+                "source_pair_id",
+                "source_dataset",
+                "source_event_id",
+                "event_id",
+            }
+            if forbidden_visible_keys.intersection(row):
+                raise ValueError(f"{path.name}:{sample_id} exposes canonical/source identifiers")
+            for neighbour in row.get("candidate_neighbours") or []:
+                if forbidden_visible_keys.intersection(neighbour) or "candidate_id" in neighbour:
+                    raise ValueError(f"{path.name}:{sample_id} exposes a candidate identifier")
             by_id[sample_id] = row
         packets[reviewer] = by_id
     if set(packets["reviewer_a"]) != set(packets["reviewer_b"]):
@@ -215,10 +229,65 @@ def load_packets(review_package: Path) -> tuple[dict[str, dict[str, Any]], dict[
     for sample_id in packets["reviewer_a"]:
         left = packets["reviewer_a"][sample_id]
         right = packets["reviewer_b"][sample_id]
-        for key in ("query_id", "stratum"):
+        for key in ("caption", "stratum"):
             if left.get(key) != right.get(key):
                 raise ValueError(f"reviewer packets disagree for {sample_id}: {key}")
     return packets["reviewer_a"], packets["reviewer_b"]
+
+
+def load_internal_ledger(review_package: Path) -> dict[str, dict[str, Any]]:
+    """Load the producer-only join ledger kept outside reviewer materials."""
+    path = review_package.parent / "internal_review_join_ledger.jsonl"
+    require_file(path)
+    rows = read_jsonl(path)
+    if len(rows) != 1500:
+        raise ValueError(f"{path.name} must contain 1500 rows, got {len(rows)}")
+    by_id: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        sample_id = str(row.get("review_sample_id") or "")
+        if not sample_id or sample_id in by_id:
+            raise ValueError(f"{path.name} has missing or duplicate review_sample_id")
+        if not nonempty(row.get("query_id")) or not nonempty(row.get("source_pair_id")):
+            raise ValueError(f"{path.name}:{sample_id} has incomplete canonical join fields")
+        if not nonempty(row.get("true_native_t1_path")) or not nonempty(row.get("true_native_t2_path")):
+            raise ValueError(f"{path.name}:{sample_id} has incomplete native pair paths")
+        by_id[sample_id] = row
+    return by_id
+
+
+def validate_blind_assets(
+    review_package: Path,
+    packet_a: dict[str, dict[str, Any]],
+    packet_b: dict[str, dict[str, Any]],
+    audit: dict[str, Any],
+) -> str:
+    """Verify the anonymous image asset manifest and every referenced file."""
+    path = review_package / "blind_assets_manifest.jsonl"
+    require_file(path)
+    rows = read_jsonl(path)
+    expected_count = audit.get("blind_asset_count")
+    if expected_count is not None and int(expected_count) != len(rows):
+        raise ValueError(f"blind asset manifest count mismatch: {len(rows)} != {expected_count}")
+    seen: set[str] = set()
+    for row in rows:
+        relative = str(row.get("relative_path") or "")
+        if not relative or relative in seen or not relative.startswith("blind_assets/"):
+            raise ValueError("blind asset manifest has invalid or duplicate relative paths")
+        seen.add(relative)
+        asset = review_package / relative
+        require_file(asset)
+        if int(row.get("bytes", -1)) != asset.stat().st_size or row.get("sha256") != file_sha(asset):
+            raise ValueError(f"blind asset integrity mismatch: {relative}")
+    referenced: set[str] = set()
+    for packet in (packet_a, packet_b):
+        for row in packet.values():
+            true_pair = row.get("true_pair") or {}
+            referenced.update(str(true_pair.get(key)) for key in ("t1_path", "t2_path"))
+            for neighbour in row.get("candidate_neighbours") or []:
+                referenced.update(str(neighbour.get(key)) for key in ("t1_path", "t2_path"))
+    if None in referenced or not referenced.issubset(seen):
+        raise ValueError("blind packets reference assets absent from the manifest")
+    return file_sha(path)
 
 
 def load_reviewer_decisions(
@@ -239,8 +308,6 @@ def load_reviewer_decisions(
             raise ValueError(f"{path.name} has missing, duplicate, or unknown sample ID {sample_id!r}")
         if str(row.get("reviewer_id") or "") != reviewer:
             raise ValueError(f"{path.name}:{sample_id} has the wrong reviewer_id")
-        if row.get("query_id") != packet[sample_id].get("query_id"):
-            raise ValueError(f"{path.name}:{sample_id} query_id does not match its packet")
         identity = identity_key(row.get("reviewer_identity"))
         if not identity:
             raise ValueError(f"{path.name}:{sample_id} has no human reviewer identity")
@@ -338,6 +405,7 @@ def norm_text(value: Any) -> str:
 
 def calibration_metrics(
     packet: dict[str, dict[str, Any]],
+    ledger: dict[str, dict[str, Any]],
     decisions_a: dict[str, dict[str, Any]],
     decisions_b: dict[str, dict[str, Any]],
     adjudication: dict[str, dict[str, Any]],
@@ -350,6 +418,8 @@ def calibration_metrics(
     }
     final_rows: list[dict[str, Any]] = []
     for sample_id, packet_row in packet.items():
+        if sample_id not in ledger:
+            raise ValueError(f"review packet sample is absent from internal join ledger: {sample_id}")
         stratum = str(packet_row["stratum"])
         final = str(adjudication[sample_id]["final_decision"])
         by_stratum[stratum][final] += 1
@@ -359,8 +429,8 @@ def calibration_metrics(
             "sample_id": sample_id,
             "stratum": stratum,
             "final_decision": final,
-            "source_dataset": source_dataset(train_rows.get(str(packet_row.get("query_id")) or {})),
-            "query_id": packet_row.get("query_id"),
+            "source_dataset": source_dataset(train_rows.get(str(ledger[sample_id].get("query_id")) or {})),
+            "query_id": ledger[sample_id].get("query_id"),
         })
     exact = [row for row in final_rows if row["stratum"] == "exact_discriminative"]
     exact_n = len(exact)
@@ -431,12 +501,13 @@ def calibration_metrics(
 def make_manifest_rows(
     train_rows: list[dict[str, Any]],
     packet_by_id: dict[str, dict[str, Any]],
+    ledger: dict[str, dict[str, Any]],
     adjudication: dict[str, dict[str, Any]],
     review_package: Path,
     dataset_release_sha: str,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     selected = {
-        str(packet_by_id[sample_id].get("query_id")): (sample_id, adjudication[sample_id])
+        str(ledger[sample_id].get("query_id")): (sample_id, adjudication[sample_id])
         for sample_id in packet_by_id
         if packet_by_id[sample_id].get("stratum") == "exact_discriminative"
         and adjudication[sample_id].get("final_decision") == "EXACT"
@@ -672,14 +743,21 @@ def build_pending_report(
         name: file_sha(args.review_package / name)
         for name in (
             "review_package_audit.json",
-            "source_lineage.json",
             "reviewer_a_packet.jsonl",
             "reviewer_b_packet.jsonl",
             "reviewer_a_decision_template.jsonl",
             "reviewer_b_decision_template.jsonl",
             "adjudication_template.jsonl",
+            "blind_assets_manifest.jsonl",
         )
     }
+    lineage_path = args.review_package.parent / "source_lineage.json"
+    if not lineage_path.exists():
+        lineage_path = args.review_package / "source_lineage.json"
+    package_hashes["source_lineage.json"] = file_sha(lineage_path)
+    ledger_path = args.review_package.parent / "internal_review_join_ledger.jsonl"
+    if ledger_path.exists():
+        package_hashes["internal_review_join_ledger.jsonl"] = file_sha(ledger_path)
     metrics = {
         "exact_scope_precision": None,
         "exact_scope_precision_ci95": None,
@@ -779,21 +857,26 @@ def main() -> int:
     try:
         for name in (
             "review_package_audit.json",
-            "source_lineage.json",
             "reviewer_a_packet.jsonl",
             "reviewer_b_packet.jsonl",
             "reviewer_a_decision_template.jsonl",
             "reviewer_b_decision_template.jsonl",
             "adjudication_template.jsonl",
+            "blind_assets_manifest.jsonl",
         ):
             require_file(args.review_package / name)
         audit = read_json(args.review_package / "review_package_audit.json")
-        source_lineage = read_json(args.review_package / "source_lineage.json")
+        lineage_path = args.review_package.parent / "source_lineage.json"
+        if not lineage_path.exists():
+            lineage_path = args.review_package / "source_lineage.json"
+        require_file(lineage_path)
+        source_lineage = read_json(lineage_path)
         if audit.get("dataset_release_sha") != args.dataset_release_sha:
             raise ValueError("review package and requested dataset release SHA do not match")
         if audit.get("r19_immutable_required") is not True:
             raise ValueError("review package does not enforce r19g immutability")
         packet_a, packet_b = load_packets(args.review_package)
+        blind_asset_manifest_sha256 = validate_blind_assets(args.review_package, packet_a, packet_b, audit)
         # An untouched review package is a valid, truthful HOLD state.  Do
         # not make the user fill 4,500 cells merely to ask for a status.  As
         # soon as any decision material exists, validate the entire contract
@@ -847,6 +930,14 @@ def main() -> int:
             write_json(args.candidate_dir / "promotion_gate_status.json", status)
             print(json.dumps(status, ensure_ascii=False, sort_keys=True))
             return 0 if args.allow_hold else 2
+        ledger = load_internal_ledger(args.review_package)
+        if set(ledger) != set(packet_a):
+            raise ValueError("internal join ledger and blind packets do not contain the same 1,500 sample IDs")
+        for sample_id, packet_row in packet_a.items():
+            aliases = ledger[sample_id].get("true_blind_t1_path"), ledger[sample_id].get("true_blind_t2_path")
+            visible = packet_row.get("true_pair") or {}
+            if aliases != (visible.get("t1_path"), visible.get("t2_path")):
+                raise ValueError(f"blind packet and internal ledger disagree for {sample_id}")
         decisions_a, identity_a = load_reviewer_decisions(args.review_package, "reviewer_a", packet_a)
         decisions_b, identity_b = load_reviewer_decisions(args.review_package, "reviewer_b", packet_b)
         adjudication, adjudicator = load_adjudication(
@@ -860,14 +951,14 @@ def main() -> int:
         train_by_query = {str(row.get("query_id")): row for row in train_rows}
         if len(train_by_query) != len(train_rows):
             raise ValueError("r19g exact train has duplicate/missing query IDs")
-        for packet_row in packet_a.values():
+        for sample_id, packet_row in packet_a.items():
             if packet_row["stratum"] == "exact_discriminative":
-                query_id = str(packet_row.get("query_id") or "")
+                query_id = str(ledger[sample_id].get("query_id") or "")
                 if query_id not in train_by_query:
                     raise ValueError(f"exact review sample is not in r19g train: {query_id}")
                 if train_by_query[query_id].get("training_enabled") is not True:
                     raise ValueError(f"exact review sample is not training-enabled in r19g: {query_id}")
-        metrics = calibration_metrics(packet_a, decisions_a, decisions_b, adjudication, train_by_query)
+        metrics = calibration_metrics(packet_a, ledger, decisions_a, decisions_b, adjudication, train_by_query)
         exact_metric = metrics["exact_scope_precision_ci95"]
         ci_lower = exact_metric[0] if exact_metric else None
         completed = len(adjudication)
@@ -900,14 +991,19 @@ def main() -> int:
             name: file_sha(args.review_package / name)
             for name in (
                 "review_package_audit.json",
-                "source_lineage.json",
                 "reviewer_a_packet.jsonl",
                 "reviewer_b_packet.jsonl",
                 "reviewer_a_decision_template.jsonl",
                 "reviewer_b_decision_template.jsonl",
                 "adjudication_template.jsonl",
+                "blind_assets_manifest.jsonl",
             )
         }
+        package_hashes["source_lineage.json"] = file_sha(lineage_path)
+        package_hashes["internal_review_join_ledger.jsonl"] = file_sha(
+            args.review_package.parent / "internal_review_join_ledger.jsonl"
+        )
+        package_hashes["blind_assets_manifest.jsonl"] = blind_asset_manifest_sha256
         manifest: list[dict[str, Any]] | None = None
         manifest_audit: list[dict[str, Any]] | None = None
         manifest_sha: str | None = None
@@ -920,6 +1016,7 @@ def main() -> int:
             manifest, manifest_audit = make_manifest_rows(
                 train_rows,
                 packet_a,
+                ledger,
                 adjudication,
                 args.review_package,
                 args.dataset_release_sha,
