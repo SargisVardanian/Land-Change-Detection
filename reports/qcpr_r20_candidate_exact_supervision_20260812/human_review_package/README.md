@@ -3,7 +3,8 @@
 Status: **READY_FOR_TWO_INDEPENDENT_HUMAN_REVIEWERS**
 
 This package is derived from immutable r19g release `6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871`.
-It contains 1,500 rows: 300 exact-discriminative, 300 semantic-multi-positive,
+It contains 1,500 rows: 300 exact-discriminative (150 LEVIR + 150 SECOND, with
+unique physical pairs), 300 semantic-multi-positive,
 300 generic-no-change, 300 stable-scene-specific, and 300 localized-direction.
 
 Review T1 and T2 for the intended pair, then inspect the candidate neighbours.

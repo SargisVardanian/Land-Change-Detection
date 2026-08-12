@@ -27,6 +27,11 @@ Valid human estimates are therefore unavailable:
 - semantic-alternative rate: `null`
 - source-conditioned values: `null`
 
+The exact-discriminative stratum is source-balanced by design: 150 unique
+LEVIR physical pairs and 150 unique SECOND physical pairs. This makes the
+future source-conditioned estimate identifiable, but does not create a human
+estimate before review.
+
 ## r19g preservation
 
 - `R19G_IMMUTABLE = true`
