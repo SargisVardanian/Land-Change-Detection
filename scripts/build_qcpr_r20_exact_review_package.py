@@ -125,6 +125,79 @@ def source_dataset(row: dict[str, Any]) -> str | None:
     return provenance.get("source_dataset") or row.get("source_dataset")
 
 
+def select_source_balanced_exact_rows(
+    query_rows: list[dict[str, Any]],
+    seed: int,
+    per_source: int = 150,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Select one human exact query per physical pair, balanced across core sources.
+
+    The calibration is a query-level review, but selecting at most one caption
+    per physical pair prevents a caption family from consuming a stratum.  The
+    source allocation is explicit so source-conditioned LEVIR/SECOND rates are
+    estimable after adjudication.
+    """
+    eligible: dict[str, dict[str, list[dict[str, Any]]]] = defaultdict(lambda: defaultdict(list))
+    for row in query_rows:
+        scope = str(row.get("query_scope") or row.get("query_classification") or "")
+        split = str(row.get("split") or "")
+        source = source_dataset(row)
+        pair_id = str(row.get("source_pair_id") or row.get("source_item_id") or "")
+        if (
+            scope not in {"exact", "exact_discriminative", "exact_pair"}
+            or split != "train"
+            or source not in {"levir_mci", "second_cc"}
+            or row.get("training_enabled") is not True
+            or str(row.get("verification") or "") != "human"
+            or not pair_id
+            or not str(row.get("text") or "").strip()
+        ):
+            continue
+        eligible[source][pair_id].append(row)
+
+    selected: list[dict[str, Any]] = []
+    source_counts: dict[str, int] = {}
+    for source in ("levir_mci", "second_cc"):
+        pair_candidates = []
+        for pair_id, rows in eligible[source].items():
+            chosen = min(
+                rows,
+                key=lambda row: hashlib.sha256(
+                    f"{seed}:exact:{source}:{pair_id}:{row.get('query_id', '')}".encode()
+                ).hexdigest(),
+            )
+            pair_candidates.append(chosen)
+        pair_candidates.sort(
+            key=lambda row: hashlib.sha256(
+                f"{seed}:exact:{source}:{row.get('source_pair_id') or row.get('source_item_id')}".encode()
+            ).hexdigest(),
+        )
+        if len(pair_candidates) < per_source:
+            raise RuntimeError(
+                f"source-balanced exact calibration needs {per_source} unique {source} pairs; "
+                f"found {len(pair_candidates)}"
+            )
+        source_counts[source] = per_source
+        selected.extend(pair_candidates[:per_source])
+    return selected, source_counts
+
+
+def review_input_row(
+    row: dict[str, Any],
+    stratum: str,
+    index: int,
+) -> dict[str, Any]:
+    """Adapt a canonical query row to the review-packet input contract."""
+    pair_id = row.get("source_pair_id") or row.get("source_item_id")
+    return {
+        "review_sample_id": f"{stratum}_300:{index:04d}",
+        "query_id": row.get("query_id"),
+        "source_pair_id": pair_id,
+        "text": row.get("text"),
+        "candidate": row,
+    }
+
+
 def build_neighbor_index(
     query_rows: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, set[str]]], dict[str, str], dict[str, set[str]]]:
@@ -305,12 +378,23 @@ def main() -> int:
     packets_dir = release / "source_reports/human_review_packets"
     rows: list[dict[str, Any]] = []
     source_hashes: dict[str, str] = {}
+    source_selection: dict[str, Any] = {}
     for stratum in STRATA:
-        path = packets_dir / f"{stratum}_300.jsonl"
-        source_hashes[stratum] = file_sha(path)
-        packet_rows = read_jsonl(path)
+        if stratum == "exact_discriminative":
+            selected, exact_source_counts = select_source_balanced_exact_rows(query_rows, args.seed)
+            packet_rows = [review_input_row(row, stratum, index) for index, row in enumerate(selected)]
+            source_hashes[stratum] = file_sha(release / "registries/queries.jsonl")
+            source_selection[stratum] = {
+                "policy": "150 unique train physical pairs per source; one human source-trusted exact caption per pair; deterministic SHA256 ordering",
+                "source_counts": exact_source_counts,
+                "source_registry_sha256": source_hashes[stratum],
+            }
+        else:
+            path = packets_dir / f"{stratum}_300.jsonl"
+            source_hashes[stratum] = file_sha(path)
+            packet_rows = read_jsonl(path)
         if len(packet_rows) != 300:
-            raise RuntimeError(f"expected 300 rows in {path}, got {len(packet_rows)}")
+            raise RuntimeError(f"expected 300 rows in {stratum}, got {len(packet_rows)}")
         for packet_row in packet_rows:
             packet_row = dict(packet_row)
             packet_row["review_sample_id"] = f"{stratum}:{packet_row['review_sample_id'].split(':')[-1]}"
@@ -372,7 +456,8 @@ def main() -> int:
 Status: **READY_FOR_TWO_INDEPENDENT_HUMAN_REVIEWERS**
 
 This package is derived from immutable r19g release `{args.dataset_release_sha}`.
-It contains 1,500 rows: 300 exact-discriminative, 300 semantic-multi-positive,
+It contains 1,500 rows: 300 exact-discriminative (150 LEVIR + 150 SECOND, with
+unique physical pairs), 300 semantic-multi-positive,
 300 generic-no-change, 300 stable-scene-specific, and 300 localized-direction.
 
 Review T1 and T2 for the intended pair, then inspect the candidate neighbours.
@@ -424,6 +509,7 @@ until human decisions and adjudication pass the contract.
         "automatic_labels_created": False,
         "candidate_neighbours_are_not_relevance_labels": True,
         "source_packet_sha256": source_hashes,
+        "source_selection": source_selection,
         "r19_train_manifest_sha256": file_sha(release / "exact_core_train.jsonl"),
         "r19_development_manifest_sha256": file_sha(release / "exact_core_development.jsonl"),
         "r19_test_manifest_sha256": file_sha(release / "exact_core_test.jsonl"),
@@ -445,6 +531,8 @@ until human decisions and adjudication pass the contract.
         "reviewer_a_decision_template_sha256": file_sha(args.output_dir / "reviewer_a_decision_template.jsonl"),
         "reviewer_b_decision_template_sha256": file_sha(args.output_dir / "reviewer_b_decision_template.jsonl"),
         "adjudication_template_sha256": file_sha(args.output_dir / "adjudication_template.jsonl"),
+        "exact_source_counts": source_selection["exact_discriminative"]["source_counts"],
+        "exact_source_registry_sha256": source_selection["exact_discriminative"]["source_registry_sha256"],
         "status": "PENDING_EXTERNAL_HUMAN_REVIEW",
     }
     source["artifact_sha256"] = canonical_sha(source)

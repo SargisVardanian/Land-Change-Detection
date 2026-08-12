@@ -145,6 +145,8 @@ def main() -> int:
             "weak_caption_rate": None,
             "semantic_alternative_rate": None,
             "source_conditioned_values": None,
+            "exact_review_source_counts": audit.get("exact_source_counts", {}),
+            "exact_review_source_registry_sha256": audit.get("exact_source_registry_sha256"),
             "no_decisions_fabricated": True,
         },
         "r20_candidate": {
@@ -214,6 +216,11 @@ Valid human estimates are therefore unavailable:
 - semantic-alternative rate: `null`
 - source-conditioned values: `null`
 
+The exact-discriminative stratum is source-balanced by design: 150 unique
+LEVIR physical pairs and 150 unique SECOND physical pairs. This makes the
+future source-conditioned estimate identifiable, but does not create a human
+estimate before review.
+
 ## r19g preservation
 
 - `R19G_IMMUTABLE = true`
@@ -263,6 +270,8 @@ promotion builder. No model training is authorized by this report.
             "reviewer_a_packet_sha256": file_sha(args.review_package / "reviewer_a_packet.jsonl"),
             "reviewer_b_packet_sha256": file_sha(args.review_package / "reviewer_b_packet.jsonl"),
             "adjudication_status": "PENDING",
+            "exact_review_source_counts": audit.get("exact_source_counts", {}),
+            "exact_review_source_registry_sha256": audit.get("exact_source_registry_sha256"),
         },
         "blockers": report["blockers"],
         "recommendation": "DO_NOT_TRAIN_YET",
