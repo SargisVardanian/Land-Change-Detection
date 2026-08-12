@@ -1,0 +1,22 @@
+{
+  "status": "DATASET_CONTRACT_MISSING",
+  "checked_before_model_changes": true,
+  "expected_files": [
+    "contracts/qcpr_shared/dataset_status.json",
+    "contracts/qcpr_shared/dataset_capabilities.json",
+    "contracts/qcpr_shared/handoff/dataset_to_model.jsonl"
+  ],
+  "observed_at_base_47": "absent",
+  "authoritative_release_status": "DATA_QUALITY_HOLD",
+  "authoritative_release": "qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "release_code_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+  "training_views_assumed": {
+    "exact": "not_assumed_by_contract",
+    "semantic": false,
+    "localized": false,
+    "direction": false,
+    "stable": false,
+    "long_series": false
+  },
+  "model_action": "accept_only_explicit_schema_records; do_not_infer_positives_from_event_identity"
+}

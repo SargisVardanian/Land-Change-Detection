@@ -1,0 +1,73 @@
+{
+  "audit_type": "current_bounded_siglip2_georsclip_state",
+  "audit_status": "VERIFIED_FROM_IMMUTABLE_REPORTS",
+  "git": {
+    "branch": "codex/qcpr-siglip2-temporal-training",
+    "local_sha": "50048aa1caef5df81b367092dd2042fcddc1bc98",
+    "remote_sha": "50048aa1caef5df81b367092dd2042fcddc1bc98",
+    "pr_number": 7,
+    "pr_head_sha": "50048aa1caef5df81b367092dd2042fcddc1bc98",
+    "pr_base": "codex/qcpr-model-v3-temporal-retrieval",
+    "pr_state": "OPEN_DRAFT_CLEAN",
+    "worktree_clean": true
+  },
+  "data": {
+    "release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+    "release_identifier_sha256": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+    "runtime_release_sha256": "ff4e71f0733c7c4c69d39b557f4f925bc8a07a1657430489f405b6fc837b1cf1",
+    "development_manifest_sha256": "89a69e144033957ce9c0756502b12c6e56a90f62801e7152d0001bfb339c30a9",
+    "physical_pairs": 1928,
+    "exact_queries": 6310,
+    "full_score_matrix": [6310, 1928],
+    "mask_free": true,
+    "training_sources": ["levir_mci", "second_cc"],
+    "rscc_text_used": false,
+    "multi_positive_runtime_exercised": false
+  },
+  "siglip2_phase_a": {
+    "job_id": 208953,
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_phase_a_256_repaired_c2341fc_20260807",
+    "steps": 256,
+    "physical_microbatch": 32,
+    "logical_physical_batch": 128,
+    "logical_query_count": 256,
+    "score_matrix": [256, 128],
+    "checkpoint_sha256": "fee149404fbff363565059bd579ebb8ed5e95d14755ad5824ab8c16ab824adba",
+    "peak_allocated_gib": 10.484219551086426,
+    "peak_reserved_gib": 13.294921875,
+    "metrics": {
+      "step_0": {"mrr_full": 0.005997746717184782, "hit_at_10": 0.008716323412954807, "mean_rank": 892.8895263671875, "median_rank": 860.0},
+      "step_128": {"mrr_full": 0.013816329650580883, "hit_at_10": 0.020602218806743622, "mean_rank": 402.5391540527344, "median_rank": 265.0},
+      "step_256": {"mrr_full": 0.014166310429573059, "hit_at_10": 0.02297939732670784, "mean_rank": 407.6510314941406, "median_rank": 278.0}
+    },
+    "full_ranking_sha256": {
+      "step_0": "af679349b63f6a1b5e160a38571ef242faabc6688425242cea1adc059fb0fb44",
+      "step_128": "22a671f8183a5f2a4a7d6e9dae162e8001bb05c6d323414d2ada71aed1b5dbbe",
+      "step_256": "6cb2c2ffa56f898937fba18ac007fb3540a2921177b9d08bddb36e9e1d431d6b"
+    },
+    "evidence_status": "NEAR_UNIFORM_AND_RERANK_DELTA_NEGLIGIBLE"
+  },
+  "georsclip_temporal": {
+    "job_id": 209074,
+    "steps": 256,
+    "physical_microbatch": 32,
+    "logical_physical_batch": 128,
+    "score_matrix": [256, 128],
+    "checkpoint_sha256": "20da9f80b20e9ed5f949f9fb74ecc3b6ba8f69a925c3fe01018a7da1a05618e8",
+    "metrics": {
+      "step_0": {"mrr_full": 0.0037206574343144894, "hit_at_10": 0.0030110934749245644, "mean_rank": 915.1868286132812, "median_rank": 895.0},
+      "step_128": {"mrr_full": 0.007861314341425896, "hit_at_10": 0.012678288854658604, "mean_rank": 783.6400756835938, "median_rank": 728.0},
+      "step_256": {"mrr_full": 0.008158458396792412, "hit_at_10": 0.013629159890115261, "mean_rank": 814.9514770507812, "median_rank": 768.0}
+    }
+  },
+  "scientific_interpretation": {
+    "siglip2_step_256_improved_over_its_own_step_0": true,
+    "georsclip_step_256_improved_over_its_own_step_0": true,
+    "cross_backbone_model_selection_claim": false,
+    "improvement_over_r1_or_b1_claim": false,
+    "temporal_siglip_stage_a_gpu": "NOT_RUN",
+    "temporal_siglip_stage_b_gpu": "NOT_RUN",
+    "p2": "BLOCKED_DATASET_CONTRACT"
+  },
+  "source_report": "reports/qcpr_siglip2_current_c2341fc_decision.json"
+}

@@ -1,0 +1,29 @@
+{
+  "status": "FAIL",
+  "scientific_use": "historical_failure_evidence_only",
+  "old_phase_a_job": 210275,
+  "old_formulation": {
+    "physical_pairs": 128,
+    "singleton_pairs": 31,
+    "logical_query_count": 256,
+    "singleton_query_reused_to_fill_second_slot": true
+  },
+  "unique_formulation": {
+    "physical_pairs": 128,
+    "unique_query_count": 225,
+    "singleton_query_reused_to_fill_second_slot": false
+  },
+  "identical_score_audit": {
+    "loss_difference": 0.02263641357421875,
+    "text_to_pair_difference": 0.006575584411621094,
+    "pair_to_text_difference": 0.038697242736816406,
+    "pair_gradient_relative_difference": 0.2818138897418976,
+    "text_gradient_relative_difference": 0.2905232906341553,
+    "logit_scale_gradient_difference": 0.02932000160217285,
+    "comparison": "same deterministic embeddings and scores; only row duplication versus unique-Q reduction changed"
+  },
+  "decision": "SINGLETON_CAPTION_WEIGHTING_GATE_FAIL",
+  "required_repair": "variable-Q unique query sampling with pair-balanced text-to-pair reduction and unique multi-positive pair-to-text reduction",
+  "checkpoint_may_initialize_corrected_phase_a": false,
+  "checkpoint_may_initialize_phase_b": false
+}

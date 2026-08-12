@@ -1,0 +1,140 @@
+{
+  "status": "PASS_BOUNDED_SINGLE_SEED_EXACT_CORE",
+  "decision": "STAGE_A_EXACT_GAIN_BUT_NOCHANGE_LIMIT",
+  "current_sha_real_integration_smoke": {
+    "job_id": "209868",
+    "status": "PASS",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_real_smoke_ed96db2_20260807",
+    "code_sha": "ed96db2d2bf357c21c32657df4b4590f9ea51d54",
+    "checkpoint_sha256": "144b97cafdb5c444cf141cd10b45778266be4b495d251fa0c093c2b029dfa55c",
+    "peak_allocated_gib": 8.838422775268555,
+    "peak_reserved_gib": 10.447265625,
+    "score_matrix": [256, 128],
+    "global_step": 8,
+    "checkpoint_roundtrip": "PASS",
+    "backbones_frozen": true
+  },
+  "code_sha": "1c201990eae777a41c370194d73099cb54481eed",
+  "training_code_sha": "301de15b095a5816e637d884b1e4c3e3675b8b49",
+  "training_job": "209853",
+  "training_run": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_stage_a_512_301de15_20260807",
+  "checkpoint_sha256": "7d634f18e8bac645a302cadbe7279429f29dfe7effa01dc406b8d48c737697db",
+  "data_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "data_release_sha256": "ff4e71f0733c7c4c69d39b557f4f925bc8a07a1657430489f405b6fc837b1cf1",
+  "common_manifest": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_stage2_review_system_a772460_20260803/common_frozen_evaluation/common_exact_development.jsonl",
+  "common_manifest_sha256": "89a69e144033957ce9c0756502b12c6e56a90f62801e7152d0001bfb339c30a9",
+  "gallery_pairs": 1928,
+  "exact_queries": 6310,
+  "all_diagnostic_queries": 9640,
+  "training": {
+    "global_step": 512,
+    "requested_steps": 512,
+    "physical_microbatch": 32,
+    "logical_physical_batch": 128,
+    "captions_per_pair": 2,
+    "score_matrix": [256, 128],
+    "peak_allocated_gib": 8.840153217315674,
+    "peak_reserved_gib": 10.005859375,
+    "trainable_parameters": 14184193,
+    "frozen_backbone_parameters": 375234050,
+    "hard_negative_mining": false,
+    "multi_positive_runtime": "NOT_EXERCISED"
+  },
+  "metric_note": "All exact queries have one positive, so Hit@K and ordinary Recall@K coincide for this table. Semantic mAP/nDCG were not exercised.",
+  "exact_primary": {
+    "B1_frozen": {
+      "mrr_full": 0.006750581441277837,
+      "hit_at_1": 0.0009508716175332665,
+      "hit_at_5": 0.006022186949849129,
+      "hit_at_10": 0.01077654492110014,
+      "hit_at_50": 0.04358161613345146,
+      "hit_at_100": 0.07464342564344406,
+      "mean_rank": 872.4665610142631,
+      "median_rank": 837.0
+    },
+    "StageA_step0": {
+      "mrr_full": 0.00530232721939683,
+      "hit_at_1": 0.0009508716175332665,
+      "hit_at_5": 0.0030110934749245644,
+      "hit_at_10": 0.006497622933238745,
+      "hit_at_50": 0.03137876386687797,
+      "hit_at_100": 0.061172742396593094,
+      "mean_rank": 838.75927734375,
+      "median_rank": 821.0
+    },
+    "StageA_step256": {
+      "mrr_full": 0.04125049337744713,
+      "hit_at_1": 0.012361330911517143,
+      "hit_at_5": 0.04643423110246658,
+      "hit_at_10": 0.08526148647069931,
+      "hit_at_50": 0.2765451669692993,
+      "hit_at_100": 0.43866878747940063,
+      "mean_rank": 243.2681427001953,
+      "median_rank": 123.0
+    },
+    "StageA_step512": {
+      "mrr_full": 0.046174295246601105,
+      "hit_at_1": 0.015689382329583168,
+      "hit_at_5": 0.05309033393859863,
+      "hit_at_10": 0.09397781640291214,
+      "hit_at_50": 0.30063390731811523,
+      "hit_at_100": 0.4567353427410126,
+      "mean_rank": 242.70364379882812,
+      "median_rank": 117.0
+    }
+  },
+  "step512_by_source": {
+    "levir_mci": {
+      "queries": 3335,
+      "mrr_full": 0.04909608130486667,
+      "hit_at_10": 0.10134932398796082,
+      "hit_at_100": 0.4248875677585602,
+      "mean_rank": 258.45877061469264,
+      "median_rank": 138.0
+    },
+    "second_cc": {
+      "queries": 2975,
+      "mrr_full": 0.0428989367723031,
+      "hit_at_10": 0.08571428805589676,
+      "hit_at_100": 0.4924369752407074,
+      "mean_rank": 225.0420168067227,
+      "median_rank": 103.0
+    }
+  },
+  "step512_diagnostics": {
+    "all_queries": {
+      "mrr_full": 0.032407764345407486,
+      "hit_at_10": 0.06462655961513519,
+      "hit_at_100": 0.3199170231819153,
+      "mean_rank": 383.85736083984375,
+      "median_rank": 234.0
+    },
+    "generic_no_change": {
+      "mrr_full": 0.006321648222895938,
+      "hit_at_10": 0.009009009227156639,
+      "hit_at_100": 0.06066066026687622,
+      "mean_rank": 651.3288288288288,
+      "median_rank": 616.0
+    },
+    "B1_generic_no_change": {
+      "mrr_full": 0.006345549701108056,
+      "hit_at_10": 0.009309309534728527,
+      "hit_at_100": 0.08468468487262726,
+      "mean_rank": 777.5582582582582,
+      "median_rank": 704.0
+    }
+  },
+  "evaluation_jobs": {
+    "step0": "209864",
+    "step256": "209865",
+    "step512": "209866",
+    "step512_diagnostic": "209867"
+  },
+  "interpretation": [
+    "Stage A improves exact retrieval on the same 1928-pair, 6310-query gallery versus the frozen B1 screen.",
+    "The gain is present on both LEVIR-MCI and SECOND-CC, so it is not confined to one source.",
+    "Generic no-change retrieval does not improve and is slightly lower at Recall@10; it remains a data/query bottleneck.",
+    "No semantic multi-positive, localized, RSCC-text, or long-series result is claimed.",
+    "Stage B and main training require a separate decision package and authorization."
+  ]
+}

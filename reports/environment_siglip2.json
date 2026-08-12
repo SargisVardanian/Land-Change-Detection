@@ -1,0 +1,21 @@
+{
+  "python": "/mnt/weka/svardanyan/rs_change_project/envs/rschange/bin/python",
+  "python_version": "3.11.15",
+  "torch": "2.12.1+cu130",
+  "cuda_runtime": "13.0",
+  "transformers": "5.12.1",
+  "huggingface_hub": "1.20.1",
+  "safetensors": "0.8.0",
+  "open_clip": "3.3.0",
+  "timm": "1.0.27",
+  "siglip2_classes_exposed": ["Siglip2Model", "Siglip2Processor", "Siglip2VisionModel", "Siglip2TextModel"],
+  "checkpoint_resolution": {
+    "hf_repository": "google/siglip2-base-patch16-256",
+    "config_model_type": "siglip",
+    "resolved_runtime_class": "SiglipModel",
+    "reason": "Pinned checkpoint contains Conv2d patch_embedding [768,3,16,16]; Siglip2Model in this Transformers version expects the different Siglip2 embedding contract."
+  },
+  "shared_environment_modified": false,
+  "isolated_environment_created": false,
+  "hf_hub_offline_for_jobs": true
+}

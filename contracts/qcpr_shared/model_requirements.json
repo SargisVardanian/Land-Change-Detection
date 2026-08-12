@@ -1,0 +1,142 @@
+{
+  "evaluation_mask_sidecar": {
+    "allowed_only_in_evaluation": [
+      "mask_path",
+      "dense_label_path",
+      "official_label",
+      "semantic_map"
+    ],
+    "join_key": "item_id"
+  },
+  "forbidden_primary_training_verification": [
+    "generated_unverified",
+    "derived_eval"
+  ],
+  "graded_relevance": {
+    "0": "irrelevant",
+    "1": "broad semantic match, diagnostic or low weight",
+    "2": "same change category",
+    "3": "same object, direction and damage/change type"
+  },
+  "localized_relation": {
+    "optional_fields": [
+      "relation_type",
+      "normalized_box",
+      "token_coordinates",
+      "temporal_interval"
+    ]
+  },
+  "long_series": {
+    "minimum_frames": 3,
+    "required_fields": [
+      "sequence_id",
+      "frame_ids",
+      "timestamps",
+      "query_temporal_extent"
+    ]
+  },
+  "maximum_frames": 8,
+  "minimum_frames": 2,
+  "owner": "model",
+  "query_scopes": [
+    "exact",
+    "semantic",
+    "localized",
+    "direction",
+    "stable",
+    "long_series"
+  ],
+  "required_fields": {
+    "frame": [
+      "path",
+      "sha256"
+    ],
+    "item": [
+      "item_id",
+      "item_type",
+      "frames",
+      "split",
+      "source",
+      "physical_group_id",
+      "training_enabled"
+    ],
+    "query": [
+      "query_id",
+      "text",
+      "query_scope",
+      "positive_item_ids",
+      "graded_relevance",
+      "verification",
+      "split"
+    ]
+  },
+  "required_timestamp_format": "ISO-8601 string or normalized float with explicit missingness",
+  "schema_version": "1.0.0",
+  "siglip2_track": {
+    "accepted_primary_verification_states": [
+      "human",
+      "human_rewritten"
+    ],
+    "native_visual_contract": {
+      "hidden_size": 768,
+      "patch_size": 16,
+      "patch_grid": "runtime [height,width] from processor spatial_shapes",
+      "patch_tokens": "runtime N; supported direct budgets 256, 576, 1024",
+      "patch_valid_mask": "[B,T,N], padded patches are invalid",
+      "native_image_size": "[B,T,2] height,width",
+      "processed_patch_grid": "[B,T,2]",
+      "transform_hash": "same synchronized transform hash for T1/T2",
+      "large_scene_policy": "bounded query-independent reducer; no extra ANN vectors"
+    },
+    "rejected_primary_verification_states": [
+      "generated_unverified",
+      "derived_eval"
+    ],
+    "primary_exact_training_verification": [
+      "human",
+      "human_rewritten"
+    ],
+    "required_hashes": [
+      "release_sha256",
+      "train_manifest_sha256",
+      "development_manifest_sha256",
+      "ordered_pair_ids_sha256",
+      "ordered_query_ids_sha256"
+    ],
+    "source_balance": {
+      "approved_sources": [
+        "levir_mci",
+        "second_cc"
+      ],
+      "rscc": "disabled",
+      "synthetic": "disabled"
+    },
+    "supported_frame_count": {
+      "maximum": 8,
+      "minimum": 2,
+      "variable_length": true
+    },
+    "training_views": [
+      "retrieval_exact_train_v2.jsonl"
+    ],
+    "evaluation_views": [
+      "retrieval_exact_development_v2.jsonl",
+      "retrieval_exact_test_v2.jsonl"
+    ]
+  },
+  "source_balance": {
+    "event_uniform_validation": true,
+    "max_event_fraction_in_logical_batch": 0.1,
+    "max_new_source_fraction_initial_pilot": 0.3,
+    "required": true
+  },
+  "supported_item_types": [
+    "pair",
+    "sequence"
+  ],
+  "verification_for_primary_training": [
+    "human",
+    "human_rewritten",
+    "generated_verified"
+  ]
+}

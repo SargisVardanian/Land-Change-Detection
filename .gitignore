@@ -10,6 +10,8 @@ artifacts/
 /external/UniverSat/
 /models/
 data/
+!src/qcpr_siglip2/data/
+!src/qcpr_siglip2/data/**
 !src/land_change_detection/data/
 !src/land_change_detection/data/**
 /datasets/
@@ -19,6 +21,9 @@ pages/__pycache__/
 scripts/__pycache__/
 src/land_change_detection.egg-info/
 src/land_change_detection/**/__pycache__/
+src/qcpr_v3/**/__pycache__/
+src/qcpr_siglip2/**/__pycache__/
+src/qcpr_temporal_siglip/**/__pycache__/
 tests/.tmp_train_logic/
 tests/__pycache__/
 2211.15660v3.pdf

@@ -1,0 +1,112 @@
+{
+  "arms": {
+    "B20": {
+      "checkpoint_id": "B20_step_1140",
+      "checkpoint_sha256": "3a8042704f2dda03018619a8fe7c75748e008cea676c3500a18e9e5de2984b4f",
+      "full_rankings_path": "/mnt/weka/svardanyan/rs_change_siglip2_phase_b_top2_74e9e8665_20260810/milestone_evaluations/step_1140/full_rankings.pt",
+      "full_rankings_sha256": "4e2c58aaab9f6278fdfdae122595ce2389805b4a3ce9b331b9c42b24feedeab8",
+      "metrics": {
+        "candidate_hit_at_1": 0.02232002466917038,
+        "candidate_hit_at_10": 0.16567116975784302,
+        "candidate_hit_at_100": 0.6560829877853394,
+        "candidate_hit_at_5": 0.0996541976928711,
+        "candidate_hit_at_50": 0.46840617060661316,
+        "mean_rank": 104.17007446289062,
+        "median_rank": 57.0,
+        "mrr_full": 0.07503564655780792
+      },
+      "run_release_sha256": "632984743ab5a1e0715115cf6bfa871190af95ed54e077008a2c4a74c2dd8816",
+      "top100_crosscheck": {
+        "examples": {
+          "malformed": [],
+          "missing": []
+        },
+        "malformed_rows": 0,
+        "missing_queries": 0,
+        "query_rows": 3181,
+        "serialized_rows": 3181,
+        "status": "PASS"
+      },
+      "within_source_metrics": {
+        "candidate_hit_at_1": 0.02357749082148075,
+        "candidate_hit_at_10": 0.17353034019470215,
+        "candidate_hit_at_100": 0.6799748539924622,
+        "candidate_hit_at_5": 0.10248349606990814,
+        "candidate_hit_at_50": 0.48601070046424866,
+        "mean_rank": 86.46148681640625,
+        "median_rank": 53.0,
+        "mrr_full": 0.07790561020374298
+      }
+    },
+    "B24": {
+      "checkpoint_id": "B24_step_1368",
+      "checkpoint_sha256": "b00911f7910e7d0747bf4d6a8c339461ffc696ac35cf2d2c756a2388d5ed3426",
+      "full_rankings_path": "/mnt/weka/svardanyan/rs_change_siglip2_phase_b_top2_74e9e8665_20260810/milestone_evaluations/step_1368/full_rankings.pt",
+      "full_rankings_sha256": "c06a6ff46f6c4ccf30ebea39fda4c51e1730b6e50ae7085ab37426d679f34210",
+      "metrics": {
+        "candidate_hit_at_1": 0.02420622482895851,
+        "candidate_hit_at_10": 0.16567116975784302,
+        "candidate_hit_at_100": 0.6570261120796204,
+        "candidate_hit_at_5": 0.09871109575033188,
+        "candidate_hit_at_50": 0.4652625024318695,
+        "mean_rank": 105.7557373046875,
+        "median_rank": 58.0,
+        "mrr_full": 0.07586469501256943
+      },
+      "run_release_sha256": "632984743ab5a1e0715115cf6bfa871190af95ed54e077008a2c4a74c2dd8816",
+      "top100_crosscheck": {
+        "examples": {
+          "malformed": [],
+          "missing": []
+        },
+        "malformed_rows": 0,
+        "missing_queries": 0,
+        "query_rows": 3181,
+        "serialized_rows": 3181,
+        "status": "PASS"
+      },
+      "within_source_metrics": {
+        "candidate_hit_at_1": 0.024834956973791122,
+        "candidate_hit_at_10": 0.1703866720199585,
+        "candidate_hit_at_100": 0.6821753978729248,
+        "candidate_hit_at_5": 0.10216912627220154,
+        "candidate_hit_at_50": 0.482867032289505,
+        "mean_rank": 87.1989974975586,
+        "median_rank": 53.0,
+        "mrr_full": 0.0783642902970314
+      }
+    }
+  },
+  "development_manifest_sha256": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
+  "gallery_count": 995,
+  "ordered_gallery_ids_sha256": "1627b745bed8d2e78cc9b99ff1be9f4f792025d8e8a3f275ad0cda199ba554ef",
+  "ordered_query_ids_sha256": "ed25e0f52a93d4e8fa785da3f504a669d79a99962a657550bae1019445d075ff",
+  "producer_sha": "13900fe43da8ed0a7bd4d237a69f965f4a2b4d3a",
+  "query_count": 3181,
+  "release_sha256": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
+  "status": "PASS_MANIFEST_MATCH_STALE_RUN_RELEASE_FIELD",
+  "top20_crosscheck": {
+    "B20": {
+      "examples": {
+        "malformed": [],
+        "missing": []
+      },
+      "malformed_rows": 0,
+      "missing_queries": 0,
+      "query_rows": 3181,
+      "serialized_rows": 3181,
+      "status": "PASS"
+    },
+    "B24": {
+      "examples": {
+        "malformed": [],
+        "missing": []
+      },
+      "malformed_rows": 0,
+      "missing_queries": 0,
+      "query_rows": 3181,
+      "serialized_rows": 3181,
+      "status": "PASS"
+    }
+  }
+}

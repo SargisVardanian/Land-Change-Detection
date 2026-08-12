@@ -1,0 +1,119 @@
+{
+  "handoff_version": "MODEL_TO_DATASET_B20_B24_V1",
+  "created_at": "2026-08-11T22:23:06Z",
+  "model_head_sha": "dbb73f49578bd99b3d7e4f99c16051f1f0f21b64",
+  "artifact_generation_sha": "13900fe43da8ed0a7bd4d237a69f965f4a2b4d3a",
+  "dataset_release_sha": "6d90faeded7a0cadfd9e0a46b48c9d6b9d623cea2d9cbd7439b07bedc62ab871",
+  "dataset_handoff_artifact_sha": "68e52867b8a11a58958136e7ac2ce173be46c7f5159dd3434ee7db1ab1d5b599",
+  "dataset_handoff_status": "CONTRACT_READY_WAIT_MODEL_FORENSIC_HANDOFF",
+  "evaluation_contract": {
+    "development_manifest_sha256": "e08e2da0c93a649fcce17d200bf413a7f92443f65fc0901e5ead8961c254a98c",
+    "ordered_gallery_ids_sha256": "1627b745bed8d2e78cc9b99ff1be9f4f792025d8e8a3f275ad0cda199ba554ef",
+    "ordered_query_ids_sha256": "ed25e0f52a93d4e8fa785da3f504a669d79a99962a657550bae1019445d075ff",
+    "gallery_count": 995,
+    "query_count": 3181
+  },
+  "checkpoint_B20": {
+    "checkpoint_id": "B20_step_1140",
+    "checkpoint_path": "/mnt/weka/svardanyan/rs_change_siglip2_phase_b_top2_74e9e8665_20260810/milestones/checkpoint_step_1140.pt",
+    "checkpoint_sha256": "3a8042704f2dda03018619a8fe7c75748e008cea676c3500a18e9e5de2984b4f",
+    "full_rankings_path": "/mnt/weka/svardanyan/rs_change_siglip2_phase_b_top2_74e9e8665_20260810/milestone_evaluations/step_1140/full_rankings.pt",
+    "full_rankings_sha256": "4e2c58aaab9f6278fdfdae122595ce2389805b4a3ce9b331b9c42b24feedeab8",
+    "global_metrics": {
+      "mrr_full": 0.07503564655780792,
+      "hit_at_1": 0.02232002466917038,
+      "hit_at_5": 0.0996541976928711,
+      "hit_at_10": 0.16567116975784302,
+      "hit_at_50": 0.46840617060661316,
+      "hit_at_100": 0.6560829877853394,
+      "mean_rank": 104.17007446289062,
+      "median_rank": 57.0
+    },
+    "within_source_metrics": {
+      "mrr_full": 0.07790561020374298,
+      "hit_at_10": 0.17353034019470215
+    }
+  },
+  "checkpoint_B24": {
+    "checkpoint_id": "B24_step_1368",
+    "checkpoint_path": "/mnt/weka/svardanyan/rs_change_siglip2_phase_b_top2_74e9e8665_20260810/milestones/checkpoint_step_1368.pt",
+    "checkpoint_sha256": "b00911f7910e7d0747bf4d6a8c339461ffc696ac35cf2d2c756a2388d5ed3426",
+    "full_rankings_path": "/mnt/weka/svardanyan/rs_change_siglip2_phase_b_top2_74e9e8665_20260810/milestone_evaluations/step_1368/full_rankings.pt",
+    "full_rankings_sha256": "c06a6ff46f6c4ccf30ebea39fda4c51e1730b6e50ae7085ab37426d679f34210",
+    "global_metrics": {
+      "mrr_full": 0.07586469501256943,
+      "hit_at_1": 0.02420622482895851,
+      "hit_at_5": 0.09871109575033188,
+      "hit_at_10": 0.16567116975784302,
+      "hit_at_50": 0.4652625024318695,
+      "hit_at_100": 0.6570261120796204,
+      "mean_rank": 105.7557373046875,
+      "median_rank": 58.0
+    },
+    "within_source_metrics": {
+      "mrr_full": 0.0783642902970314,
+      "hit_at_10": 0.1703866720199585
+    }
+  },
+  "bootstrap_result": {
+    "path": "reports/qcpr_b20_vs_b24_bootstrap.json",
+    "absolute_path_at_generation": "/Users/sargisvardanyan/.codex/worktrees/qcpr-model-agent-audit-20260812/reports/qcpr_b20_vs_b24_bootstrap.json",
+    "sha256": "243432e9cc255216060b25be89f816aa06d73eeebf3a45ec6ca703353fa4e962",
+    "status": "PASS_MANIFEST_MATCH_STALE_RUN_RELEASE_FIELD",
+    "replicates": 5000,
+    "cluster_unit": "physical_pair",
+    "delta_mrr_B24_minus_B20": 0.0008290484547615051,
+    "delta_mrr_ci95": [
+      -0.0007111554965376854,
+      0.0024681147187948223
+    ],
+    "delta_mrr_empirical_two_sided_sign_p": 0.30239999294281006,
+    "delta_within_source_mrr_B24_minus_B20": 0.00045868009328842163,
+    "delta_within_source_mrr_ci95": [
+      -0.001078222133219242,
+      0.0020527800545096396
+    ],
+    "decision": "CANONICAL_BUDGET_20"
+  },
+  "representation_audit": {
+    "path": "reports/qcpr_postB_small_representation_audit.json",
+    "absolute_path_at_generation": "/Users/sargisvardanyan/.codex/worktrees/qcpr-model-agent-audit-20260812/reports/qcpr_postB_small_representation_audit.json",
+    "sha256": "77b6e75f50ad7f5b0c45eb1bcdd25b8e08e8d327920ac095d5ac5ac7541cc568",
+    "status": "PARTIAL_MISSING_POSTB_EMBEDDING_ARRAYS"
+  },
+  "route_gap_observed": true,
+  "direction_contract_observed": {
+    "DIRECTION_TRAIN_READY": false,
+    "DIRECTION_EVAL_READY": false,
+    "action": "No direction loss or reversal supervision was used."
+  },
+  "top20_artifact": {
+    "path": "reports/qcpr_dev_top20_for_dataset_agent.jsonl",
+    "absolute_path_at_generation": "/Users/sargisvardanyan/.codex/worktrees/qcpr-model-agent-audit-20260812/reports/qcpr_dev_top20_for_dataset_agent.jsonl",
+    "sha256": "61364596098114b291ef2bfa3d8d6cf8939e299deb0562215f31a9f225279b08",
+    "rows": 3181,
+    "contains": [
+      "B20 global_stage1 Top-20",
+      "B24 global_stage1 Top-20",
+      "B20 historical reranked_k100 Top-20",
+      "B24 historical reranked_k100 Top-20",
+      "exact rank and score",
+      "score margins",
+      "query and candidate source"
+    ]
+  },
+  "top20_summary": {
+    "path": "reports/qcpr_dev_top20_summary.json",
+    "sha256": "95076138f02ba0d77df19ba762fd2ebec3d6c368e641c43efdd488020c99b767",
+    "markdown_path": "reports/qcpr_dev_top20_summary.md",
+    "markdown_sha256": "74156e2c994ed76b7f58a945fc866f030cabcf8616707fa89e96beaad66d9fec"
+  },
+  "notes": [
+    "B24 MRR gain is statistically inconclusive; global Hit@10 is unchanged and within-source Hit@10 decreases.",
+    "By the predeclared rule, select B20 as the canonical compute-efficient budget; do not run 28/32/48 presentations per pair.",
+    "The historical run release field is stale (632984743ab5a1e0715115cf6bfa871190af95ed54e077008a2c4a74c2dd8816), but manifest, gallery-order, query-order, score-shape, and finite-ranking checks match r19g.",
+    "Semantic multi-positive query count remains zero; no semantic labels were fabricated.",
+    "The full repository suite was not rerun in this audit worktree; the optional update-diagnostics focused test passed in the canonical environment (1 passed).",
+    "The Top-20 export is diagnostic only. Dataset Agent must perform the model-versus-data forensic classification."
+  ]
+}

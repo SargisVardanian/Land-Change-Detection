@@ -1,0 +1,14 @@
+{
+  "hidden_size": 768,
+  "patch_tokens": 256,
+  "patch_grid": 16,
+  "max_frames": 8,
+  "temporal_layers": 2,
+  "attention_heads": 12,
+  "mlp_ratio": 4,
+  "dropout": 0.0,
+  "max_logit_scale": 4.0,
+  "min_logit_scale": -5.0,
+  "initial_temperature": 0.07,
+  "localization_temperature": 0.07
+}

@@ -1,0 +1,18 @@
+{
+  "include": ["src/qcpr_temporal_siglip"],
+  "venvPath": "/mnt/weka/svardanyan/rs_change_project/envs",
+  "venv": "rschange",
+  "executionEnvironments": [
+    {
+      "root": "src/qcpr_temporal_siglip",
+      "extraPaths": ["src"],
+      "reportPrivateImportUsage": "none"
+    }
+  ],
+  "reportMissingImports": "error",
+  "reportPrivateImportUsage": "error",
+  "reportOptionalMemberAccess": "error",
+  "reportArgumentType": "error",
+  "reportRedeclaration": "error",
+  "reportGeneralTypeIssues": "error"
+}

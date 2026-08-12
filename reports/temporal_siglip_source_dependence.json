@@ -1,0 +1,189 @@
+{
+  "arms": {
+    "stage_a": {
+      "centroid_and_embedding": {
+        "centroid_cosine": -0.7896555662155151,
+        "centroid_l2_distance": 1.89190673828125,
+        "cross_source_cosine_mean": -0.20546890795230865,
+        "effective_rank": 768,
+        "pair_norm_mean": 1.0,
+        "pair_norm_std": 4.820411803052593e-08,
+        "within_source_cosine_mean": 0.25949013233184814
+      },
+      "checkpoint": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_stage_a_512_301de15_20260807/checkpoint.pt",
+      "checkpoint_sha256": "7d634f18e8bac645a302cadbe7279429f29dfe7effa01dc406b8d48c737697db",
+      "embedding_path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_source_audit_5e49864b_20260808/stage_a_pair_embeddings.pt",
+      "embedding_sha256": "d1b8210accfe90796d29e9f4a719e20be84d341dff3454640ac5e68c4ae4b379",
+      "ranking": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_common_eval_stage_a_reval_eb96463_20260808/full_rankings.pt",
+      "ranking_sha256": "6b3bf5f1be4202f19f744ee51d011ae92494144f41da717d17529460a9bbbb6c",
+      "source_conditioned_rank_metrics": {
+        "levir_mci": {
+          "hit_at_10": 0.10134932398796082,
+          "median_rank": 138.0,
+          "mrr_full": 0.04909608140587807,
+          "query_count": 3335
+        },
+        "second_cc": {
+          "hit_at_10": 0.08571428805589676,
+          "median_rank": 103.0,
+          "mrr_full": 0.042898938059806824,
+          "query_count": 2975
+        }
+      },
+      "source_linear_probe": {
+        "accuracy_mean": 0.9994818687438964,
+        "accuracy_std": 0.0010362624889239669,
+        "confusion_matrix_true_rows": [
+          [
+            1333,
+            0
+          ],
+          [
+            1,
+            594
+          ]
+        ],
+        "fold_accuracies": [
+          0.9974093437194824,
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ],
+        "folds": 5,
+        "probe": "5_fold_stratified_ridge_linear_probe"
+      }
+    },
+    "stage_b_step1024": {
+      "centroid_and_embedding": {
+        "centroid_cosine": -0.47341489791870117,
+        "centroid_l2_distance": 1.7166333198547363,
+        "cross_source_cosine_mean": -0.07617954909801483,
+        "effective_rank": 768,
+        "pair_norm_mean": 1.0,
+        "pair_norm_std": 4.565179878568415e-08,
+        "within_source_cosine_mean": 0.1808854341506958
+      },
+      "checkpoint": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_stage_b_1536_eb96463_20260808/checkpoint_step_1024.pt",
+      "checkpoint_sha256": "f51f1cc7af17691cb3d8f5855959ba16476deb04ff29d2a0d89bb3fad3b64f41",
+      "embedding_path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_source_audit_5e49864b_20260808/stage_b_step1024_pair_embeddings.pt",
+      "embedding_sha256": "21323b6f772cdb5bb503e56ac9531fd983d58d4b283662700b00fc6a94431c1c",
+      "ranking": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_common_eval_stage_b_step1024_eb96463_20260808/full_rankings.pt",
+      "ranking_sha256": "2c642a795c00bd2a9c1ad38d9f55e77c8e86b187ac124a8315aeac6985495633",
+      "source_conditioned_rank_metrics": {
+        "levir_mci": {
+          "hit_at_10": 0.1283358335494995,
+          "median_rank": 87.0,
+          "mrr_full": 0.06191874295473099,
+          "query_count": 3335
+        },
+        "second_cc": {
+          "hit_at_10": 0.10420168191194534,
+          "median_rank": 99.0,
+          "mrr_full": 0.05298873409628868,
+          "query_count": 2975
+        }
+      },
+      "source_linear_probe": {
+        "accuracy_mean": 0.9984455943107605,
+        "accuracy_std": 0.0020725459326058626,
+        "confusion_matrix_true_rows": [
+          [
+            1331,
+            2
+          ],
+          [
+            1,
+            594
+          ]
+        ],
+        "fold_accuracies": [
+          0.9948186278343201,
+          1.0,
+          0.9974093437194824,
+          1.0,
+          1.0
+        ],
+        "folds": 5,
+        "probe": "5_fold_stratified_ridge_linear_probe"
+      }
+    },
+    "stage_b_step2048": {
+      "centroid_and_embedding": {
+        "centroid_cosine": -0.5035671591758728,
+        "centroid_l2_distance": 1.7341090440750122,
+        "cross_source_cosine_mean": -0.05651910975575447,
+        "effective_rank": 768,
+        "pair_norm_mean": 1.0,
+        "pair_norm_std": 4.747225190726567e-08,
+        "within_source_cosine_mean": 0.1122070923447609
+      },
+      "checkpoint": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_stage_b_1536_eb96463_20260808/checkpoint_step_2048.pt",
+      "checkpoint_sha256": "39c13678bf2b78ff1be57accbb937e313022cd92edd27d0ed5b0174a7b783019",
+      "embedding_path": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_source_audit_5e49864b_20260808/stage_b_step2048_pair_embeddings.pt",
+      "embedding_sha256": "f7f4877f6d0339010516cde287df1ed85f3f30d5230f605f309c8fa1d3d1ba65",
+      "ranking": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_temporal_siglip_common_eval_stage_b_step2048_eb96463_20260808/full_rankings.pt",
+      "ranking_sha256": "7fd0dfb46cf0c24513b1b69b5398f8faeeb70edc5a2f231dfb739ab2ed6f1c93",
+      "source_conditioned_rank_metrics": {
+        "levir_mci": {
+          "hit_at_10": 0.13583208620548248,
+          "median_rank": 95.0,
+          "mrr_full": 0.06333134323358536,
+          "query_count": 3335
+        },
+        "second_cc": {
+          "hit_at_10": 0.10655461996793747,
+          "median_rank": 106.0,
+          "mrr_full": 0.04924408346414566,
+          "query_count": 2975
+        }
+      },
+      "source_linear_probe": {
+        "accuracy_mean": 0.9984442591667175,
+        "accuracy_std": 0.0012702594976872206,
+        "confusion_matrix_true_rows": [
+          [
+            1330,
+            3
+          ],
+          [
+            0,
+            595
+          ]
+        ],
+        "fold_accuracies": [
+          0.9974093437194824,
+          1.0,
+          0.9974093437194824,
+          1.0,
+          0.9974026083946228
+        ],
+        "folds": 5,
+        "probe": "5_fold_stratified_ridge_linear_probe"
+      }
+    }
+  },
+  "code": {
+    "head": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+    "worktree_clean": true
+  },
+  "comparison": {
+    "source_dependence_flag": "NO_LARGE_DELTA_DETECTED",
+    "stage_b_minus_stage_a_probe_accuracy": -0.0010376095771789107
+  },
+  "data_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "development_manifest": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802/manifests/retrieval_exact_development_v2.jsonl",
+  "development_manifest_sha256": "89a69e144033957ce9c0756502b12c6e56a90f62801e7152d0001bfb339c30a9",
+  "exact_query_count": 6310,
+  "gallery_size": 1928,
+  "interpretation_policy": {
+    "flag_requires_comparison_with_retrieval_gain": true,
+    "high_source_predictability_is_not_alone_a_failure": true,
+    "source_probe_is_diagnostic": true
+  },
+  "source_counts": {
+    "levir_mci": 1333,
+    "second_cc": 595
+  },
+  "status": "PASS"
+}

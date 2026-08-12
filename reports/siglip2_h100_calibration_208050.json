@@ -1,0 +1,56 @@
+{
+  "job_id": 208050,
+  "status": "PASS",
+  "exit_code": "0:0",
+  "node": "gpu05",
+  "code_sha": "96c73666d68dc66131b1a952c10b7b1a99f38502",
+  "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_h100_calibration_96c7366_20260806",
+  "data_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "model": "google/siglip2-base-patch16-256",
+  "precision": "bf16",
+  "gradient_checkpointing": true,
+  "partial_finetuning_scope": "Phase-B parameter scope used for memory calibration; no Phase-B training was launched",
+  "total_optimizer_steps": 6,
+  "logical_physical_batch_target": 128,
+  "selected_physical_batch_size": 32,
+  "selected_query_count": 64,
+  "selected_gradient_accumulation": 4,
+  "selection_rule": "largest candidate with PASS, finite gradients, no OOM and peak reserved VRAM <= 68 GiB",
+  "candidates": [
+    {
+      "physical_batch_size": 8,
+      "query_count": 16,
+      "steps": 2,
+      "status": "PASS",
+      "score_matrix": [16, 8],
+      "peak_allocated_gib": 1.7662630081176758,
+      "peak_reserved_gib": 1.95703125
+    },
+    {
+      "physical_batch_size": 16,
+      "query_count": 32,
+      "steps": 2,
+      "status": "PASS",
+      "score_matrix": [32, 16],
+      "peak_allocated_gib": 1.800959587097168,
+      "peak_reserved_gib": 2.341796875
+    },
+    {
+      "physical_batch_size": 32,
+      "query_count": 64,
+      "steps": 2,
+      "status": "PASS",
+      "score_matrix": [64, 32],
+      "peak_allocated_gib": 2.45919132232666,
+      "peak_reserved_gib": 2.7109375
+    }
+  ],
+  "finite_gradients": true,
+  "oom": false,
+  "scientific_interpretation": "engineering memory calibration only; no retrieval-quality claim",
+  "artifact_sha256": {
+    "calibration_results.json": "ff4890b86f46bc43bd5eff5b0f6ff9109772b44b81c89f1e82c56b3005831182",
+    "batch_contract.json": "08c1726c2f52d59ca4878de53bf4f4c6ed5fb2b549a2a3bf9780fe955949d147",
+    "SHA256SUMS": "9c0812e1db7824fff3fa677cdd4134a75667981e0854243f362ee5641763c9b7"
+  }
+}

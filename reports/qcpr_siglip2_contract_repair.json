@@ -1,0 +1,40 @@
+{
+  "status": "PHASE_A_REPAIR_REQUIRES_RERUN",
+  "code_sha": "29f6503c81638dfb277411472b8faccd8a190749",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "pull_request": 7,
+  "dataset_release_unchanged": true,
+  "historical_artifacts_unchanged": true,
+  "repairs": [
+    {
+      "id": "MINIMAL_TEMPORAL_SEQUENCE",
+      "result": "PASS_STATIC",
+      "detail": "Temporal adapter now contains one pair token followed only by dense temporal patch tokens; pooled per-frame tokens were removed."
+    },
+    {
+      "id": "SPECIAL_TOKEN_EVIDENCE_MASK",
+      "result": "PASS_STATIC",
+      "detail": "Padding and tokenizer special IDs are excluded from text-to-patch evidence while the full attention mask remains used by the text tower."
+    },
+    {
+      "id": "EVALUATION_MEMORY_DEFAULT",
+      "result": "PASS_STATIC",
+      "detail": "Common-gallery and milestone evaluators default to rerank query batch size 1 after the preserved evaluation-only OOM."
+    }
+  ],
+  "historical_phase_a": {
+    "training_job": 208161,
+    "evaluation_job": 208232,
+    "code_sha": "05ab1e0b8d6e1c4dd924616ec1cf6018986b5c5d",
+    "status": "PRESERVED_HISTORICAL_RESULT_NOT_CURRENT_CODE",
+    "reason": "The repaired temporal token contract changes the model state dictionary and requires a fresh Phase-A run before any Phase-B initialization."
+  },
+  "validation": {
+    "git_diff_check": "PASS",
+    "compileall_local_python3": "PASS",
+    "pytest_post_repair": "NOT_RUN_LOCAL_PYTORCH_PYTEST_UNAVAILABLE",
+    "cluster_revalidation": "REQUIRED",
+    "phase_b": "BLOCKED_UNTIL_REPAIRED_PHASE_A_AND_EVIDENCE_NON_COLLAPSE",
+    "p2": "NOT_LAUNCHED"
+  }
+}

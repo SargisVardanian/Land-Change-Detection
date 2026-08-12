@@ -1,0 +1,19 @@
+{
+  "model_branch": "codex/qcpr-model-v3-temporal-retrieval",
+  "model_worktree": "code/project-qcpr-model-v3-temporal-retrieval",
+  "expected_base_sha": "47a628f16aaefb98efa8a20d88f4dbe573dc7d47",
+  "base_sha_verified": true,
+  "source_branch": "codex/qcpr-dataset-v2-stage2",
+  "source_worktree_head_observed": "f8e351b8999bf67485efc78aba89065fef2649b3",
+  "source_worktree_clean_observed": true,
+  "remote_source_head_observed_via_github_api": "df365025f16d3fb6eb0a7e5f9202e622b4f28bda",
+  "remote_source_branch_verified": true,
+  "cluster_ssh_push": "blocked_by_publickey",
+  "historical_artifacts_modified": false,
+  "dataset_contract_status": "DATASET_CONTRACT_MISSING",
+  "authoritative_dataset_release": "qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+  "authoritative_dataset_release_code_sha": "20d619e8e8fdf78dab7d79924e6e7115cfd387cd",
+  "p2_submitted": false,
+  "model_training_submitted": false,
+  "stop_state": null
+}

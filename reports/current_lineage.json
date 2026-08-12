@@ -1,0 +1,16 @@
+{
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "model_and_source_audit_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+  "current_report_head_sha": "c2e4ece5c9429c67df9824685decce7cf2ce0de1",
+  "local_head_sha": "c2e4ece5c9429c67df9824685decce7cf2ce0de1",
+  "remote_head_sha": "c2e4ece5c9429c67df9824685decce7cf2ce0de1",
+  "local_remote_equal": true,
+  "worktree_clean": true,
+  "cluster_model_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+  "cluster_report_commit_synced": false,
+  "source_audit_job_id": "209878",
+  "source_audit_status": "COMPLETED_0:0",
+  "pr_status": "NOT_REVERIFIED_BY_CURRENT_GH_CLI",
+  "historical_lineage_file": "reports/final_lineage.json",
+  "note": "The report commits contain only audit/status artifacts; no model code, Dataset-v2 release, checkpoint, or historical run artifact was modified."
+}

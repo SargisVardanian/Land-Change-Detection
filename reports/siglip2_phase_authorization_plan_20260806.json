@@ -1,0 +1,74 @@
+{
+  "code_lineage": {
+    "branch": "codex/qcpr-siglip2-temporal-training",
+    "code_sha_at_plan": "229ebf149697c82b5d64375c2e7ee1c7214506ea",
+    "pr": 7,
+    "dataset_release": "/mnt/weka/svardanyan/rs_change_project/manifests/qcpr_dataset_v2_stage2_semantic_hold_20d619e8_20260802",
+    "approved_sources": ["levir_mci", "second_cc"]
+  },
+  "completed_prerequisites": {
+    "real_integration_smoke": {
+      "job_id": 208013,
+      "status": "PASS_TECHNICAL_SMOKE",
+      "steps": 8,
+      "score_matrix": [16, 8],
+      "multi_positive_runtime": "NOT_EXERCISED"
+    },
+    "siglip2_common_gallery_step_zero": {
+      "job_id": 208021,
+      "status": "PASS",
+      "query_count": 6310,
+      "gallery_count": 1928,
+      "score_shape": [6310, 1928]
+    },
+    "georsclip_step_zero": {
+      "job_id": 208024,
+      "status": "PASS_FROZEN_EVALUATION",
+      "query_count": 6310,
+      "gallery_count": 1928,
+      "optimizer_steps": 0
+    }
+  },
+  "planned_scientific_work": [
+    {
+      "name": "h100_batch_calibration",
+      "candidate_physical_microbatches": [8, 16, 32],
+      "steps_per_candidate": 2,
+      "total_step_cap": 32,
+      "status": "PASS_JOB_208050; SELECTED_BATCH_32_ACCUMULATION_4"
+    },
+    {
+      "name": "georsclip_temporal_head_baseline",
+      "steps": 256,
+      "backbone": "frozen GeoRSCLIP ViT-B/32",
+      "status": "NOT_AUTHORIZED"
+    },
+    {
+      "name": "siglip2_phase_a",
+      "steps": 256,
+      "trainable": ["temporal_adapter", "temporal_embeddings", "evidence_gate", "retrieval_temperature"],
+      "status": "NOT_AUTHORIZED"
+    },
+    {
+      "name": "siglip2_phase_b",
+      "additional_steps": 1536,
+      "scope": ["top_2_vision_blocks", "top_2_text_blocks", "final_norms_and_heads"],
+      "status": "NOT_AUTHORIZED"
+    }
+  ],
+  "authorization_requirements": [
+    "explicit approval for jobs exceeding 32 steps",
+    "unchanged approved exact-core manifests",
+    "local/remote/PR/cluster SHA equality",
+    "fresh immutable run roots",
+    "full-gallery ranking comparison",
+    "no P2 or unverified text"
+  ],
+  "constraints": [
+    "Do not launch P2.",
+    "Do not modify Dataset-v2 manifests.",
+    "Do not use RSCC or generated-unverified text.",
+    "Do not launch a job exceeding 32 steps without explicit authorization."
+  ],
+  "decision": "TECHNICAL_SMOKE_AND_STEP_ZERO_EVALUATION_READY; LONG_TRAINING_PENDING_EXPLICIT_AUTHORIZATION"
+}

@@ -1,0 +1,35 @@
+{
+  "status": "MODEL_V3_SYNTHETIC_SMOKE_PASS",
+  "synthetic_smoke": {
+    "job_id": 207556,
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "node": "gpu02",
+    "code_sha": "5eab23719aa78515383befd97145c49ffe5fc714",
+    "steps": 16,
+    "logical_score_matrix": [
+      4,
+      4
+    ],
+    "checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee",
+    "peak_cuda_memory": "NOT_CAPTURED_BY_SMOKE_SCRIPT"
+  },
+  "real_integration_smoke": {
+    "job_id": 207560,
+    "status": "FAIL",
+    "failure_class": "ENGINEERING_RUNTIME_DIAGNOSTIC_BUG",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v3_real_integration_smoke_4aaa764_20260805"
+  },
+  "historical_failure": {
+    "job_id": 207555,
+    "status": "ENGINEERING_RUNTIME_DRIVER_BUG",
+    "reason": "smoke driver reused an autograd graph across optimizer steps"
+  },
+  "scientific_interpretation": "The synthetic smoke is not a retrieval-quality result. The real smoke failed in post-training diagnostics; no model improvement is claimed.",
+  "readiness": {
+    "MODEL_V3_SYNTHETIC_SMOKE": "PASS",
+    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL",
+    "MODEL_V3_MECHANISM": "BLOCKED",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED"
+  }
+}

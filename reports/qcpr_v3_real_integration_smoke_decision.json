@@ -1,0 +1,47 @@
+{
+  "status": "MODEL_V3_REAL_INTEGRATION_SMOKE_FAIL_POSTRUN_DIAGNOSTIC",
+  "smoke_code_sha": "4aaa7649daa0079689b577cf63184ca01c05f4e7",
+  "post_smoke_repair": "safe_temporal_spatial_deletion_helper_added_and_tested",
+  "job_id": 207560,
+  "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v3_real_integration_smoke_4aaa764_20260805",
+  "slurm": {
+    "state": "FAILED",
+    "exit_code": "1:0",
+    "node": "gpu04",
+    "elapsed": "00:02:09",
+    "gres": "gpu:h100:1",
+    "host_memory": "64G"
+  },
+  "contract": {
+    "requested_steps": 8,
+    "completed_optimizer_steps_from_checkpoint": 8,
+    "physical_microbatch": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "logical_score_matrix": [
+      16,
+      8
+    ],
+    "native_visual_shape": "[B,2,1024,768]",
+    "mask_access": "none",
+    "generated_unverified_text": false
+  },
+  "artifacts": {
+    "checkpoint_sha256": "a151c1f22237dabe0389109fd9bd922850f16eabacf411d4e26a4b632a0b53ee",
+    "checkpoint_roundtrip": "PASS",
+    "checkpoint_roundtrip_max_abs": 0,
+    "checkpoint_roundtrip_max_relative": 0,
+    "parameter_groups": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v3_real_integration_smoke_4aaa764_20260805/parameter_groups.json",
+    "slurm_log": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_v3_real_integration_smoke_4aaa764_20260805/slurm-207560.out"
+  },
+  "failure": {
+    "class": "ENGINEERING_RUNTIME_DIAGNOSTIC_BUG",
+    "message": "IndexError in evidence deletion: flattened token index was divided by dense_tokens.shape[-1] (hidden dimension 512) instead of shape[-2] (tokens per frame 1024).",
+    "scientific_result": false
+  },
+  "readiness": {
+    "MODEL_V3_REAL_INTEGRATION_SMOKE": "FAIL",
+    "MODEL_V3_MECHANISM": "BLOCKED",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED"
+  }
+}

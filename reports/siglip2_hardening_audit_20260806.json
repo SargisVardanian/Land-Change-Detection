@@ -1,0 +1,116 @@
+{
+  "audit_date": "2026-08-06",
+  "branch": "codex/qcpr-siglip2-temporal-training",
+  "code_sha": "229ebf149697c82b5d64375c2e7ee1c7214506ea",
+  "remote_sha_at_audit": "229ebf149697c82b5d64375c2e7ee1c7214506ea",
+  "pr_number": 7,
+  "pr_state": "OPEN_DRAFT_MERGEABLE",
+  "cluster_worktree_clean": true,
+  "scope": "bounded real integration and frozen evaluation audit; no mechanism or main training",
+  "cpu_validation": {
+    "full_pytest": {
+      "passed": 648,
+      "skipped": 3,
+      "warnings": 16,
+      "duration_seconds": 379.09,
+      "status": "PASS"
+    },
+    "compileall": "PASS",
+    "pyright_qcpr_siglip2": "0 errors, 0 warnings",
+    "shell_syntax": "PASS",
+    "git_diff_check": "PASS",
+    "ruff": "NOT_INSTALLED_ON_CLUSTER",
+    "code_quality_modules": 28,
+    "import_cycles": [],
+    "public_duplicate_symbols": {},
+    "tracked_model_binaries": []
+  },
+  "sources": {
+    "siglip2_repository": "google/siglip2-base-patch16-256",
+    "siglip2_revision": "3f9f96cb90da5dbc758b01813f2f6f1aee24c1ab",
+    "siglip2_weights_sha256": "6125cacc01fa93bdc98a0c5101cefcd69b2ed1f8ab4f38d86f4ad5984f5dc863",
+    "siglip2_runtime_class": "SiglipModel",
+    "georsclip_repository": "Zilun/GeoRSCLIP",
+    "georsclip_revision": "4920188e6eba4e711ef9848cfd7cb77e874ee33f",
+    "georsclip_weights_sha256": "129bafaa6a097b8be52e2babf27d24f0a934dae919201e538dc698611bd1ea01",
+    "georsclip_license_status": "RESEARCH_BASELINE_ONLY"
+  },
+  "real_integration_smoke": {
+    "job_id": 208013,
+    "state": "COMPLETED",
+    "exit_code": "0:0",
+    "node": "gpu05",
+    "run_root": "/mnt/weka/svardanyan/rs_change_project/runs/qcpr_siglip2_real_integration_smoke_5aa11f1_20260806",
+    "implementation_sha": "5aa11f16c4d163716bf5448f3725d5a4cab14070",
+    "steps": 8,
+    "physical_batch_size": 8,
+    "captions_per_pair": 2,
+    "query_count": 16,
+    "score_matrix": [16, 8],
+    "native_visual_shape": [8, 2, 256, 768],
+    "temporal_shape": [8, 512, 768],
+    "text_shape": [16, 64, 768],
+    "trainable_parameter_count": 14384642,
+    "peak_allocated_gib": 2.001208782371521,
+    "peak_reserved_gib": 2.03125,
+    "checkpoint_sha256": "d9bd2498629133f2027a34d8ff9febe88c1925d3bb3f4531483e35429359bc0e",
+    "checkpoint_roundtrip": "PASS",
+    "evidence": {
+      "query_swap_map_l1": 0.0003928795922547579,
+      "query_swap_score_change": 0.404296875,
+      "zero_evidence_score_change": 0.16654765605926514,
+      "top_deletion_score_drop": 0.010586023330688477,
+      "bottom_deletion_score_drop": 0.008575022220611572,
+      "detach_gradient_norm": 0.37753114104270935,
+      "time_reversal_score_change": 0.005859375,
+      "status": "PASS"
+    },
+    "multi_positive_runtime": "NOT_EXERCISED",
+    "scientific_interpretation": "technical integration only; no retrieval-quality claim"
+  },
+  "frozen_evaluations": {
+    "siglip2": {
+      "job_id": 208021,
+      "query_count": 6310,
+      "gallery_count": 1928,
+      "score_shape": [6310, 1928],
+      "full_mrr": 0.005997858941555023,
+      "hit_at_10": 0.008716323412954807,
+      "hit_at_100": 0.0625990480184555,
+      "rerank_top100_mrr": 0.005998149048537016,
+      "status": "PASS_FULL_GALLERY_STEP_ZERO"
+    },
+    "georsclip": {
+      "job_id": 208024,
+      "query_count": 6310,
+      "gallery_count": 1928,
+      "score_shape": [6310, 1928],
+      "full_mrr": 0.003682836890220642,
+      "hit_at_10": 0.0030110934749245644,
+      "optimizer_steps": 0,
+      "status": "PASS_FROZEN_STEP_ZERO"
+    }
+  },
+  "historical_failures": {
+    "207778": "ENGINEERING_RUNTIME_DIAGNOSTIC_FAILURE_PRESERVED",
+    "207555": "ENGINEERING_RUNTIME_DRIVER_BUG_PRESERVED",
+    "207706": "HISTORICAL_SMOKE_PASS_WITH_DELETION_DIAGNOSTIC_FAILURE_PRESERVED"
+  },
+  "readiness": {
+    "MODEL_V3_SYNTHETIC_SMOKE": "PASS_HISTORICAL",
+    "SIGLIP2_REAL_INTEGRATION_SMOKE": "PASS_TECHNICAL_SMOKE",
+    "SIGLIP2_COMMON_GALLERY_STEP_ZERO": "PASS",
+    "GEORSCLIP_STEP_ZERO": "PASS_FROZEN_EVALUATION",
+    "SIGLIP2_MECHANISM": "READY_FOR_AUTHORIZATION",
+    "SIGLIP2_PHASE_A": "NOT_AUTHORIZED",
+    "SIGLIP2_PHASE_B": "NOT_AUTHORIZED",
+    "MODEL_V3_MAIN": "NOT_AUTHORIZED",
+    "P2_REAL": "BLOCKED_DATASET_CONTRACT",
+    "P2_SEMANTIC": "BLOCKED_DATASET_CONTRACT",
+    "P2_LONG_SERIES": "BLOCKED_DATASET_CONTRACT"
+  },
+  "historical_artifacts_modified": false,
+  "dataset_manifests_modified": false,
+  "long_training_launched": false,
+  "retrieval_improvement_claimed": false
+}

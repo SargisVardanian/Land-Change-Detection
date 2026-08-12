@@ -1,0 +1,16 @@
+{
+  "status": "PROVISIONAL_KEEP_SIGLIP2_B16_256",
+  "evaluated_code_sha": "5e49864b33f170a9f020a70b4dfa6dd1af9f507d",
+  "selected_resolution": "256x256",
+  "selected_patch_grid": "16x16",
+  "selected_visual_tokens": 256,
+  "comparison_384_run": "NOT_RUN",
+  "reason": [
+    "No final Dataset-Agent handoff is available.",
+    "Current pair registry does not provide complete width/height/GSD/physical-footprint metadata for a reliable small/medium/large audit.",
+    "No bootstrap-supported small-object retrieval deficit has been established.",
+    "Running a 384 comparison before final metadata would introduce an uncontrolled resolution change."
+  ],
+  "reopen_condition": "Recompute development-only size buckets from the final evaluation sidecar. Run exactly one 256-vs-384 comparison only if a material small-object deficit is supported by paired bootstrap evidence.",
+  "test_data_protection": "FINAL_EXACT_TEST and DUBAI are not used for this decision."
+}

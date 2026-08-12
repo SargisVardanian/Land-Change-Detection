@@ -1,0 +1,14 @@
+{
+  "branch": "codex/qcpr-model-v3-temporal-retrieval",
+  "audit_code_sha": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "local_sha_at_audit": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "remote_sha_at_audit": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "pr_head_sha_at_audit": "4dfed519c2e78a80d97fc52a6ff4e477b5ac8188",
+  "pr_number": 6,
+  "pr_base": "codex/qcpr-dataset-v2-stage2",
+  "pr_state_at_audit": "OPEN",
+  "pr_is_draft_at_audit": true,
+  "worktree_clean_at_audit": true,
+  "lineage_status_at_audit": "FINAL_LINEAGE_MATCH",
+  "note": "The audit snapshot is immutable; the subsequent report commit advances the branch and is verified separately."
+}
