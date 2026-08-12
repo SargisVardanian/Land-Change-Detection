@@ -388,7 +388,9 @@ def load_adjudication(
     return by_id, adjudicator
 
 
-def source_dataset(row: dict[str, Any]) -> str:
+def source_dataset(row: dict[str, Any] | None) -> str:
+    if not row:
+        return "unknown"
     provenance = row.get("provenance") or {}
     caption_provenance = row.get("caption_provenance") or {}
     return str(
@@ -429,7 +431,10 @@ def calibration_metrics(
             "sample_id": sample_id,
             "stratum": stratum,
             "final_decision": final,
-            "source_dataset": source_dataset(train_rows.get(str(ledger[sample_id].get("query_id")) or {})),
+            "source_dataset": str(
+                ledger[sample_id].get("source_dataset")
+                or source_dataset(train_rows.get(str(ledger[sample_id].get("query_id")) or {}) or {})
+            ),
             "query_id": ledger[sample_id].get("query_id"),
         })
     exact = [row for row in final_rows if row["stratum"] == "exact_discriminative"]
