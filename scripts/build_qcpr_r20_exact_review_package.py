@@ -510,6 +510,8 @@ until human decisions and adjudication pass the contract.
         "candidate_neighbours_are_not_relevance_labels": True,
         "source_packet_sha256": source_hashes,
         "source_selection": source_selection,
+        "exact_source_counts": source_selection["exact_discriminative"]["source_counts"],
+        "exact_source_registry_sha256": source_selection["exact_discriminative"]["source_registry_sha256"],
         "r19_train_manifest_sha256": file_sha(release / "exact_core_train.jsonl"),
         "r19_development_manifest_sha256": file_sha(release / "exact_core_development.jsonl"),
         "r19_test_manifest_sha256": file_sha(release / "exact_core_test.jsonl"),

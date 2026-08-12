@@ -82,6 +82,9 @@ def main() -> int:
 
     audit = read_json(args.review_package / "review_package_audit.json")
     source_lineage = read_json(args.review_package / "source_lineage.json")
+    exact_source_selection = (audit.get("source_selection") or {}).get("exact_discriminative") or {}
+    exact_source_counts = audit.get("exact_source_counts") or exact_source_selection.get("source_counts") or {}
+    exact_source_registry_sha256 = audit.get("exact_source_registry_sha256") or exact_source_selection.get("source_registry_sha256")
     decision_templates = []
     for name in ("reviewer_a_decision_template.jsonl", "reviewer_b_decision_template.jsonl", "adjudication_template.jsonl"):
         rows = read_jsonl(args.review_package / name)
@@ -145,8 +148,8 @@ def main() -> int:
             "weak_caption_rate": None,
             "semantic_alternative_rate": None,
             "source_conditioned_values": None,
-            "exact_review_source_counts": audit.get("exact_source_counts", {}),
-            "exact_review_source_registry_sha256": audit.get("exact_source_registry_sha256"),
+            "exact_review_source_counts": exact_source_counts,
+            "exact_review_source_registry_sha256": exact_source_registry_sha256,
             "no_decisions_fabricated": True,
         },
         "r20_candidate": {
@@ -270,8 +273,8 @@ promotion builder. No model training is authorized by this report.
             "reviewer_a_packet_sha256": file_sha(args.review_package / "reviewer_a_packet.jsonl"),
             "reviewer_b_packet_sha256": file_sha(args.review_package / "reviewer_b_packet.jsonl"),
             "adjudication_status": "PENDING",
-            "exact_review_source_counts": audit.get("exact_source_counts", {}),
-            "exact_review_source_registry_sha256": audit.get("exact_source_registry_sha256"),
+            "exact_review_source_counts": exact_source_counts,
+            "exact_review_source_registry_sha256": exact_source_registry_sha256,
         },
         "blockers": report["blockers"],
         "recommendation": "DO_NOT_TRAIN_YET",
