@@ -945,6 +945,8 @@ def main() -> int:
                 raise ValueError(f"blind packet and internal ledger disagree for {sample_id}")
         decisions_a, identity_a = load_reviewer_decisions(args.review_package, "reviewer_a", packet_a)
         decisions_b, identity_b = load_reviewer_decisions(args.review_package, "reviewer_b", packet_b)
+        if identity_a == identity_b:
+            raise ValueError("reviewer_a and reviewer_b must have distinct human identities")
         adjudication, adjudicator = load_adjudication(
             args.review_package,
             packet_a,
